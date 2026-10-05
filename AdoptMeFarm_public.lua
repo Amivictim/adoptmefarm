@@ -1,46 +1,53 @@
 --[[
-    AdoptMe Farm  v1.4
-]]
+    AdoptMe Farm  v1.7
+    Single-file build of a modular project. Plain, readable Luau — no obfuscation, no remote code.
 
+    WHAT IT DOES is printed in the console (and log file) every time it starts.
+    Stop at any time:  getgenv().AdoptMeFarm.Stop()
+    Settings: the SETTINGS block right below. Everything else is the program itself.
+]]
+--==================================================================================
+--  SETTINGS  —  edit only this block. Anything you leave out uses the default.
+--==================================================================================
 local UserConfig = {
     Farm = {
-        Enabled = true,       
-        BabyMode = true,      
-        FastTravel = true,    
-        Tasks = {             
+        Enabled = true,       -- master switch: false = the script only watches, sends no game actions
+        BabyMode = true,      -- also do baby needs (switches team to Babies automatically)
+        FastTravel = true,    -- fastest travel between places
+        Tasks = {             -- automatic tasks available in this version (true = on)
             pet_me = true,
             salon = true,
             bored = true,
             cat_cafe = true,
-            sleepy = true,    
-            dirty = true,     
-            toilet = true,    
-            hungry = true,   
-            thirsty = true,   
-            play = true,     
-            pizza_party = true, school = true, sick = true, 
-            camping = true, beach_party = true,             
-            mystery = true,   
-            walk = true,     
-            ride = true,      
+            sleepy = true,    -- your bed (goes home)
+            dirty = true,     -- your shower (goes home)
+            toilet = true,    -- your toilet (goes home)
+            hungry = true,    -- pet: free food bowl at home first; else sandwich / cheese
+            thirsty = true,   -- uses your water / chocolate milk
+            play = true,      -- throws your squeaky bone
+            pizza_party = true, school = true, sick = true, -- go to Pizza Shop / School / Hospital
+            camping = true, beach_party = true,             -- neighborhood camp site / beach (moves your character)
+            mystery = true,   -- picks a need this script can do
+            walk = true,      -- walks your character until done
+            ride = true,      -- walks with your stroller until done
         },
-        BuyWater = true,     
-        BuyFood = true,      
-        MaxBuysPerSession = 0, 
-        AutoAcceptMenu = true, 
-        CollectCashback = true, 
-        SpotTravel = "teleport",
-        KeepPetEquipped = true, 
-        GameTravel = true,
-        HomeByRespawn = true, 
-        HouseDoorExit = false,
+        BuyWater = true,      -- no drink left: buy 1 water (1 Buck)
+        BuyFood = true,       -- no food left: buy 1 sandwich (from anywhere)
+        MaxBuysPerSession = 0, -- 0 = no limit; a number = at most that many purchases per session
+        AutoAcceptMenu = true, -- run the script on the main menu: it clicks "Play" for you
+        CollectCashback = true, -- collects cashback Bucks every 10 minutes
+        SpotTravel = "teleport", -- camping/beach/bored: "teleport" (default) or "door" (shop door; left the character off MainMap in 1.1.0)
+        KeepPetEquipped = true, -- your pet got unequipped (e.g. after the doctor): equip it again
+        GameTravel = true, -- travel exactly like the game does (its own InteriorsM.enter); false = old remote route
+        HomeByRespawn = true, -- go home by respawn (fast); false = walk through the door
+        HouseDoorExit = false, -- experimental: leave home with the game's house-door calls (1.2.0 live: did not work)
         SkipFullGrown = true,
         BuyEgg = true, -- no pet at all / every pet full grown: buy 1 egg and farm it
         -- Eggs: "cracked_egg" (350 Bucks) | "pet_egg" (600 Bucks) | "fairytale_egg_2026_fairytale_egg" (event)
         -- "royal_egg" costs Robux and is never bought.
         EggToBuy = "cracked_egg",
         MaxEggBuysPerSession = 0, -- 0 = no limit; a number = at most that many eggs per session -- a full grown pet is equipped (e.g. the game swapped it): equip one that still grows
-        AntiAfk = true,      
+        AntiAfk = true,       -- prevents the 20-minute idle kick (virtual click, only when Roblox says idle)
         AutoPotions = {       -- age potions on the equipped pet that still grows
             Enabled = true,
             PetKinds = {},       -- e.g. { "dog", "cat" }; empty = whatever pet is farmed
@@ -51,17 +58,18 @@ local UserConfig = {
         },
         Event = {             -- Halloween 2026 + Pet Pen (true = on)
             Enabled = true,
-            GhostGallery = true, 
-            Crypt = true,        
-            MummySpider = true,  
-            Quests = true,       
-            HouseVisits = true, 
-            PigeonNest = true,   
-            StrayCat = true,     
-            PetPen = true,       
+            GhostGallery = true, -- joins every Ghost Gallery round (every 10 min) and vacuums ghosts
+            Crypt = true,        -- uses your Rusty Keys on the grave that leads down
+            MummySpider = true,  -- bottom of the Crypt reached: takes the Mummy Spider
+            Quests = true,       -- claims finished daily quests + the Halloween board reward
+            HouseVisits = true,  -- "visit player homes" quests: visits houses of players on the server
+            PigeonNest = true,   -- puts your Crypt Twigs in the Hotel nest
+            AutoNest = true,     -- opens twig graves first until you have 8, then builds the nest once
+            StrayCat = true,     -- gives 1 water to the Stray Cat once a day
+            PetPen = true,       -- claims the Pet Pen and keeps it full with pets that still grow
             PetPenMinutes = 15,
-            PetPenSlots = 4,     
-            PetPenStock = true,  
+            PetPenSlots = 4,     -- 5 if you bought the extra slot
+            PetPenStock = true,  -- keeps 4 + 1 pets that still grow: buys eggs when fewer (Farm.BuyEgg)
         },
     },
 
@@ -71,16 +79,19 @@ local UserConfig = {
         SessionFile = false,
     },
 
+    -- Developer logs: your Roblox name + this script's warnings / errors + a summary go to the developer
+    -- (victimoffate_) to fix bugs. false = nothing is sent.
     Telemetry = {
         Enabled = true,
     },
 
     -- Discord webhooks are OPTIONAL and OFF by default. Nothing is sent anywhere unless you turn this on.
+    -- The exact list of what can be sent is printed every time the script starts.
     Notifications = {
         Enabled = true,
         Webhooks = {
-            Summary = "",   
-            Alerts = "",    
+            Summary = "",   -- paste your webhook URL here <<< (session start/stop, summaries, completed needs)
+            Alerts = "",    -- optional second webhook for errors/kicks (empty = uses Summary)
         },
         SummaryIntervalMinutes = 30,   -- 0 = no periodic summary
         SendOnTaskComplete = false,    -- true = one message per completed need (a lot of messages)
@@ -95,9 +106,9 @@ local UserConfig = {
             Summary = true,
             TaskCompleted = true,
             SessionStopped = true,
-            PreviousSession = true,   
+            PreviousSession = true,   -- report of how the last run ended (closing Roblox also triggers it)
         },
-        IncludeUsername = true,        
+        IncludeUsername = true,        -- false = your Roblox name is not included in messages
     },
 }
 --==================================================================================
@@ -524,11 +535,13 @@ __moduleSources["Core/Config"] = function(...)
                 Quests = true, -- claim finished daily quests and the Halloween board reward (Rusty Key)
                 HouseVisits = true, -- "Visit 3 / 5 player homes" quests: visit other players' houses on the server
                 PigeonNest = true, -- put Crypt Twigs in the Hotel nest
+                AutoNest = true, -- one-time goal: twig graves first until 8 twigs, then build the nest (needs Crypt + PigeonNest)
                 StrayCat = true, -- give 1 water to the Stray Cat once a day (+50 candy)
                 PetPen = true, -- claim the Pet Pen, take full grown pets out, fill it with pets that still grow (at home)
                 PetPenMinutes = 15,
                 PetPenSlots = 4, -- 4 free slots; 5 if you own the extra-slot gamepass
                 PetPenStock = true, -- keep PetPenSlots + 1 pets that still grow (buys eggs; needs Farm.BuyEgg)
+                PetPenStockMinBucks = 750, -- only buy eggs for the pen while you have at least this many Bucks
             },
             PetMeFocusSeconds = 7, -- the game itself waits 6.7 s (watch5)
             FailureCooldownSeconds = 30,
@@ -1110,7 +1123,7 @@ __moduleSources["Services/Disclosure"] = function(...)
 
     local Disclosure = {}
 
-    Disclosure.VERSION = "1.4"
+    Disclosure.VERSION = "1.7"
 
     -- The ONLY fields that may ever appear in a webhook message.
     Disclosure.WEBHOOK_FIELDS = {
@@ -1772,7 +1785,8 @@ __moduleSources["Services/Telemetry"] = function(...)
 
     -- Only relay endpoints on Cloudflare Workers (the developer's relay); anything else is refused.
     local URL_PATTERN = "^https://[%w%-]+%.[%w%-]+%.workers%.dev/[%w%-/]*$"
-    local MAX_QUEUE = 250 -- WARN / ERROR lines kept for one report
+    local MAX_QUEUE = 150 -- WARN / ERROR lines kept for one report
+    local TAIL_LINES = 40 -- the last log lines (INFO and up) sent with each report
     local MAX_TEXT = 200
 
     function Telemetry.isAllowedUrl(url)
@@ -1794,6 +1808,10 @@ __moduleSources["Services/Telemetry"] = function(...)
         self._session = string.format("%x%x", os.time() % 0xFFFFFF, math.random(0, 0xFFFF))
         self._startPending = true -- the first send says "started" (execution counter)
         self._request = Util.getRequestFunction()
+        local okExecutor, executor = pcall(function()
+            return identifyexecutor and table.concat({ identifyexecutor() }, " ") or nil
+        end)
+        self._executor = okExecutor and executor or nil
         if not self._config.Enabled then
             self._off = "turned off in the settings (Telemetry.Enabled = false)"
         elseif not Telemetry.isAllowedUrl(self._config.Url) then
@@ -1812,8 +1830,9 @@ __moduleSources["Services/Telemetry"] = function(...)
         if self._off then
             return "OFF (" .. self._off .. ")"
         end
-        return "ON: your Roblox name + a session summary (needs, Bucks, candy, rounds) + this script's warnings / errors every "
-            .. tostring(self._config.SummaryMinutes or 30) .. " min (and that this run started) go to " .. tostring(self._config.Owner or "the developer")
+        return "ON: every " .. tostring(self._config.SummaryMinutes or 30) .. " min your Roblox name, executor name, a session"
+            .. " summary (needs, Bucks, candy, rounds), this script's state (team, place, task, pet, needs, why it waits),"
+            .. " task results, its warnings / errors and its last 40 log lines (and that this run started) go to " .. tostring(self._config.Owner or "the developer")
             .. " via " .. self._config.Url .. " to fix bugs. Turn off: Telemetry = { Enabled = false }"
     end
 
@@ -1842,6 +1861,11 @@ __moduleSources["Services/Telemetry"] = function(...)
         { key = "houseVisits", pattern = "^Quest %a+: visited" },
     }
 
+    -- main gives a function returning the script's state right now (team, place, task, pet, needs, idle reasons...)
+    function Telemetry:setDiagnostics(provider)
+        self._diagnostics = provider
+    end
+
     function Telemetry:setGameData(gameData)
         self._gameData = gameData
         local candy = gameData and tonumber(gameData:get("candy_2026"))
@@ -1854,11 +1878,32 @@ __moduleSources["Services/Telemetry"] = function(...)
         end
         self._lines = {}
         self._counts = {}
+        self._tail = {}
+        self._tasks = {} -- [task kind] = { done, failed }
         maid:Give(self._logger.OnEntry:Connect(function(level, category, message)
             if category == "Telemetry" or category == "Disclosure" then
                 return
             end
             message = tostring(message)
+            -- user 2026-10-05 ("open the logs up"): the last lines before each report, task results per kind
+            if level ~= Enums.LogLevel.DEBUG then
+                table.insert(self._tail, string.format("%s [%s] %s: %s", os.date("%H:%M:%S"), level, category, scrub(message)))
+                if #self._tail > TAIL_LINES then
+                    table.remove(self._tail, 1)
+                end
+            end
+            local doneKind = string.match(message, "^Done: ([%w_]+)")
+            local failedKind = string.match(message, "^FAILED: ([%w_]+)") or string.match(message, "^TIMEOUT: ([%w_]+)")
+            local kind = doneKind or failedKind
+            if kind and category == "Tasks" then
+                local entry = self._tasks[kind] or { done = 0, failed = 0 }
+                if doneKind then
+                    entry.done += 1
+                else
+                    entry.failed += 1
+                end
+                self._tasks[kind] = entry
+            end
             for _, counter in ipairs(COUNTERS) do
                 if string.find(message, counter.pattern) then
                     self._counts[counter.key] = (self._counts[counter.key] or 0) + 1
@@ -1897,6 +1942,9 @@ __moduleSources["Services/Telemetry"] = function(...)
             houseVisits = self._counts.houseVisits or 0,
             warnings = counts.WARN or 0,
             errors = counts.ERROR or 0,
+            executor = self._executor,
+            tasks = self._tasks,
+            state = self._diagnostics and select(2, pcall(self._diagnostics)) or nil,
         }
     end
 
@@ -1915,6 +1963,7 @@ __moduleSources["Services/Telemetry"] = function(...)
             payload.summary = self:_summary()
             payload.lines = self._lines
             payload.dropped = self._dropped
+            payload.tail = self._tail
             self._lines = {}
             self._dropped = 0
         end
@@ -3985,6 +4034,22 @@ __moduleSources["Game/Travel"] = function(...)
                 return true
             end
         end
+        -- Reports 2026-10-05: "travel to the Manor failed: still in TheCrypt" (one player, 3x). Leave the Crypt by its
+        -- own door to the main map first (the game's exit, halloween11: DoorEnter("MainMap", "TheCrypt/MainDoor")).
+        if destination ~= "MainMap" and self:isAt("TheCrypt") then
+            local module = self:_interiorsModule()
+            if module then
+                self._logger:info("Travel", "Leaving the Crypt first (its door to the main map)")
+                task.spawn(pcall, module.enter, "MainMap", "TheCrypt/MainDoor", {})
+                local deadline = Util.now() + 15
+                while Util.now() < deadline and not self:isAt("MainMap") do
+                    task.wait(0.25)
+                end
+                if self:isAt("MainMap") and self:_gameTravel(destination, recipe) then
+                    return true
+                end
+            end
+        end
         local before = self._state:get("player.interior")
         self._logger:info("Travel", "Going to " .. destination .. " (now in " .. tostring(before) .. ")")
 
@@ -5704,9 +5769,17 @@ __moduleSources["Game/EventTasks"] = function(...)
 
     -- Which grave to open next. Floors are cleared by opening their "ladder" grave; the last floor has none
     -- (then the most valuable unopened grave). Returns { floor, grave, reward } or nil, reason.
-    function EventTasks.cryptPlan(crypt)
+    function EventTasks.cryptPlan(crypt, preferTwig)
         if type(crypt) ~= "table" or type(crypt.floors) ~= "table" then
             return nil, "crypt data not known yet"
+        end
+        -- AutoNest (user 2026-10-05): while the nest still needs twigs, an unopened "twig" grave on a floor I can reach
+        -- (every floor above the first floor whose ladder is still closed, and that floor) comes before the ladder.
+        if preferTwig then
+            local twig = EventTasks.reachableTwigGrave(crypt)
+            if twig then
+                return twig
+            end
         end
         local opened = {}
         for _, id in pairs(type(crypt.opened) == "table" and crypt.opened or {}) do
@@ -5754,6 +5827,65 @@ __moduleSources["Game/EventTasks"] = function(...)
             return { spider = true }
         end
         return nil, "no Crypt floors in your data yet"
+    end
+
+    -- The first unopened twig grave on a reachable floor, or nil.
+    function EventTasks.reachableTwigGrave(crypt)
+        local opened = {}
+        for _, id in pairs(type(crypt.opened) == "table" and crypt.opened or {}) do
+            if tonumber(id) then
+                opened[tonumber(id)] = true
+            end
+        end
+        local function lookup(map, number)
+            return map[number] or map[tostring(number)]
+        end
+        for _, floor in ipairs(sortedNumberKeys(crypt.floors)) do
+            local graves = lookup(crypt.floors, floor)
+            graves = type(graves) == "table" and graves.coffins
+            if type(graves) == "table" then
+                local ladderOpen, hasLadder = false, false
+                for _, index in ipairs(sortedNumberKeys(graves)) do
+                    local reward = lookup(graves, index)
+                    local isOpen = opened[floor * E.OpenedIdPerFloor + index] == true
+                    if reward == E.Twig or reward == "twig" then
+                        if not isOpen then
+                            return { floor = floor, grave = index, reward = "twig" }
+                        end
+                    elseif reward == E.Ladder then
+                        hasLadder = true
+                        ladderOpen = isOpen
+                    end
+                end
+                if hasLadder and not ladderOpen then
+                    return nil -- the floors below are not reachable yet
+                end
+            end
+        end
+        return nil
+    end
+
+    -- AutoNest (user 2026-10-05): the one-time nest goal, read ONLY from my data (nothing is remembered locally, so a
+    -- restart continues correctly). nest = halloween_2026_jacobean_pigeon_nest_manager, held = twigs in the backpack.
+    --   COMPLETE       twigs_contributed >= 8
+    --   BUILD_NEST     placed + held >= 8 (enough twigs: put them in, each verified by twigs_contributed)
+    --   COLLECT_TWIGS  fewer and a Rusty Key to open graves
+    --   WAIT_KEY       fewer and no key (keys come from the Ghost Gallery and the Halloween quests)
+    --   UNKNOWN        no nest data yet
+    function EventTasks.nestState(nest, held, keys)
+        if type(nest) ~= "table" then
+            return "UNKNOWN", 0, held or 0
+        end
+        local placed = tonumber(nest.twigs_contributed) or 0
+        held = held or 0
+        if placed >= E.NestTwigs then
+            return "COMPLETE", placed, held
+        elseif placed + held >= E.NestTwigs then
+            return "BUILD_NEST", placed, held
+        elseif (keys or 0) > 0 then
+            return "COLLECT_TWIGS", placed, held
+        end
+        return "WAIT_KEY", placed, held
     end
 
     -- Quests that can be claimed now (dailies_manager, halloween12). Returns a list of { action, tab }.
@@ -6062,7 +6194,10 @@ __moduleSources["Game/EventTasks"] = function(...)
         timeoutSeconds = 90,
         run = function(ctx)
             local key = ctx.gameData:itemsOfId(TOYS, E.RustyKey)[1]
-            local plan, why = EventTasks.cryptPlan(ctx.gameData:get(KEYS.Crypt))
+            local nestState = EventTasks.nestState(ctx.gameData:get(KEYS.PigeonNest),
+                #ctx.gameData:itemsOfId(TOYS, E.Twig), key and 1 or 0)
+            local preferTwig = ctx.farmConfig.Event.AutoNest ~= false and nestState == "COLLECT_TWIGS"
+            local plan, why = EventTasks.cryptPlan(ctx.gameData:get(KEYS.Crypt), preferTwig)
             if not plan then
                 ctx.logger:info("Event", "Crypt: " .. tostring(why))
                 return true
@@ -6118,6 +6253,11 @@ __moduleSources["Game/EventTasks"] = function(...)
                 ctx.logger:warn("Event", "Crypt: a grave opened, but not with the expected id (floor * 16 + grave)")
             end
             ctx.logger:success("Event", "Crypt: opened " .. plan.reward .. " on floor " .. plan.floor)
+            if preferTwig then
+                local _, placedNow, heldNow = EventTasks.nestState(ctx.gameData:get(KEYS.PigeonNest),
+                    #ctx.gameData:itemsOfId(TOYS, E.Twig), 0)
+                ctx.logger:info("AutoNest", string.format("Twig progress: %d/%d", placedNow + heldNow, E.NestTwigs))
+            end
             return true
         end,
     }
@@ -6125,34 +6265,59 @@ __moduleSources["Game/EventTasks"] = function(...)
     -------------------------------------------------------------------------------------------------- Pigeon nest
     EventTasks.pigeonNest = {
         id = "pigeon_nest",
-        timeoutSeconds = 90,
+        timeoutSeconds = 150,
         run = function(ctx)
-            local twig = ctx.gameData:itemsOfId(TOYS, E.Twig)[1]
             local function placed()
                 local data = ctx.gameData:get(KEYS.PigeonNest)
                 return type(data) == "table" and tonumber(data.twigs_contributed) or 0
             end
-            if not twig or placed() >= E.NestTwigs then
+            local twigs = ctx.gameData:itemsOfId(TOYS, E.Twig)
+            local autoNest = ctx.farmConfig.Event.AutoNest ~= false
+            if #twigs == 0 or placed() >= E.NestTwigs then
                 return true
             end
-            local before = placed()
+            -- AutoNest: build only with all 8 (placed + held); without AutoNest every twig goes in at once (as before)
+            if autoNest and placed() + #twigs < E.NestTwigs then
+                return true
+            end
             local arrived, why = ctx.travel:goTo("HauntedHotel")
             if not arrived then
                 return false, "travel to the Hotel failed: " .. tostring(why)
             end
-            local held, holdWhy = hold(ctx, twig, TOYS)
-            if not held then
-                return false, holdWhy
+            if autoNest then
+                ctx.logger:info("AutoNest", string.format("Building Nest (%d placed + %d twigs)", placed(), #twigs))
             end
-            task.wait(1)
-            local _, answer = ctx.interaction:send("PigeonNestTwig", { unique = twig })
-            if ctx.waitUntil(function()
-                return placed() > before
-            end, 6) then
+            -- BUILD_NEST -> VERIFY_NEST: one twig at a time, each one checked in my data
+            for _, twig in ipairs(twigs) do
+                if placed() >= E.NestTwigs then
+                    break
+                end
+                local before = placed()
+                local held, holdWhy = hold(ctx, twig, TOYS)
+                if not held then
+                    return false, holdWhy
+                end
+                task.wait(1)
+                local _, answer = ctx.interaction:send("PigeonNestTwig", { unique = twig })
+                if not ctx.waitUntil(function()
+                    return placed() > before
+                end, 6) then
+                    -- not COMPLETE: the next run starts again from what my data says
+                    return false, "the nest did not take the twig (answer: " .. tostring(answer) .. ")"
+                end
                 ctx.logger:success("Event", string.format("Pigeon nest: twig placed (%d of %d)", placed(), E.NestTwigs))
-                return true
+                if not autoNest then
+                    return true
+                end
             end
-            return false, "the nest did not take the twig (answer: " .. tostring(answer) .. ")"
+            if autoNest then
+                ctx.logger:info("AutoNest", "Verifying Nest")
+                if placed() < E.NestTwigs then
+                    return false, string.format("nest not finished after building (%d of %d)", placed(), E.NestTwigs)
+                end
+                ctx.logger:success("AutoNest", "Nest completed")
+            end
+            return true
         end,
     }
 
@@ -6643,6 +6808,9 @@ __moduleSources["Game/TaskManager"] = function(...)
     -- Halloween / Pet Pen jobs (Game/EventTasks): seconds until the same job is looked at again (success or not).
     local EVENT_RECHECK_SECONDS = { ghost_gallery = 120, stray_cat = 1800, crypt = 60, pigeon_nest = 60, quests = 300, pen_stock = 20, age_potion = 5, open_gift = 3, house_visits = 300 }
     local GHOST_GALLERY_LEAD_SECONDS = 75 -- start the trip to the Manor this long before the round
+    local GHOST_INTERRUPT_SECONDS = 50 -- a running task is stopped when the round starts this soon
+    local NO_FURNITURE_SKIP_SECONDS = 600
+    local NEVER_INTERRUPT = { ghost_gallery = true, recover = true, team = true }
 
     function TaskManager.new(deps)
         local self = setmetatable({}, TaskManager)
@@ -6859,10 +7027,24 @@ __moduleSources["Game/TaskManager"] = function(...)
 
         local key = running.key
         local seconds = Util.now() - running.startedAt
+        if result == "INTERRUPTED" then
+            -- not a failure: no counter, no cooldown; an interrupted event job may run again right after the round
+            if running.eventJob then
+                self._nextEventAt[key] = 0
+            end
+            self._logger:info("Tasks", string.format("Interrupted: %s after %.1f s (%s)", running.label, seconds, tostring(reason)))
+            return
+        end
         if running.eventJob then
             local wait = key == "pet_pen" and (tonumber(self._farmConfig.Event.PetPenMinutes) or 15) * 60
                 or EVENT_RECHECK_SECONDS[key] or 60
             self._nextEventAt[key] = Util.now() + wait
+        end
+        if key == "ghost_gallery" then
+            local nest = self:_autoNest()
+            if nest == "COLLECT_TWIGS" or nest == "BUILD_NEST" then
+                self._logger:info("Ghost", "Minigame complete: resuming AutoNest (" .. nest .. ")")
+            end
         end
         local travelTrouble = result ~= "SUCCESS" and type(reason) == "string"
             and (string.find(reason, "travel", 1, true) or string.find(reason, "still in", 1, true)
@@ -6880,6 +7062,19 @@ __moduleSources["Game/TaskManager"] = function(...)
         end
 
         self._state:increment("farm.tasksFailed", 1, "TaskManager")
+        -- Reports 2026-10-05 (37, public 1.4): "CANCELLED ... farm stopped" was only the user stopping the farm.
+        if result == "CANCELLED" then
+            self._logger:info("Tasks", string.format("Stopped: %s after %.1f s (%s)", running.label, seconds, tostring(reason)))
+            return
+        end
+        -- Reports: new players without a bed / toilet / shower failed the same need 3x and lost it for the session.
+        -- Missing furniture is not a failure: skip that need for 10 min (it works again once the furniture is bought).
+        if type(reason) == "string" and string.sub(reason, 1, 3) == "no " and string.find(reason, " in your house", 1, true) then
+            self._cooldownUntil[key] = Util.now() + NO_FURNITURE_SKIP_SECONDS
+            self._logger:info("Tasks", string.format("Skipped for %d min: %s — %s (buy one to farm this need)",
+                NO_FURNITURE_SKIP_SECONDS / 60, running.label, reason))
+            return
+        end
         local failures = (self._failures[key] or 0) + 1
         self._failures[key] = failures
         self._cooldownUntil[key] = Util.now() + self._farmConfig.FailureCooldownSeconds
@@ -6909,28 +7104,71 @@ __moduleSources["Game/TaskManager"] = function(...)
         end
     end
 
+    -- Developer report (user 2026-10-05: "1 player 60 min, nothing done, no line to tell why"): every tick without a
+    -- running task is counted under the reason it did not start one.
     function TaskManager:tick()
+        local now = Util.now()
+        local dt = math.min(now - (self._lastTickAt or now), 5)
+        self._lastTickAt = now
+        self._why = nil
+        self:_tickInner()
+        self._idle = self._idle or {}
+        if self._running then
+            self._busy = (self._busy or 0) + dt
+        else
+            local why = self._why or "nothing to do (no need / job due)"
+            self._idle[why] = (self._idle[why] or 0) + dt
+        end
+    end
+
+    -- For the developer report: idle reasons (minutes), busy minutes, disabled jobs, the running task.
+    function TaskManager:getDiagnostics()
+        local idle = {}
+        for why, seconds in pairs(self._idle or {}) do
+            idle[why] = math.floor(seconds / 6 + 0.5) / 10
+        end
+        local disabled = {}
+        for key, isOff in pairs(self._disabled or {}) do
+            if isOff then
+                table.insert(disabled, key)
+            end
+        end
+        table.sort(disabled)
+        return { idle = idle, busyMinutes = math.floor((self._busy or 0) / 6 + 0.5) / 10, disabled = disabled,
+            running = self._running and self._running.label or nil }
+    end
+
+    function TaskManager:_tickInner()
         if self._stopped or not self._farmConfig.Enabled then
+            self._why = self._stopped and "stopped" or "Farm.Enabled = false (watch only)"
             return
         end
         self:_trackPet()
         if self._running then
             if Util.now() > self._running.deadline then
                 self:_finish("TIMEOUT", "no result within " .. math.floor(self._running.deadline - self._running.startedAt) .. " s")
+            elseif not NEVER_INTERRUPT[self._running.key] and self:_ghostRoundDue(GHOST_INTERRUPT_SECONDS) then
+                -- user 2026-10-05: the round must not be missed because a long task (camping, a trip) is running.
+                -- The interrupted job is chosen again later; AutoNest continues from my data (nothing is lost).
+                self._logger:info("Ghost", "Priority interrupt: stopping " .. self._running.label .. " for the Ghost Gallery round")
+                self:_finish("INTERRUPTED", "Ghost Gallery round")
             end
             return
         end
         if self._state:get("session.disconnectReason") ~= nil or self._state:get("game.ready") ~= true then
+            self._why = self._state:get("session.disconnectReason") ~= nil and "disconnected / kicked" or "game not ready (loading)"
             return
         end
         -- Public reports 2026-10-05 (4 of 10): "equip pet: no character" and "ChooseTeam failed ... update_team" right
         -- after the start, while the Play menu was still open (team "Choosing"). Wait until a team is chosen.
         if self._state:get("player.team") == "Choosing" then
+            self._why = "Play menu still open (team Choosing)"
             return
         end
         -- Stuck-in-transit watchdog (screenshot 2026-09-28: one client stayed on the white "changing place" screen).
         -- My data then has no place (house_interior = {} -> player.interior nil). After 25 s: go home again.
         if self._state:get("player.interior") == nil and self._hadPlace then
+            self._why = "changing place (no place in my data)"
             self._transitSince = self._transitSince or Util.now()
             if Util.now() - self._transitSince > 25 then
                 self._transitSince = nil
@@ -7056,6 +7294,46 @@ __moduleSources["Game/TaskManager"] = function(...)
         end
     end
 
+    -- The next Ghost Gallery round start if it is due within `lead` seconds (and the job may run), else nil.
+    function TaskManager:_ghostRoundDue(lead)
+        local event = self._farmConfig.Event
+        local data = self._gameData
+        if type(event) ~= "table" or not event.Enabled or not event.GhostGallery or not data or not self._minigame
+            or not self._minigame.available or self:_isBlocked("ghost_gallery")
+            or Util.now() < (self._nextEventAt.ghost_gallery or 0) then
+            return nil
+        end
+        local serverNow = Minigame.serverNow()
+        local start = EventTasks.nextRoundStart(data:get(GameConstants.DataKeys.GhostCycle), serverNow)
+        if start and start - serverNow <= lead and start - serverNow > -10 then
+            return start
+        end
+        return nil
+    end
+
+    -- AutoNest (user 2026-10-05): the nest goal read from my data; logs only when the state changes.
+    function TaskManager:_autoNest()
+        local event = self._farmConfig.Event
+        local data = self._gameData
+        if type(event) ~= "table" or event.AutoNest == false or event.PigeonNest == false or not data then
+            return nil
+        end
+        local E = GameConstants.Event
+        local stateName, placed, held = EventTasks.nestState(data:get(GameConstants.DataKeys.PigeonNest),
+            #data:itemsOfId(GameConstants.ToyCategory, E.Twig), #data:itemsOfId(GameConstants.ToyCategory, E.RustyKey))
+        local progress = placed + held
+        local signature = stateName .. ":" .. progress
+        if signature ~= self._nestSignature then
+            self._nestSignature = signature
+            if stateName == "COMPLETE" then
+                self._logger:info("AutoNest", "Nest completed: one-time objective complete (" .. placed .. "/" .. E.NestTwigs .. ")")
+            elseif stateName ~= "UNKNOWN" then
+                self._logger:info("AutoNest", string.format("%s, twig progress: %d/%d", stateName, progress, E.NestTwigs))
+            end
+        end
+        return stateName
+    end
+
     -- The Halloween / Pet Pen job that is due now, or nil. Each job decides from MY data whether there is anything to do.
     function TaskManager:_selectEventJob()
         local event = self._farmConfig.Event
@@ -7096,12 +7374,18 @@ __moduleSources["Game/TaskManager"] = function(...)
         end
         local E = GameConstants.Event
         local KEYS = GameConstants.DataKeys
-        if event.GhostGallery and due("ghost_gallery") and self._minigame and self._minigame.available then
-            local serverNow = Minigame.serverNow()
-            local start = EventTasks.nextRoundStart(data:get(KEYS.GhostCycle), serverNow)
-            if start and start - serverNow <= GHOST_GALLERY_LEAD_SECONDS and start - serverNow > -10 then
-                return "ghost_gallery", "Ghost Gallery round", EventTasks.ghostGallery, { start = start }
-            end
+        -- PRIORITY 0: the Ghost Gallery round (fixed time, also the source of Rusty Keys), then AutoNest
+        local ghostStart = self:_ghostRoundDue(GHOST_GALLERY_LEAD_SECONDS)
+        if ghostStart then
+            self._logger:info("Ghost", "Minigame available: starting the Ghost Gallery round")
+            return "ghost_gallery", "Ghost Gallery round", EventTasks.ghostGallery, { start = ghostStart }
+        end
+        local nest = event.PigeonNest ~= false and self:_autoNest()
+        if nest == "BUILD_NEST" and due("pigeon_nest") then
+            return "pigeon_nest", "build the nest (AutoNest)", EventTasks.pigeonNest, nil
+        elseif nest == "COLLECT_TWIGS" and event.Crypt and due("crypt") and data:get(KEYS.Crypt) ~= nil
+            and EventTasks.cryptPlan(data:get(KEYS.Crypt), true) then
+            return "crypt", "collect twigs in the Crypt (AutoNest)", EventTasks.crypt, nil
         end
         if event.StrayCat and due("stray_cat") then
             local cat = data:get(KEYS.StrayCat)
@@ -7128,7 +7412,8 @@ __moduleSources["Game/TaskManager"] = function(...)
         if event.Quests and due("quests") and #EventTasks.questsToClaim(data:get(KEYS.Dailies)) > 0 then
             return "quests", "claim quests", EventTasks.quests, nil
         end
-        if event.PigeonNest and due("pigeon_nest") and #data:itemsOfId(GameConstants.ToyCategory, E.Twig) > 0 then
+        if event.PigeonNest and event.AutoNest == false and due("pigeon_nest")
+            and #data:itemsOfId(GameConstants.ToyCategory, E.Twig) > 0 then
             local nest = data:get(KEYS.PigeonNest)
             if type(nest) == "table" and (tonumber(nest.twigs_contributed) or 0) < E.NestTwigs then
                 return "pigeon_nest", "twig to the pigeon nest", EventTasks.pigeonNest, nil
@@ -7138,6 +7423,8 @@ __moduleSources["Game/TaskManager"] = function(...)
         -- farmed one); buy eggs (Farm.EggToBuy, Farm.BuyEgg, Farm.MaxEggBuysPerSession) until there are enough.
         if event.PetPen and event.PetPenStock ~= false and self._farmConfig.BuyEgg and due("pen_stock")
             and not self:_isBlocked("buy_egg") and data:get(KEYS.PetPen) ~= nil and data:petInventoryKnown()
+            -- reports: new accounts (9-362 Bucks) failed 3-5 egg buys in a row; keep a reserve (setting, not a price)
+            and (tonumber(data:get(KEYS.Money)) or 0) >= (tonumber(event.PetPenStockMinBucks) or 750)
             and self._travel and self._travel:isAt(GameConstants.HouseInteriorName) then
             local wanted = (tonumber(event.PetPenSlots) or E.PetPenSlots) + 1
             local inPen = 0
@@ -7584,6 +7871,17 @@ __moduleSources["main"] = function(...)
                 tracker:start(maid)
                 local minigame = Minigame.new(logger)
                 minigame:start(maid)
+                telemetry:setDiagnostics(function()
+                    local diagnostics = taskManager and taskManager:getDiagnostics() or {}
+                    diagnostics.status = petLocator and buildStatusLine(state, petLocator) or nil
+                    diagnostics.team = state:get("player.team")
+                    diagnostics.place = state:get("player.interior")
+                    diagnostics.ready = state:get("game.ready")
+                    diagnostics.farmEnabled = config.Farm.Enabled
+                    local character = game:GetService("Players").LocalPlayer.Character
+                    diagnostics.character = character ~= nil and character:FindFirstChild("HumanoidRootPart") ~= nil
+                    return diagnostics
+                end)
                 taskManager = TaskManager.new({
                     minigame = minigame,
                     logger = logger,
