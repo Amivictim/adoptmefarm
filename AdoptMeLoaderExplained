@@ -1,9 +1,7 @@
 --[[
-    AdoptMe Farm — LOADER (short file for Delta: paste THIS, not the long program)
+    AdoptMe Farm — LOADER
     Paste this file into your executor and run it. It downloads the program, checks it is AdoptMe Farm and runs it.
     ALL settings are below (the same as in the program's own SETTINGS block); anything you delete uses the default.
-    Quiet: no console output except the short start report, no files, no folders.
-    Your webhook URL goes ONLY here (never into the GitHub file: anyone with the raw link can read that one).
     Stop: getgenv().AdoptMeFarm.Stop()
 ]]
 
