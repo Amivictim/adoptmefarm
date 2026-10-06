@@ -1,10 +1,6 @@
 --[[
     AdoptMe Farm  v1.11
     Single-file build of a modular project. Plain, readable Luau — no obfuscation, no remote code.
-
-    WHAT IT DOES is printed in the console (and log file) every time it starts.
-    Stop at any time:  getgenv().AdoptMeFarm.Stop()
-    Settings: the SETTINGS block right below. Everything else is the program itself.
 ]]
 --==================================================================================
 --  SETTINGS  —  edit only this block. Anything you leave out uses the default.
@@ -76,11 +72,11 @@ local UserConfig = {
             StrayCat = true,     -- gives 1 water to the Stray Cat once a day
             PetPen = true,       -- claims the Pet Pen and keeps it full with pets that still grow
             CandyPets = {        -- buys Halloween pets with candy: saves for the first one in the list, then the next
-                Enabled = true,
-                KeepCandy = 0,       -- never spend below this
+                Enabled = false,
+                KeepCandy = 1000000,       -- never spend below this
                 Buy = {              -- max = how many you want (0 = no limit)
-                    { id = "halloween_2026_jump_scare", price = 40000, max = 1 },
-                    { id = "halloween_2026_jacobean_pigeon", price = 4000, max = 0 },
+                    { id = "halloween_2026_jump_scare", price = 40000, max = 99 },
+                    { id = "halloween_2026_jacobean_pigeon", price = 4000, max = 99 },
                 },
             },
             PetPenMinutes = 15,
