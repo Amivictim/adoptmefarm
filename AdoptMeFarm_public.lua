@@ -76,7 +76,7 @@ local UserConfig = {
             StrayCat = true,     -- gives 1 water to the Stray Cat once a day
             PetPen = true,       -- claims the Pet Pen and keeps it full with pets that still grow
             CandyPets = {        -- buys Halloween pets with candy: saves for the first one in the list, then the next
-                Enabled = true,
+                Enabled = false,
                 KeepCandy = 0,       -- never spend below this
                 Buy = {              -- max = how many you keep at once (0 = no limit)
                     { id = "halloween_2026_jump_scare", price = 40000, max = 1 },
