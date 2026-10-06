@@ -1,0 +1,149 @@
+--[[
+    AdoptMe Farm — LOADER (short file for Delta: paste THIS, not the long program)
+    Paste this file into your executor and run it. It downloads the program, checks it is AdoptMe Farm and runs it.
+    ALL settings are below (the same as in the program's own SETTINGS block); anything you delete uses the default.
+    Quiet: no console output except the short start report, no files, no folders.
+    Your webhook URL goes ONLY here (never into the GitHub file: anyone with the raw link can read that one).
+    Stop: getgenv().AdoptMeFarm.Stop()
+]]
+
+--==================================================================================
+--  SETTINGS
+--==================================================================================
+getgenv().AdoptMeFarmSettings = {
+    Farm = {
+        Enabled = true,       -- master switch: false = the script only watches, sends no game actions
+        BabyMode = true,      -- also do baby needs (switches team to Babies automatically)
+        FastTravel = true,    -- fastest travel between places
+        Tasks = {             -- automatic tasks available in this version (true = on)
+            pet_me = true,
+            salon = true,
+            bored = true,
+            cat_cafe = true,
+            sleepy = true,    -- your bed (goes home)
+            dirty = true,     -- your shower (goes home)
+            toilet = true,    -- your toilet (goes home)
+            hungry = true,    -- pet: free food bowl at home first; else sandwich / cheese
+            thirsty = true,   -- uses your water / chocolate milk
+            play = true,      -- throws your squeaky bone
+            pizza_party = true, school = true, sick = true, -- go to Pizza Shop / School / Hospital
+            camping = true, beach_party = true,             -- neighborhood camp site / beach (moves your character)
+            mystery = true,   -- picks a need this script can do
+            walk = true,      -- walks your character until done
+            ride = true,      -- walks with your stroller until done
+        },
+        BuyWater = true,      -- no drink left: buy 1 water (1 Buck)
+        BuyFood = true,       -- no food left: buy 1 sandwich (from anywhere)
+        MaxBuysPerSession = 0, -- 0 = no limit; a number = at most that many purchases per session
+        AutoAcceptMenu = true, -- run the script on the main menu: it clicks "Play" for you
+        CollectCashback = true, -- collects cashback Bucks every 10 minutes
+        SpotTravel = "teleport", -- camping/beach/bored: "teleport" (default) or "door" (shop door; left the character off MainMap in 1.1.0)
+        KeepPetEquipped = true, -- your pet got unequipped (e.g. after the doctor): equip it again
+        GameTravel = true, -- travel exactly like the game does (its own InteriorsM.enter); false = old remote route
+        HomeByRespawn = true, -- go home by respawn (fast); false = walk through the door
+        HouseDoorExit = false, -- experimental: leave home with the game's house-door calls (1.2.0 live: did not work)
+        SkipFullGrown = true,
+        BuyEgg = true, -- no pet at all / every pet full grown: buy 1 egg and farm it
+        -- Eggs: "cracked_egg" (350 Bucks) | "pet_egg" (600 Bucks) | "fairytale_egg_2026_fairytale_egg" (event)
+        -- "royal_egg" costs Robux and is never bought.
+        EggToBuy = "cracked_egg",
+        MaxEggBuysPerSession = 0, -- 0 = no limit; a number = at most that many eggs per session -- a full grown pet is equipped (e.g. the game swapped it): equip one that still grows
+        AntiAfk = true,       -- prevents the 20-minute idle kick (virtual click, only when Roblox says idle)
+        AutoPotions = {       -- age potions on the equipped pet that still grows
+            Enabled = true,
+            PetKinds = {},       -- e.g. { "dog", "cat" }; empty = whatever pet is farmed
+        },
+        AutoNeon = {          -- 4 full grown pets of one kind -> 1 neon (every 4 it finds, no limit)
+            Enabled = true,
+            Exclude = {},        -- e.g. { "dog" } = never fuse these pet kinds
+        },
+        PreferNeon = true,    -- farm needs on a growing neon pet first
+        MultiNeed = {         -- while waiting at a place (school, pizza...), does food / drink / toy / petting too
+            Enabled = true,
+        },
+        AutoOpen = {          -- opens gifts and chests in your backpack
+            Enabled = true,
+            Exclude = {},        -- e.g. { "biggift" } = never open these
+        },
+        Event = {             -- Halloween 2026 + Pet Pen (true = on)
+            Enabled = true,
+            GhostGallery = true, -- joins every Ghost Gallery round (every 10 min) and vacuums ghosts
+            Crypt = true,        -- uses your Rusty Keys on the grave that leads down
+            MummySpider = true,  -- bottom of the Crypt reached: takes the Mummy Spider
+            Quests = true,       -- claims finished daily quests + the Halloween board reward
+            HouseVisits = true,  -- "visit player homes" quests: visits houses of players on the server
+            PigeonNest = true,   -- puts your Crypt Twigs in the Hotel nest
+            StrayCat = true,     -- gives 1 water to the Stray Cat once a day
+            PetPen = true,       -- claims the Pet Pen and keeps it full with pets that still grow
+            CandyPets = {        -- buys Halloween pets with candy: saves for the first one in the list, then the next
+                Enabled = true,
+                KeepCandy = 0,       -- never spend below this
+                Buy = {              -- max = how many you keep at once (0 = no limit)
+                    { id = "halloween_2026_jump_scare", price = 40000, max = 1 },
+                    { id = "halloween_2026_jacobean_pigeon", price = 4000, max = 4 }, -- 4 = one neon; more after they are fused
+                },
+            },
+            PetPenMinutes = 15,
+            PetPenSlots = 4,     -- 5 if you bought the extra slot
+            PetPenStock = true,  -- keeps 4 + 1 pets that still grow: buys eggs when fewer (Farm.BuyEgg)
+        },
+    },
+
+    Logging = {
+        ConsoleLevel = "OFF",   -- OFF = quiet (only the short start report); INFO = show what it does
+        FileEnabled = false,    -- true = log file in AdoptMeFarm/logs/
+        SessionFile = false,
+    },
+
+    Telemetry = {
+        Enabled = true,
+        IncludeInventory = true,
+    },
+
+    -- Discord webhooks are OPTIONAL and OFF by default. Nothing is sent anywhere unless you turn this on.
+    -- The exact list of what can be sent is printed every time the script starts.
+    Notifications = {
+        Enabled = true,
+        Webhooks = {
+            Summary = "",   -- paste your webhook URL here <<< (session start/stop, summaries, completed needs)
+            Alerts = "",    -- optional second webhook for errors/kicks (empty = uses Summary)
+        },
+        SummaryIntervalMinutes = 30,   -- 0 = no periodic summary
+        SendOnTaskComplete = false,    -- true = one message per completed need (a lot of messages)
+        SendOnError = true,
+        SendOnKick = true,
+        SendOnStartStop = true,
+        SendTestMessageOnStart = false,
+        PingDiscordUserId = "",        -- your Discord user ID (digits) <<<
+        PingOn = {
+            Kick = true,
+            Error = true,
+            Summary = true,
+            TaskCompleted = true,
+            SessionStopped = true,
+            PreviousSession = true,   -- report of how the last run ended (closing Roblox also triggers it)
+        },
+        IncludeUsername = true,        -- false = your Roblox name is not included in messages
+    },
+}
+
+--------------------------------------------------------------------------------
+-- Download + run. Only SCRIPT_URL needs editing.
+--------------------------------------------------------------------------------
+local SCRIPT_URL = "https://raw.githubusercontent.com/Amivictim/adoptmefarm/refs/heads/main/AdoptMeFarm_public.lua"
+getgenv().AdoptMeFarmLoaderInfo = { Url = SCRIPT_URL }
+
+local ok, source = pcall(function()
+    return game:HttpGet(SCRIPT_URL .. "?nocache=" .. tostring(os.time()))
+end)
+if not (ok and type(source) == "string" and #source > 5000
+    and string.find(string.sub(source, 1, 300), "AdoptMe Farm  v", 1, true)) then
+    warn("[Loader] Download failed or it is not AdoptMe Farm: check SCRIPT_URL")
+    return
+end
+local program, compileError = loadstring(source)
+if not program then
+    warn("[Loader] Syntax error in the download: " .. tostring(compileError))
+    return
+end
+program()
