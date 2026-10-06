@@ -2,6 +2,7 @@
     AdoptMe Farm  v1.9
     Single-file build of a modular project. Plain, readable Luau — no obfuscation, no remote code.
 ]]
+
 local UserConfig = {
     Farm = {
         Enabled = true,       
@@ -1126,7 +1127,7 @@ __moduleSources["Services/Disclosure"] = function(...)
 
     local Disclosure = {}
 
-    Disclosure.VERSION = "1.9"
+    Disclosure.VERSION = "1.10"
 
     -- The ONLY fields that may ever appear in a webhook message.
     Disclosure.WEBHOOK_FIELDS = {
@@ -2338,8 +2339,10 @@ __moduleSources["Game/GameConstants"] = function(...)
     GameConstants.PlayButtonPath = { "NewsApp", "EnclosingFrame", "MainFrame", "Buttons", "PlayButton" }
 
     -- mystery: choose one of these (fast, confirmed tasks first). The chosen need must appear in my data.
-    GameConstants.MysteryPreference = { "toilet", "dirty", "sleepy", "hungry", "thirsty", "sick", "cat_cafe", "salon",
-        "school", "pizza_party", "camping", "beach_party", "bored", "pet_me" }
+    -- halloween12_20261006_081802 (user picked a card by hand): components.mystery.components lists the WHOLE pool
+    -- (14 kinds incl. play / walk / ride), the 3 cards come from random_seed (how: unknown). Order = fastest first.
+    GameConstants.MysteryPreference = { "toilet", "dirty", "sleepy", "hungry", "thirsty", "pet_me", "play", "sick", "cat_cafe",
+        "salon", "school", "pizza_party", "camping", "beach_party", "bored", "walk", "ride" }
     GameConstants.MysterySlot = 1 -- third argument in the capture; meaning not known yet
 
     -- walk / ride (watch8_20260928_053142): progress rises only while the character MOVES with the pet (rate 1/30 while
@@ -3210,6 +3213,7 @@ __moduleSources["Game/AilmentTracker"] = function(...)
         end
         return {
             mysteryOptions = mysteryOptions,
+            mysterySeed = type(mystery) == "table" and mystery.random_seed or nil,
             kind = tostring(type(rawEntry) == "table" and rawEntry.kind or kindKey),
             rate = rate,
             inProgress = rate > 0,
@@ -5311,7 +5315,7 @@ __moduleSources["Game/Tasks"] = function(...)
         handles = function(kind)
             return kind == "mystery"
         end,
-        timeoutSeconds = 60,
+        timeoutSeconds = 90,
         run = function(ctx, group)
             local entry = group.petEntry
             if not entry then
@@ -5335,20 +5339,27 @@ __moduleSources["Game/Tasks"] = function(...)
             -- ("cat_cafe"): the 3rd argument is probably the card position, so each kind is tried on slots 1-3.
             -- Live 1.5.6 (night, 3 accounts): only 3 kinds were tried -> 9 of 14 mystery tasks failed when none of them was
             -- on the 3 cards. Now every doable kind is tried (2.5 s each) until 52 s are used.
-            local started = Util.now()
+            -- halloween12_20261006: the options in my data are the whole pool (14 kinds), not the 3 cards, so the 52 s
+            -- budget ran out after ~7 kinds. The server answered the hand-picked card in 0.15 s -> 1.2 s per try is plenty;
+            -- every doable kind x 3 cards now fits (17 x 3 x 1.2 s = 61 s).
+            ctx.logger:info("Tasks", string.format("Mystery: pool %s, seed %s, trying %d kinds",
+                table.concat(entry.mysteryOptions or {}, ","), tostring(entry.mysterySeed), #choices))
+            local started, tries = Util.now(), 0
             for index = 1, #choices do
                 local kind = choices[index]
                 for slot = 1, 3 do
-                    if Util.now() - started > 52 then
+                    if Util.now() - started > 75 then
                         return false, "mystery did not change into a chosen need"
                     end
-                    ctx.logger:info("Tasks", string.format("Mystery: choosing %s (card %d)", kind, slot))
+                    tries += 1
+                    ctx.logger:debug("Tasks", string.format("Mystery: choosing %s (card %d)", kind, slot))
                     ctx.interaction:send("ChooseMystery", entry.petUnique, "mystery", slot, kind)
                     if ctx.waitUntil(function()
                         return ctx.findEntry("mystery", "pet", entry.petUnique) == nil
                             and ctx.findEntry(kind, "pet", entry.petUnique) ~= nil
-                    end, 2.5) then
-                        ctx.logger:info("Tasks", string.format("Mystery accepted: %s on card %d", kind, slot))
+                    end, 1.2) then
+                        ctx.logger:info("Tasks", string.format("Mystery accepted: %s on card %d (try %d, seed %s)", kind, slot,
+                            tries, tostring(entry.mysterySeed)))
                         return true
                     end
                     if not ctx.findEntry("mystery", "pet", entry.petUnique) then
