@@ -1,113 +1,123 @@
 --[[
-    AdoptMe Farm  v1.9
+    AdoptMe Farm  v1.10
     Single-file build of a modular project. Plain, readable Luau — no obfuscation, no remote code.
-]]
 
+    WHAT IT DOES is printed in the console (and log file) every time it starts.
+    Stop at any time:  getgenv().AdoptMeFarm.Stop()
+    Settings: the SETTINGS block right below. Everything else is the program itself.
+]]
+--==================================================================================
+--  SETTINGS  —  edit only this block. Anything you leave out uses the default.
+--==================================================================================
 local UserConfig = {
     Farm = {
-        Enabled = true,       
-        BabyMode = true,      
-        FastTravel = true,    
-        Tasks = {             
+        Enabled = true,       -- master switch: false = the script only watches, sends no game actions
+        BabyMode = true,      -- also do baby needs (switches team to Babies automatically)
+        FastTravel = true,    -- fastest travel between places
+        Tasks = {             -- automatic tasks available in this version (true = on)
             pet_me = true,
             salon = true,
             bored = true,
             cat_cafe = true,
-            sleepy = true,    
-            dirty = true,     
-            toilet = true,    
-            hungry = true,    
-            thirsty = true,   
-            play = true,      
-            pizza_party = true, school = true, sick = true, 
-            camping = true, beach_party = true,             
-            mystery = true,   
-            walk = true,      
-            ride = true,      
+            sleepy = true,    -- your bed (goes home)
+            dirty = true,     -- your shower (goes home)
+            toilet = true,    -- your toilet (goes home)
+            hungry = true,    -- pet: free food bowl at home first; else sandwich / cheese
+            thirsty = true,   -- uses your water / chocolate milk
+            play = true,      -- throws your squeaky bone
+            pizza_party = true, school = true, sick = true, -- go to Pizza Shop / School / Hospital
+            camping = true, beach_party = true,             -- neighborhood camp site / beach (moves your character)
+            mystery = true,   -- picks a need this script can do
+            walk = true,      -- walks your character until done
+            ride = true,      -- walks with your stroller until done
         },
-        BuyWater = true,      
-        BuyFood = true,       
-        MaxBuysPerSession = 0, 
-        AutoAcceptMenu = true, 
-        CollectCashback = true, 
-        SpotTravel = "teleport", 
-        KeepPetEquipped = true, 
-        GameTravel = true, 
-        HomeByRespawn = true, 
-        HouseDoorExit = false, 
+        BuyWater = true,      -- no drink left: buy 1 water (1 Buck)
+        BuyFood = true,       -- no food left: buy 1 sandwich (from anywhere)
+        MaxBuysPerSession = 0, -- 0 = no limit; a number = at most that many purchases per session
+        AutoAcceptMenu = true, -- run the script on the main menu: it clicks "Play" for you
+        CollectCashback = true, -- collects cashback Bucks every 10 minutes
+        SpotTravel = "teleport", -- camping/beach/bored: "teleport" (default) or "door" (shop door; left the character off MainMap in 1.1.0)
+        KeepPetEquipped = true, -- your pet got unequipped (e.g. after the doctor): equip it again
+        GameTravel = true, -- travel exactly like the game does (its own InteriorsM.enter); false = old remote route
+        HomeByRespawn = true, -- go home by respawn (fast); false = walk through the door
+        HouseDoorExit = false, -- experimental: leave home with the game's house-door calls (1.2.0 live: did not work)
         SkipFullGrown = true,
-        BuyEgg = true, 
-        
-       
+        BuyEgg = true, -- no pet at all / every pet full grown: buy 1 egg and farm it
+        -- Eggs: "cracked_egg" (350 Bucks) | "pet_egg" (600 Bucks) | "fairytale_egg_2026_fairytale_egg" (event)
+        -- "royal_egg" costs Robux and is never bought.
         EggToBuy = "cracked_egg",
-        MaxEggBuysPerSession = 0, 
-        AntiAfk = true,       
-        AutoPotions = {       
+        MaxEggBuysPerSession = 0, -- 0 = no limit; a number = at most that many eggs per session -- a full grown pet is equipped (e.g. the game swapped it): equip one that still grows
+        AntiAfk = true,       -- prevents the 20-minute idle kick (virtual click, only when Roblox says idle)
+        AutoPotions = {       -- age potions on the equipped pet that still grows
             Enabled = true,
-            PetKinds = {},       
+            PetKinds = {},       -- e.g. { "dog", "cat" }; empty = whatever pet is farmed
         },
-        AutoNeon = {          
+        AutoNeon = {          -- 4 full grown pets of one kind -> 1 neon (every 4 it finds, no limit)
             Enabled = true,
-            Exclude = {},        
+            Exclude = {},        -- e.g. { "dog" } = never fuse these pet kinds
         },
-        PreferNeon = true,    
-        AutoOpen = {          
+        PreferNeon = true,    -- farm needs on a growing neon pet first
+        AutoOpen = {          -- opens gifts and chests in your backpack
             Enabled = true,
-            Exclude = {},        
+            Exclude = {},        -- e.g. { "biggift" } = never open these
         },
-        Event = {             
+        Event = {             -- Halloween 2026 + Pet Pen (true = on)
             Enabled = true,
-            GhostGallery = true, 
-            Crypt = true,        
-            MummySpider = true,  
-            Quests = true,       
-            HouseVisits = true,  
-            PigeonNest = true,   
-            AutoNest = true,     
-            StrayCat = true,     
-            PetPen = true,       
+            GhostGallery = true, -- joins every Ghost Gallery round (every 10 min) and vacuums ghosts
+            Crypt = true,        -- uses your Rusty Keys on the grave that leads down
+            MummySpider = true,  -- bottom of the Crypt reached: takes the Mummy Spider
+            Quests = true,       -- claims finished daily quests + the Halloween board reward
+            HouseVisits = true,  -- "visit player homes" quests: visits houses of players on the server
+            PigeonNest = true,   -- puts your Crypt Twigs in the Hotel nest
+            AutoNest = true,     -- opens twig graves first until you have 8, then builds the nest once
+            StrayCat = true,     -- gives 1 water to the Stray Cat once a day
+            PetPen = true,       -- claims the Pet Pen and keeps it full with pets that still grow
             PetPenMinutes = 15,
-            PetPenSlots = 4,     
-            PetPenStock = true,  
+            PetPenSlots = 4,     -- 5 if you bought the extra slot
+            PetPenStock = true,  -- keeps 4 + 1 pets that still grow: buys eggs when fewer (Farm.BuyEgg)
         },
     },
 
     Logging = {
-        ConsoleLevel = "INFO",  
-        FileLevel = "DEBUG",    
-        FileEnabled = true,     
+        ConsoleLevel = "OFF",   -- OFF = quiet (only the short start report); INFO = show what it does
+        FileEnabled = false,    -- true = log file in AdoptMeFarm/logs/
+        SessionFile = false,
     },
 
-    
-    Telemetry = { Enabled = true, IncludeInventory = true },
+    -- Developer logs: your Roblox name + this script's warnings / errors + a summary go to the developer
+    -- (victimoffate_) to fix bugs. false = nothing is sent.
+    Telemetry = {
+        Enabled = true,
+        ncludeInventory = true
+    },
 
-    
-    
+    -- Discord webhooks are OPTIONAL and OFF by default. Nothing is sent anywhere unless you turn this on.
+    -- The exact list of what can be sent is printed every time the script starts.
     Notifications = {
         Enabled = true,
         Webhooks = {
-            Summary = "",   
-            Alerts = "",    
+            Summary = "",   -- paste your webhook URL here <<< (session start/stop, summaries, completed needs)
+            Alerts = "",    -- optional second webhook for errors/kicks (empty = uses Summary)
         },
-        SummaryIntervalMinutes = 5,    
-        SendOnTaskComplete = true,     
+        SummaryIntervalMinutes = 30,   -- 0 = no periodic summary
+        SendOnTaskComplete = false,    -- true = one message per completed need (a lot of messages)
         SendOnError = true,
         SendOnKick = true,
         SendOnStartStop = true,
-        SendTestMessageOnStart = true,
-        PingDiscordUserId = "",        
+        SendTestMessageOnStart = false,
+        PingDiscordUserId = "",        -- your Discord user ID (digits) <<<
         PingOn = {
             Kick = true,
             Error = true,
             Summary = true,
             TaskCompleted = true,
             SessionStopped = true,
-            PreviousSession = true,   
+            PreviousSession = true,   -- report of how the last run ended (closing Roblox also triggers it)
         },
-        IncludeUsername = true,        
+        IncludeUsername = true,        -- false = your Roblox name is not included in messages
     },
 }
-
+--==================================================================================
 
 --==================================================================================
 --  PROGRAM  (modules below are bundled from separate source files)
