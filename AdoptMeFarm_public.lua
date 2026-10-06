@@ -1,14 +1,7 @@
 --[[
-    AdoptMe Farm  v1.7
+    AdoptMe Farm  v1.9
     Single-file build of a modular project. Plain, readable Luau — no obfuscation, no remote code.
-
-    WHAT IT DOES is printed in the console (and log file) every time it starts.
-    Stop at any time:  getgenv().AdoptMeFarm.Stop()
-    Settings: the SETTINGS block right below. Everything else is the program itself.
 ]]
-
-
-
 local UserConfig = {
     Farm = {
         Enabled = true,       
@@ -44,7 +37,7 @@ local UserConfig = {
         SkipFullGrown = true,
         BuyEgg = true, 
         
-        
+       
         EggToBuy = "cracked_egg",
         MaxEggBuysPerSession = 0, 
         AntiAfk = true,       
@@ -52,6 +45,11 @@ local UserConfig = {
             Enabled = true,
             PetKinds = {},       
         },
+        AutoNeon = {          
+            Enabled = true,
+            Exclude = {},        
+        },
+        PreferNeon = true,    
         AutoOpen = {          
             Enabled = true,
             Exclude = {},        
@@ -74,16 +72,13 @@ local UserConfig = {
     },
 
     Logging = {
-        ConsoleLevel = "OFF",   
-        FileEnabled = false,    
-        SessionFile = false,
+        ConsoleLevel = "INFO",  
+        FileLevel = "DEBUG",    
+        FileEnabled = true,     
     },
 
     
-    
-    Telemetry = {
-        Enabled = true,
-    },
+    Telemetry = { Enabled = true, IncludeInventory = true },
 
     
     
@@ -93,12 +88,12 @@ local UserConfig = {
             Summary = "",   
             Alerts = "",    
         },
-        SummaryIntervalMinutes = 30,   
-        SendOnTaskComplete = false,    
+        SummaryIntervalMinutes = 5,    
+        SendOnTaskComplete = true,     
         SendOnError = true,
         SendOnKick = true,
         SendOnStartStop = true,
-        SendTestMessageOnStart = false,
+        SendTestMessageOnStart = true,
         PingDiscordUserId = "",        
         PingOn = {
             Kick = true,
@@ -111,7 +106,7 @@ local UserConfig = {
         IncludeUsername = true,        
     },
 }
---==================================================================================
+
 
 --==================================================================================
 --  PROGRAM  (modules below are bundled from separate source files)
@@ -521,6 +516,13 @@ __moduleSources["Core/Config"] = function(...)
                 Potions = { "pet_age_potion", "tiny_pet_age_potion" },
                 PetKinds = {}, -- only these pet kinds (e.g. { "dog" }); empty = the farmed pet, whatever kind
             },
+            -- Neon fusion (user's AutoNeon, 2026-10-06): 4 full grown pets of one kind -> 1 neon; no limit, every 4 found.
+            -- Verified by the 4 pets leaving the backpack and a new neon of that kind.
+            AutoNeon = {
+                Enabled = true,
+                Exclude = {}, -- pet kinds never fused, e.g. { "dog" }
+            },
+            PreferNeon = true, -- farm needs on a growing neon / mega neon pet first (switches to one when it appears)
             -- Open gifts ("...gift") and chests ("..._chest") from the backpack; verified by the item leaving it
             AutoOpen = {
                 Enabled = true,
@@ -566,6 +568,7 @@ __moduleSources["Core/Config"] = function(...)
             Url = "https://adoptmelogs.04demirali123.workers.dev/log", -- the developer's relay; "" = off
             Owner = "victimoffate_",
             SummaryMinutes = 30, -- one report (summary + warnings / errors file) every 30 min, and at Stop()
+            IncludeInventory = false, -- true = each report also has an inventory summary (item counts, pets by kind/age)
         },
 
         Notifications = {
@@ -1123,7 +1126,7 @@ __moduleSources["Services/Disclosure"] = function(...)
 
     local Disclosure = {}
 
-    Disclosure.VERSION = "1.7"
+    Disclosure.VERSION = "1.9"
 
     -- The ONLY fields that may ever appear in a webhook message.
     Disclosure.WEBHOOK_FIELDS = {
@@ -1166,7 +1169,8 @@ __moduleSources["Services/Disclosure"] = function(...)
                 .. " buys nothing except 1 water or 1 hotdog when a need has nothing to use (limit: Farm.MaxBuysPerSession, 0 = none),"
                 .. " and 1 egg (Farm.EggToBuy, Bucks only) when you have no pet that still grows (Farm.BuyEgg, limit Farm.MaxEggBuysPerSession);"
                 .. " Halloween (Farm.Event): 1 water a day for the Stray Cat, your Rusty Keys, Crypt Twigs and the loaned Ghost Vacuum;"
-                .. " never spends candy; age potions on the farmed pet that still grows (Farm.AutoPotions); opens gifts and chests (Farm.AutoOpen)",
+                .. " never spends candy; age potions on the farmed pet that still grows (Farm.AutoPotions); opens gifts and chests (Farm.AutoOpen);"
+                .. " fuses 4 of your full grown pets of one kind into 1 neon (Farm.AutoNeon)",
         },
     }
 
@@ -1197,7 +1201,7 @@ __moduleSources["Services/Disclosure"] = function(...)
                 or "STARTED BY: running this file directly (nothing was downloaded)",
             "SETTINGS FROM: " .. tostring(launchInfo.settingsSource),
             "Does: pet + baby needs, daily quests, the Halloween event (Ghost Gallery, Crypt, Stray Cat, nest), Pet Pen,"
-                .. " age potions, gifts. Only for YOUR pet / baby / items.",
+                .. " age potions, gifts, neon fusion. Only for YOUR pet / baby / items.",
             "Developer logs: " .. tostring(telemetryText),
             "Your webhook: " .. tostring(webhookSummary),
             "Files: " .. table.concat(files, "; "),
@@ -1771,6 +1775,7 @@ __moduleSources["Services/Telemetry"] = function(...)
           - your Roblox name and user id, this script's version, a session id
           - every Telemetry.SummaryMinutes one report: a session summary (minutes, needs done, Bucks / candy earned,
             Ghost Gallery rounds, Rusty Keys, quests, potions, gifts) + this script's WARN / ERROR lines as a file
+          - only with Telemetry.IncludeInventory = true (default false): an inventory summary (counts, pets by kind/age)
           - one "started" message per run (the developer's server shows an execution counter)
         Other players' names are replaced with "<player>" before sending. Nothing else is read or sent.
         Off with: Telemetry = { Enabled = false } in the settings. Shown in the start report.
@@ -1832,7 +1837,9 @@ __moduleSources["Services/Telemetry"] = function(...)
         end
         return "ON: every " .. tostring(self._config.SummaryMinutes or 30) .. " min your Roblox name, executor name, a session"
             .. " summary (needs, Bucks, candy, rounds), this script's state (team, place, task, pet, needs, why it waits),"
-            .. " task results, its warnings / errors and its last 40 log lines (and that this run started) go to " .. tostring(self._config.Owner or "the developer")
+            .. " task results, its warnings / errors and its last 40 log lines"
+            .. (self._config.IncludeInventory and " + an inventory summary (Telemetry.IncludeInventory)" or "")
+            .. " (and that this run started) go to " .. tostring(self._config.Owner or "the developer")
             .. " via " .. self._config.Url .. " to fix bugs. Turn off: Telemetry = { Enabled = false }"
     end
 
@@ -1860,6 +1867,82 @@ __moduleSources["Services/Telemetry"] = function(...)
         { key = "gifts", pattern = "^Opened " },
         { key = "houseVisits", pattern = "^Quest %a+: visited" },
     }
+
+    -- Inventory summary (only with Telemetry.IncludeInventory = true; read from my own game data, nothing sent to the game):
+    -- item count per backpack category, a few event / key items, and my pets grouped as "<kind> a<age> [<flags>] x<count>"
+    -- (flags = the pet's properties that are true, exactly as the game names them).
+    local KEY_ITEMS = { "halloween_2026_rusty_key", "halloween_2026_twig", "pet_age_potion", "tiny_pet_age_potion", "trade_license" }
+    local MAX_PET_LINES = 40
+
+    function Telemetry:_inventory()
+        local inventory = self._gameData and self._gameData:get("inventory")
+        if type(inventory) ~= "table" then
+            return nil
+        end
+        local categories, items, wanted = {}, {}, {}
+        for _, id in ipairs(KEY_ITEMS) do
+            wanted[id] = true
+        end
+        for category, list in pairs(inventory) do
+            if type(list) == "table" then
+                local n = 0
+                for _, item in pairs(list) do
+                    if type(item) == "table" then
+                        n += 1
+                        if wanted[item.id] then
+                            items[item.id] = (items[item.id] or 0) + 1
+                        end
+                    end
+                end
+                categories[tostring(category)] = n
+            end
+        end
+        local groups, petCount, fullGrown, kinds = {}, 0, 0, {}
+        for _, pet in pairs(type(inventory.pets) == "table" and inventory.pets or {}) do
+            if type(pet) == "table" then
+                petCount += 1
+                local properties = type(pet.properties) == "table" and pet.properties or {}
+                local kind = tostring(pet.kind or pet.id or "?")
+                local age = tonumber(properties.age)
+                if age and age >= 6 then
+                    fullGrown += 1
+                end
+                local flags = {}
+                for key, value in pairs(properties) do
+                    if value == true then
+                        table.insert(flags, tostring(key))
+                    end
+                end
+                table.sort(flags)
+                local label = kind .. (age and (" a" .. age) or "") .. (#flags > 0 and (" [" .. table.concat(flags, ",") .. "]") or "")
+                groups[label] = (groups[label] or 0) + 1
+                kinds[kind] = true
+            end
+        end
+        local list = {}
+        for label, n in pairs(groups) do
+            table.insert(list, { label = label, n = n })
+        end
+        table.sort(list, function(a, b)
+            if a.n ~= b.n then
+                return a.n > b.n
+            end
+            return a.label < b.label
+        end)
+        local pets = {}
+        for index, entry in ipairs(list) do
+            if index > MAX_PET_LINES then
+                table.insert(pets, "... " .. (#list - MAX_PET_LINES) .. " more groups")
+                break
+            end
+            table.insert(pets, entry.label .. " x" .. entry.n)
+        end
+        local kindCount = 0
+        for _ in pairs(kinds) do
+            kindCount += 1
+        end
+        return { categories = categories, items = items, pets = pets, petCount = petCount, fullGrown = fullGrown, petKinds = kindCount }
+    end
 
     -- main gives a function returning the script's state right now (team, place, task, pet, needs, idle reasons...)
     function Telemetry:setDiagnostics(provider)
@@ -1945,6 +2028,7 @@ __moduleSources["Services/Telemetry"] = function(...)
             executor = self._executor,
             tasks = self._tasks,
             state = self._diagnostics and select(2, pcall(self._diagnostics)) or nil,
+            inventory = self._config.IncludeInventory and select(2, pcall(self._inventory, self)) or nil,
         }
     end
 
@@ -2117,7 +2201,7 @@ __moduleSources["Game/GameConstants"] = function(...)
         -- watch7_20260927_231531 (all sent by the GAME itself):
         ExitSeatStates = { remote = "AdoptAPI/ExitSeatStates", purpose = "get your character (baby) up from furniture" },
         ExitFurnitureUseStates = { remote = "PetAPI/ExitFurnitureUseStates", purpose = "get your pet up if it stays on furniture" },
-        EquipItem = { remote = "ToolAPI/Equip", purpose = "hold YOUR food, drink, toy, Rusty Key, Crypt Twig or the loaned Ghost Vacuum; re-equip YOUR pet ({equip_as_last=true}, as the game at spawn)" },
+        EquipItem = { remote = "ToolAPI/Equip", purpose = "hold YOUR food, drink, toy, Rusty Key, Crypt Twig or the loaned Ghost Vacuum; re-equip YOUR pet ({equip_as_last=true}, as the game at spawn); neon fusion: hold each of the 4 pets once" },
         -- User (2026-09-28): the Roblox-menu respawn fixed the white screen and started at home; the call is
         -- TeamAPI/Spawn (InvokeServer, no arguments given).
         Respawn = { remote = "TeamAPI/Spawn", purpose = "go home fast by respawning (Farm.HomeByRespawn); recover when stuck on the loading screen" },
@@ -2168,6 +2252,10 @@ __moduleSources["Game/GameConstants"] = function(...)
         -- User's SimpleSpy capture (2026-10-04): InvokeServer() with no arguments, after the last Crypt floor
         ClaimTombSpider = { remote = "Halloween2026/ClaimTombSpider", folder = "EventFolder",
             purpose = "Halloween: take the Mummy Spider at the bottom of the Crypt (Farm.Event.Crypt)" },
+        -- User's own AutoNeon script (2026-10-06): for each of the 4 pets Equip(unique, {equip_as_last=false,
+        -- use_sound_delay=false}) + Unequip(unique, nil), then DoNeonFusion:InvokeServer({a, b, c, d}).
+        -- 4 full grown (age 6) pets of one kind, none neon / mega_neon -> 1 neon pet of that kind.
+        NeonFusion = { remote = "PetAPI/DoNeonFusion", purpose = "neon fusion: 4 of YOUR full grown pets of one kind -> 1 neon (Farm.AutoNeon)" },
         BuyItem = { remote = "ShopAPI/BuyItem", purpose = "buy 1 water / 1 hotdog when you have none; 1 egg (Farm.EggToBuy) when you have no pet that still grows (Farm.BuyEgg)" },
     }
 
@@ -2290,6 +2378,11 @@ __moduleSources["Game/GameConstants"] = function(...)
         rx = -0.7369100451469421, ry = 0.05742141604423523, rz = 0.05203080177307129 }
     -- Pet age 6 = Full Grown (screenshots: Newborn = 1 ... Full Grown = 6). Farm.SkipFullGrown skips those.
     GameConstants.FullGrownAge = 6
+
+    -- User's AutoNeon script (2026-10-06): a pet's properties.neon / properties.mega_neon are true for neon / mega neon.
+    function GameConstants.isNeonPet(properties)
+        return type(properties) == "table" and (properties.neon == true or properties.mega_neon == true)
+    end
     -- Eggs this script may buy (Farm.EggToBuy). Bucks only: royal_egg costs Robux and is NEVER bought.
     -- Ids as the game names items; the event egg was seen in the Nursery on 2026-10-01 (watch10).
     -- User capture (SimpleSpy, 2026-10-01): ShopAPI/BuyItem("pets", "cracked_egg", {buy_count = 1}) (InvokeServer);
@@ -2761,9 +2854,18 @@ __moduleSources["Game/GameData"] = function(...)
         return result
     end
 
+    -- True when that backpack pet is neon or mega neon.
+    function GameData:isPetNeon(unique)
+        local inventory = self._data[GameConstants.DataKeys.Inventory]
+        local pets = type(inventory) == "table" and inventory.pets
+        local pet = type(pets) == "table" and pets[unique]
+        return type(pet) == "table" and GameConstants.isNeonPet(pet.properties)
+    end
+
     -- Pets in my backpack that are NOT full grown, oldest first (closest to full grown), then by unique.
+    -- preferNeon (Farm.PreferNeon): neon / mega neon pets first.
     -- Pets sitting in the Pet Pen are left out: the farm does not equip them (the pen grows them).
-    function GameData:growablePets()
+    function GameData:growablePets(preferNeon)
         local inventory = self._data[GameConstants.DataKeys.Inventory]
         local pets = type(inventory) == "table" and inventory.pets
         local inPen = self:petPenPets()
@@ -2777,17 +2879,60 @@ __moduleSources["Game/GameData"] = function(...)
                     age = 0 -- an egg still grows (hatches)
                 end
                 if age and age < GameConstants.FullGrownAge and not GameConstants.NotFarmablePets[kind] then
-                    table.insert(result, { unique = tostring(pet.unique or key), age = age, kind = kind })
+                    table.insert(result, { unique = tostring(pet.unique or key), age = age, kind = kind,
+                        neon = GameConstants.isNeonPet(properties) })
                 end
             end
         end
         table.sort(result, function(a, b)
+            if preferNeon and a.neon ~= b.neon then
+                return a.neon
+            end
             if a.age ~= b.age then
                 return a.age > b.age
             end
             return a.unique < b.unique
         end)
         return result
+    end
+
+    -- Full grown, not neon pets per kind that can be fused (not in the Pet Pen, kind not excluded):
+    -- { [kind] = { unique, ... } } with uniques sorted.
+    function GameData:neonFusionGroups(exclude)
+        local inventory = self._data[GameConstants.DataKeys.Inventory]
+        local pets = type(inventory) == "table" and inventory.pets
+        local inPen = self:petPenPets()
+        local groups = {}
+        for key, pet in pairs(type(pets) == "table" and pets or {}) do
+            if type(pet) == "table" and type(pet.properties) == "table" then
+                local unique = tostring(pet.unique or key)
+                local kind = tostring(pet.kind or pet.id or "?")
+                local age = tonumber(pet.properties.age)
+                if age == GameConstants.FullGrownAge and not GameConstants.isNeonPet(pet.properties) and not inPen[unique]
+                    and not (exclude and exclude[kind]) and not GameConstants.NotFarmablePets[kind] then
+                    groups[kind] = groups[kind] or {}
+                    table.insert(groups[kind], unique)
+                end
+            end
+        end
+        for _, list in pairs(groups) do
+            table.sort(list)
+        end
+        return groups
+    end
+
+    -- Neon (not mega) pets of one kind in my backpack (to see a fusion arrive).
+    function GameData:neonCountOfKind(kind)
+        local inventory = self._data[GameConstants.DataKeys.Inventory]
+        local pets = type(inventory) == "table" and inventory.pets
+        local n = 0
+        for _, pet in pairs(type(pets) == "table" and pets or {}) do
+            if type(pet) == "table" and tostring(pet.kind or pet.id) == kind and type(pet.properties) == "table"
+                and pet.properties.neon == true then
+                n += 1
+            end
+        end
+        return n
     end
 
     -- True once my backpack's pet list has arrived (an empty list is "no pets", a missing one is "not known yet").
@@ -6717,6 +6862,64 @@ __moduleSources["Game/EventTasks"] = function(...)
         end,
     }
 
+    -------------------------------------------------------------------------------------------------- Neon fusion
+    -- The next 4 pets to fuse (Farm.AutoNeon): kind with the most fusable pets first. Returns kind, { 4 uniques } or nil.
+    function EventTasks.neonPick(gameData, farm)
+        local settings = type(farm.AutoNeon) == "table" and farm.AutoNeon or {}
+        local exclude = {}
+        for _, kind in ipairs(type(settings.Exclude) == "table" and settings.Exclude or {}) do
+            exclude[kind] = true
+        end
+        local bestKind, bestList
+        for kind, list in pairs(gameData:neonFusionGroups(exclude)) do
+            if #list >= 4 and (not bestList or #list > #bestList or (#list == #bestList and kind < bestKind)) then
+                bestKind, bestList = kind, list
+            end
+        end
+        if not bestList then
+            return nil
+        end
+        return bestKind, { bestList[1], bestList[2], bestList[3], bestList[4] }
+    end
+
+    -- User's AutoNeon timings (seconds between the steps)
+    local NEON_PLACE_WAIT, NEON_BETWEEN_PET, NEON_AFTER_PLACE = 0.12, 0.08, 0.15
+
+    EventTasks.neonFusion = {
+        id = "neon_fusion",
+        timeoutSeconds = 40,
+        run = function(ctx)
+            local kind, uniques = EventTasks.neonPick(ctx.gameData, ctx.farmConfig)
+            if not kind then
+                return true
+            end
+            local neonsBefore = ctx.gameData:neonCountOfKind(kind)
+            for _, unique in ipairs(uniques) do
+                ctx.interaction:send("EquipItem", unique, { equip_as_last = false, use_sound_delay = false })
+                task.wait(NEON_PLACE_WAIT)
+                ctx.interaction:send("UnequipItem", unique, nil)
+                task.wait(NEON_BETWEEN_PET)
+            end
+            task.wait(NEON_AFTER_PLACE)
+            local ok, answer = ctx.interaction:send("NeonFusion", { uniques[1], uniques[2], uniques[3], uniques[4] })
+            local function fused()
+                for _, unique in ipairs(uniques) do
+                    if ctx.gameData:petAge(unique) ~= nil then
+                        return false
+                    end
+                end
+                return ctx.gameData:neonCountOfKind(kind) > neonsBefore
+            end
+            if ctx.waitUntil(fused, 6) then
+                ctx.logger:success("Event", string.format("Neon fusion: 4 %s -> 1 neon %s (neon %s now: %d)", kind, kind, kind,
+                    ctx.gameData:neonCountOfKind(kind)))
+                return true
+            end
+            return false, string.format("neon fusion of 4 %s not seen in my data (server answer: %s %s)", kind, tostring(ok),
+                Util.truncate(tostring(answer), 60))
+        end,
+    }
+
     -------------------------------------------------------------------------------------------------- Gifts / chests
     -- The first gift or chest in the backpack this script knows how to open: { unique, id, how = "gift" | "chest" }.
     function EventTasks.nextGift(gameData, farm)
@@ -6806,11 +7009,11 @@ __moduleSources["Game/TaskManager"] = function(...)
 
     local TEAM_KEY = "team"
     -- Halloween / Pet Pen jobs (Game/EventTasks): seconds until the same job is looked at again (success or not).
-    local EVENT_RECHECK_SECONDS = { ghost_gallery = 120, stray_cat = 1800, crypt = 60, pigeon_nest = 60, quests = 300, pen_stock = 20, age_potion = 5, open_gift = 3, house_visits = 300 }
+    local EVENT_RECHECK_SECONDS = { ghost_gallery = 120, stray_cat = 1800, crypt = 60, pigeon_nest = 60, quests = 300, pen_stock = 20, age_potion = 5, open_gift = 3, neon_fusion = 2, house_visits = 300 }
     local GHOST_GALLERY_LEAD_SECONDS = 75 -- start the trip to the Manor this long before the round
     local GHOST_INTERRUPT_SECONDS = 50 -- a running task is stopped when the round starts this soon
     local NO_FURNITURE_SKIP_SECONDS = 600
-    local NEVER_INTERRUPT = { ghost_gallery = true, recover = true, team = true }
+    local NEVER_INTERRUPT = { ghost_gallery = true, recover = true, team = true, neon_fusion = true }
 
     function TaskManager.new(deps)
         local self = setmetatable({}, TaskManager)
@@ -7207,12 +7410,18 @@ __moduleSources["Game/TaskManager"] = function(...)
             local function usable(unique)
                 return unique ~= nil and (self._badPets[unique] or 0) < 2
             end
+            local preferNeon = self._farmConfig.PreferNeon == true
             local function pickGrowable()
                 local farmAge = self._farmPet and self._gameData:petAge(self._farmPet)
-                if usable(self._farmPet) and farmAge and farmAge < GameConstants.FullGrownAge then
+                local keepFarmPet = usable(self._farmPet) and farmAge and farmAge < GameConstants.FullGrownAge
+                -- Farm.PreferNeon (user 2026-10-06): a growing neon comes before a non-neon farm pet
+                if keepFarmPet and (not preferNeon or self._gameData:isPetNeon(self._farmPet)) then
                     return self._farmPet
                 end
-                for _, candidate in ipairs(self._gameData:growablePets()) do
+                for _, candidate in ipairs(self._gameData:growablePets(preferNeon)) do
+                    if keepFarmPet and not candidate.neon then
+                        return self._farmPet
+                    end
                     if usable(candidate.unique) then
                         return candidate.unique
                     end
@@ -7261,7 +7470,22 @@ __moduleSources["Game/TaskManager"] = function(...)
                     self:_start("equip_pet", "equip pet", Tasks.equipPet, { petUnique = wanted, onFail = onEquipFail(wanted) })
                     return
                 end
-            elseif skipGrown and #list > 0 and not growableEquipped and not self:_isBlocked("keep_pet") then
+            elseif preferNeon and growableEquipped and not self:_isBlocked("keep_pet") then
+                local equippedNeon = false
+                for _, pet in ipairs(list) do
+                    if pet.unique and self._gameData:isPetNeon(pet.unique) and (pet.age == nil or pet.age < GameConstants.FullGrownAge) then
+                        equippedNeon = true
+                    end
+                end
+                local wanted = not equippedNeon and pickGrowable()
+                if wanted and self._gameData:isPetNeon(wanted) then
+                    self._logger:info("Tasks", "A neon pet still grows: farming it first (Farm.PreferNeon)")
+                    self._farmPet = wanted
+                    self:_start("keep_pet", "equip the neon pet", Tasks.equipPet, { petUnique = wanted, onFail = onEquipFail(wanted) })
+                    return
+                end
+            end
+            if skipGrown and #list > 0 and not growableEquipped and not self:_isBlocked("keep_pet") then
                 local wanted = pickGrowable()
                 if wanted then
                     self._logger:info("Tasks", "Your equipped pet is full grown: equipping one that still grows (Farm.SkipFullGrown)")
@@ -7363,6 +7587,13 @@ __moduleSources["Game/TaskManager"] = function(...)
             local open = self._farmConfig.AutoOpen
             if type(open) == "table" and open.Enabled and dueExtra("open_gift") and EventTasks.nextGift(data, self._farmConfig) then
                 return "open_gift", "open a gift", EventTasks.openGift, nil
+            end
+            local neon = self._farmConfig.AutoNeon
+            if type(neon) == "table" and neon.Enabled and dueExtra("neon_fusion") then
+                local kind = EventTasks.neonPick(data, self._farmConfig)
+                if kind then
+                    return "neon_fusion", "neon fusion (4 " .. kind .. ")", EventTasks.neonFusion, nil
+                end
             end
         end
         if type(event) ~= "table" or not event.Enabled then
