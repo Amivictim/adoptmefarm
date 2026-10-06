@@ -49,11 +49,11 @@ local UserConfig = {
         MaxEggBuysPerSession = 0, -- 0 = no limit; a number = at most that many eggs per session -- a full grown pet is equipped (e.g. the game swapped it): equip one that still grows
         AntiAfk = true,       -- prevents the 20-minute idle kick (virtual click, only when Roblox says idle)
         AutoPotions = {       -- age potions on the equipped pet that still grows
-            Enabled = true,
+            Enabled = false,
             PetKinds = {},       -- e.g. { "dog", "cat" }; empty = whatever pet is farmed
         },
         AutoNeon = {          -- 4 full grown pets of one kind -> 1 neon (every 4 it finds, no limit)
-            Enabled = true,
+            Enabled = false,
             Exclude = {},        -- e.g. { "dog" } = never fuse these pet kinds
         },
         PreferNeon = true,    -- farm needs on a growing neon pet first
