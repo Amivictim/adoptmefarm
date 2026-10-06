@@ -1,5 +1,5 @@
 --[[
-    AdoptMe Farm  v1.10
+    AdoptMe Farm  v1.11
     Single-file build of a modular project. Plain, readable Luau — no obfuscation, no remote code.
 
     WHAT IT DOES is printed in the console (and log file) every time it starts.
@@ -57,6 +57,9 @@ local UserConfig = {
             Exclude = {},        -- e.g. { "dog" } = never fuse these pet kinds
         },
         PreferNeon = true,    -- farm needs on a growing neon pet first
+        MultiNeed = {         -- while waiting at a place (school, pizza...), does food / drink / toy / petting too
+            Enabled = true,
+        },
         AutoOpen = {          -- opens gifts and chests in your backpack
             Enabled = true,
             Exclude = {},        -- e.g. { "biggift" } = never open these
@@ -72,6 +75,14 @@ local UserConfig = {
             AutoNest = true,     -- opens twig graves first until you have 8, then builds the nest once
             StrayCat = true,     -- gives 1 water to the Stray Cat once a day
             PetPen = true,       -- claims the Pet Pen and keeps it full with pets that still grow
+            CandyPets = {        -- buys Halloween pets with candy: saves for the first one in the list, then the next
+                Enabled = true,
+                KeepCandy = 0,       -- never spend below this
+                Buy = {              -- max = how many you want (0 = no limit)
+                    { id = "halloween_2026_jump_scare", price = 40000, max = 1 },
+                    { id = "halloween_2026_jacobean_pigeon", price = 4000, max = 0 },
+                },
+            },
             PetPenMinutes = 15,
             PetPenSlots = 4,     -- 5 if you bought the extra slot
             PetPenStock = true,  -- keeps 4 + 1 pets that still grow: buys eggs when fewer (Farm.BuyEgg)
@@ -84,17 +95,14 @@ local UserConfig = {
         SessionFile = false,
     },
 
-    -- Developer logs: your Roblox name + this script's warnings / errors + a summary go to the developer
-    -- (victimoffate_) to fix bugs. false = nothing is sent.
     Telemetry = {
         Enabled = true,
-        ncludeInventory = true
+        IncludeInventory = true,
     },
 
-    -- Discord webhooks are OPTIONAL and OFF by default. Nothing is sent anywhere unless you turn this on.
     -- The exact list of what can be sent is printed every time the script starts.
     Notifications = {
-        Enabled = true,
+        Enabled = false,
         Webhooks = {
             Summary = "",   -- paste your webhook URL here <<< (session start/stop, summaries, completed needs)
             Alerts = "",    -- optional second webhook for errors/kicks (empty = uses Summary)
@@ -484,6 +492,12 @@ __moduleSources["Core/Config"] = function(...)
                 walk = true,
                 ride = true, -- walks with the stroller (watch8: ride only progresses while moving)
             },
+            -- Multi-need (user 2026-10-06): while a place need (school, pizza, salon, camping...) only waits, one of these
+            -- needs that need no travel runs at the same time (food / drink items, toy, petting). Each is verified.
+            MultiNeed = {
+                Enabled = true,
+                Kinds = { "pet_me", "hungry", "thirsty", "play" },
+            },
             -- Higher runs first. Short needs first; location needs take about 50 s.
             Priority = {
                 mystery = 51,
@@ -552,6 +566,16 @@ __moduleSources["Core/Config"] = function(...)
                 StrayCat = true, -- give 1 water to the Stray Cat once a day (+50 candy)
                 PetPen = true, -- claim the Pet Pen, take full grown pets out, fill it with pets that still grow (at home)
                 PetPenMinutes = 15,
+                -- Halloween pets bought with candy (user 2026-10-06). Wish list in order: candy is saved for the first one
+                -- not owned `max` times yet (0 = no limit), then the next. Verified by the pet arriving in the backpack.
+                CandyPets = {
+                    Enabled = true,
+                    KeepCandy = 0, -- never spend below this
+                    Buy = {
+                        { id = "halloween_2026_jump_scare", price = 40000, max = 1 },
+                        { id = "halloween_2026_jacobean_pigeon", price = 4000, max = 0 },
+                    },
+                },
                 PetPenSlots = 4, -- 4 free slots; 5 if you own the extra-slot gamepass
                 PetPenStock = true, -- keep PetPenSlots + 1 pets that still grow (buys eggs; needs Farm.BuyEgg)
                 PetPenStockMinBucks = 750, -- only buy eggs for the pen while you have at least this many Bucks
@@ -1137,7 +1161,7 @@ __moduleSources["Services/Disclosure"] = function(...)
 
     local Disclosure = {}
 
-    Disclosure.VERSION = "1.10"
+    Disclosure.VERSION = "1.11"
 
     -- The ONLY fields that may ever appear in a webhook message.
     Disclosure.WEBHOOK_FIELDS = {
@@ -1180,7 +1204,7 @@ __moduleSources["Services/Disclosure"] = function(...)
                 .. " buys nothing except 1 water or 1 hotdog when a need has nothing to use (limit: Farm.MaxBuysPerSession, 0 = none),"
                 .. " and 1 egg (Farm.EggToBuy, Bucks only) when you have no pet that still grows (Farm.BuyEgg, limit Farm.MaxEggBuysPerSession);"
                 .. " Halloween (Farm.Event): 1 water a day for the Stray Cat, your Rusty Keys, Crypt Twigs and the loaned Ghost Vacuum;"
-                .. " never spends candy; age potions on the farmed pet that still grows (Farm.AutoPotions); opens gifts and chests (Farm.AutoOpen);"
+                .. " spends candy only on the Halloween pets in Farm.Event.CandyPets; age potions on the farmed pet that still grows (Farm.AutoPotions); opens gifts and chests (Farm.AutoOpen);"
                 .. " fuses 4 of your full grown pets of one kind into 1 neon (Farm.AutoNeon)",
         },
     }
@@ -1986,8 +2010,10 @@ __moduleSources["Services/Telemetry"] = function(...)
                     table.remove(self._tail, 1)
                 end
             end
-            local doneKind = string.match(message, "^Done: ([%w_]+)")
-            local failedKind = string.match(message, "^FAILED: ([%w_]+)") or string.match(message, "^TIMEOUT: ([%w_]+)")
+            local plain = string.gsub(message, "^(%u+:) %(side%) ", "%1 ", 1) -- MultiNeed side tasks count as their kind
+            plain = string.gsub(plain, "^(Done:) %(side%) ", "%1 ", 1)
+            local doneKind = string.match(plain, "^Done: ([%w_]+)")
+            local failedKind = string.match(plain, "^FAILED: ([%w_]+)") or string.match(plain, "^TIMEOUT: ([%w_]+)")
             local kind = doneKind or failedKind
             if kind and category == "Tasks" then
                 local entry = self._tasks[kind] or { done = 0, failed = 0 }
@@ -2267,7 +2293,7 @@ __moduleSources["Game/GameConstants"] = function(...)
         -- use_sound_delay=false}) + Unequip(unique, nil), then DoNeonFusion:InvokeServer({a, b, c, d}).
         -- 4 full grown (age 6) pets of one kind, none neon / mega_neon -> 1 neon pet of that kind.
         NeonFusion = { remote = "PetAPI/DoNeonFusion", purpose = "neon fusion: 4 of YOUR full grown pets of one kind -> 1 neon (Farm.AutoNeon)" },
-        BuyItem = { remote = "ShopAPI/BuyItem", purpose = "buy 1 water / 1 hotdog when you have none; 1 egg (Farm.EggToBuy) when you have no pet that still grows (Farm.BuyEgg)" },
+        BuyItem = { remote = "ShopAPI/BuyItem", purpose = "buy 1 water / 1 hotdog when you have none; 1 egg (Farm.EggToBuy) when you have no pet that still grows (Farm.BuyEgg); Halloween pets with candy (Farm.Event.CandyPets)" },
     }
 
     -- watch4: ChooseTeam("Babies", options) -> team changed to "Babies" in my data
@@ -4743,6 +4769,9 @@ __moduleSources["Game/Tasks"] = function(...)
             local extended = false
             local taskStart = Util.now() - 1
             local current = ctx.currentGroup(group.kind)
+            if ctx.setWaiting then
+                ctx.setWaiting(true) -- only waiting here now: quick needs may run beside it (Farm.MultiNeed)
+            end
             while true do
                 if current == nil then
                     local drop = handleDrop()
@@ -5201,7 +5230,7 @@ __moduleSources["Game/Tasks"] = function(...)
                     if not ctx.findEntry(group.kind, entry.owner, entry.petUnique) then
                         break
                     end
-                    if entry.owner == "pet" and group.kind == "hungry" and not entry.triedBowl then
+                    if entry.owner == "pet" and group.kind == "hungry" and not entry.triedBowl and not ctx.side then
                         entry.triedBowl = true
                         local bowlOk, bowlReason = bowlForPet(ctx, group.kind, entry)
                         if bowlOk == false then
@@ -6941,6 +6970,67 @@ __moduleSources["Game/EventTasks"] = function(...)
         end,
     }
 
+    -------------------------------------------------------------------------------------------------- Candy pets
+    -- User's capture (2026-10-06): ShopAPI/BuyItem("pets", "halloween_2026_jacobean_pigeon", {buy_count = 1}) = 4k candy,
+    -- ("pets", "halloween_2026_jump_scare", {buy_count = 1}) = 40k candy.
+    -- Farm.Event.CandyPets.Buy is a wish list in order: the first entry not owned `Max` times yet (0 = no limit) is the
+    -- target; it is bought once my candy minus KeepCandy reaches its price, otherwise candy is SAVED for it (later entries
+    -- wait). Returns the entry or nil.
+    function EventTasks.candyPetTarget(gameData, settings)
+        local candy = tonumber(gameData:get(GameConstants.DataKeys.Candy))
+        if not candy then
+            return nil
+        end
+        for _, entry in ipairs(type(settings.Buy) == "table" and settings.Buy or {}) do
+            local id, price, max = entry.id or entry[1], tonumber(entry.price), tonumber(entry.max) or 0
+            if type(id) == "string" and price and price > 0 then
+                local owned = 0
+                for _ in pairs(gameData:petUniquesOfKind(id)) do
+                    owned += 1
+                end
+                if max <= 0 or owned < max then
+                    if candy - (tonumber(settings.KeepCandy) or 0) >= price then
+                        return { id = id, price = price }
+                    end
+                    return nil -- saving for this one
+                end
+            end
+        end
+        return nil
+    end
+
+    EventTasks.buyCandyPet = {
+        id = "candy_pet",
+        timeoutSeconds = 30,
+        run = function(ctx)
+            local settings = ctx.farmConfig.Event and ctx.farmConfig.Event.CandyPets or {}
+            local pick = EventTasks.candyPetTarget(ctx.gameData, settings)
+            if not pick then
+                return true
+            end
+            local before = ctx.gameData:petUniquesOfKind(pick.id)
+            local candyBefore = tonumber(ctx.gameData:get(GameConstants.DataKeys.Candy)) or 0
+            local sent, answer = ctx.interaction:send("BuyItem", GameConstants.EggCategory, pick.id, { buy_count = 1 })
+            local newUnique
+            ctx.waitUntil(function()
+                for unique in pairs(ctx.gameData:petUniquesOfKind(pick.id)) do
+                    if not before[unique] then
+                        newUnique = unique
+                        return true
+                    end
+                end
+                return false
+            end, 8)
+            if not newUnique then
+                return false, string.format("no %s arrived in your backpack (server answer: %s %s)", pick.id, tostring(sent),
+                    Util.truncate(tostring(answer), 60))
+            end
+            local candyAfter = tonumber(ctx.gameData:get(GameConstants.DataKeys.Candy)) or candyBefore
+            ctx.logger:success("Event", string.format("Bought %s for %d candy (candy left: %d)", pick.id, candyBefore - candyAfter, candyAfter))
+            return true
+        end,
+    }
+
     -------------------------------------------------------------------------------------------------- Gifts / chests
     -- The first gift or chest in the backpack this script knows how to open: { unique, id, how = "gift" | "chest" }.
     function EventTasks.nextGift(gameData, farm)
@@ -7030,7 +7120,7 @@ __moduleSources["Game/TaskManager"] = function(...)
 
     local TEAM_KEY = "team"
     -- Halloween / Pet Pen jobs (Game/EventTasks): seconds until the same job is looked at again (success or not).
-    local EVENT_RECHECK_SECONDS = { ghost_gallery = 120, stray_cat = 1800, crypt = 60, pigeon_nest = 60, quests = 300, pen_stock = 20, age_potion = 5, open_gift = 3, neon_fusion = 2, house_visits = 300 }
+    local EVENT_RECHECK_SECONDS = { ghost_gallery = 120, stray_cat = 1800, crypt = 60, pigeon_nest = 60, quests = 300, pen_stock = 20, age_potion = 5, open_gift = 3, neon_fusion = 2, candy_pet = 30, house_visits = 300 }
     local GHOST_GALLERY_LEAD_SECONDS = 75 -- start the trip to the Manor this long before the round
     local GHOST_INTERRUPT_SECONDS = 50 -- a running task is stopped when the round starts this soon
     local NO_FURNITURE_SKIP_SECONDS = 600
@@ -7147,12 +7237,35 @@ __moduleSources["Game/TaskManager"] = function(...)
         return self._farmConfig.BabyMode and team ~= nil and team ~= GameConstants.BabiesTeam and not self:_isBlocked(TEAM_KEY)
     end
 
-    function TaskManager:_makeContext(runMaid, startedAt)
+    -- A side task (Farm.MultiNeed) must never move the character: travel calls are refused, reads pass through.
+    local NO_TRAVEL = { goTo = true, exitToMainMap = true, visitHouse = true }
+    local function sideTravel(travel)
+        if not travel then
+            return nil
+        end
+        return setmetatable({}, { __index = function(_, name)
+            if NO_TRAVEL[name] then
+                return function()
+                    return false, "side task: no travel (the main task holds the place)"
+                end
+            end
+            local value = travel[name]
+            if type(value) == "function" then
+                return function(_, ...)
+                    return value(travel, ...)
+                end
+            end
+            return value
+        end })
+    end
+
+    function TaskManager:_makeContext(runMaid, startedAt, running)
         local context = {
             logger = self._logger,
             state = self._state,
             interaction = self._interaction,
-            travel = self._travel,
+            travel = running and running.side and sideTravel(self._travel) or self._travel,
+            side = running and running.side or nil,
             petLocator = self._petLocator,
             furniture = self._furniture,
             gameData = self._gameData,
@@ -7175,6 +7288,12 @@ __moduleSources["Game/TaskManager"] = function(...)
         function context.completedSince(kind, owner, petUnique)
             local at = self._completions[kind .. "|" .. owner .. "|" .. tostring(petUnique)]
             return at ~= nil and at >= startedAt
+        end
+        -- A location task calls this when it only waits at the place (side tasks may run then, Farm.MultiNeed).
+        function context.setWaiting(isWaiting)
+            if running then
+                running.waiting = isWaiting == true
+            end
         end
         function context.currentGroup(kind)
             return self:_group(kind)
@@ -7202,7 +7321,8 @@ __moduleSources["Game/TaskManager"] = function(...)
         return context
     end
 
-    function TaskManager:_start(key, label, taskDefinition, group, isEventJob)
+    function TaskManager:_start(key, label, taskDefinition, group, isEventJob, side)
+        local slot = side and "_side" or "_running"
         local attempt = (self._failures[key] or 0) + 1
         local runMaid = Maid.new()
         local startedAt = Util.now()
@@ -7213,33 +7333,39 @@ __moduleSources["Game/TaskManager"] = function(...)
             deadline = startedAt + taskDefinition.timeoutSeconds,
             maid = runMaid,
             eventJob = isEventJob == true,
+            side = side == true,
         }
-        self._running = running
-        self._state:set("farm.currentTask", key, "TaskManager")
-        self._logger:info("Tasks", string.format("Start: %s (attempt %d, limit %d s)", label, attempt, taskDefinition.timeoutSeconds))
+        self[slot] = running
+        if side then
+            running.label = "(side) " .. label
+        else
+            self._state:set("farm.currentTask", key, "TaskManager")
+        end
+        self._logger:info("Tasks", string.format("Start: %s (attempt %d, limit %d s)", running.label, attempt, taskDefinition.timeoutSeconds))
 
-        local context = self:_makeContext(runMaid, startedAt)
+        local context = self:_makeContext(runMaid, startedAt, running)
         running.thread = task.spawn(function()
             local ok, result, reason = pcall(taskDefinition.run, context, group, attempt)
-            if self._running ~= running then
+            if self[slot] ~= running then
                 return -- already finished (timeout or stop)
             end
             if not ok then
-                self:_finish("FAILED", "script error: " .. tostring(result))
+                self:_finish("FAILED", "script error: " .. tostring(result), slot)
             elseif result == true then
-                self:_finish("SUCCESS")
+                self:_finish("SUCCESS", nil, slot)
             else
-                self:_finish("FAILED", tostring(reason or "unknown reason"))
+                self:_finish("FAILED", tostring(reason or "unknown reason"), slot)
             end
         end)
     end
 
-    function TaskManager:_finish(result, reason)
-        local running = self._running
+    function TaskManager:_finish(result, reason, slot)
+        slot = slot or "_running"
+        local running = self[slot]
         if not running then
             return
         end
-        self._running = nil
+        self[slot] = nil
         if running.thread and coroutine.running() ~= running.thread then
             pcall(task.cancel, running.thread)
         end
@@ -7247,7 +7373,9 @@ __moduleSources["Game/TaskManager"] = function(...)
         task.spawn(function()
             running.maid:Clean()
         end)
-        self._state:set("farm.currentTask", "none", "TaskManager")
+        if slot == "_running" then
+            self._state:set("farm.currentTask", "none", "TaskManager")
+        end
 
         local key = running.key
         local seconds = Util.now() - running.startedAt
@@ -7273,7 +7401,7 @@ __moduleSources["Game/TaskManager"] = function(...)
         local travelTrouble = result ~= "SUCCESS" and type(reason) == "string"
             and (string.find(reason, "travel", 1, true) or string.find(reason, "still in", 1, true)
                 or string.find(reason, "going home", 1, true))
-        if travelTrouble and key ~= "recover" then
+        if travelTrouble and key ~= "recover" and slot == "_running" then
             self._travelFailures = (self._travelFailures or 0) + 1
         elseif result == "SUCCESS" then
             self._travelFailures = 0
@@ -7359,7 +7487,7 @@ __moduleSources["Game/TaskManager"] = function(...)
         end
         table.sort(disabled)
         return { idle = idle, busyMinutes = math.floor((self._busy or 0) / 6 + 0.5) / 10, disabled = disabled,
-            running = self._running and self._running.label or nil }
+            running = self._running and self._running.label or nil, side = self._side and self._side.label or nil }
     end
 
     function TaskManager:_tickInner()
@@ -7368,6 +7496,9 @@ __moduleSources["Game/TaskManager"] = function(...)
             return
         end
         self:_trackPet()
+        if self._side and Util.now() > self._side.deadline then
+            self:_finish("TIMEOUT", "no result within " .. math.floor(self._side.deadline - self._side.startedAt) .. " s", "_side")
+        end
         if self._running then
             if Util.now() > self._running.deadline then
                 self:_finish("TIMEOUT", "no result within " .. math.floor(self._running.deadline - self._running.startedAt) .. " s")
@@ -7376,7 +7507,15 @@ __moduleSources["Game/TaskManager"] = function(...)
                 -- The interrupted job is chosen again later; AutoNest continues from my data (nothing is lost).
                 self._logger:info("Ghost", "Priority interrupt: stopping " .. self._running.label .. " for the Ghost Gallery round")
                 self:_finish("INTERRUPTED", "Ghost Gallery round")
+                self:_finish("INTERRUPTED", "Ghost Gallery round", "_side")
+            else
+                self:_maybeStartSide()
             end
+            return
+        end
+        if self._side then
+            -- the main task ended while a side task still runs: nothing may travel until it is done
+            self._why = "side task finishing"
             return
         end
         if self._state:get("session.disconnectReason") ~= nil or self._state:get("game.ready") ~= true then
@@ -7539,6 +7678,36 @@ __moduleSources["Game/TaskManager"] = function(...)
         end
     end
 
+    -- Farm.MultiNeed (user 2026-10-06, "farm at the highest level"): while the main task only WAITS at a place
+    -- (school, pizza, salon, camping...), a quick need that needs no travel (food, drink, toy, petting) runs beside it.
+    -- Its own result is verified like any task; the main task keeps checking its own need.
+    function TaskManager:_maybeStartSide()
+        local multi = self._farmConfig.MultiNeed
+        local main = self._running
+        if type(multi) ~= "table" or not multi.Enabled or self._side or not main or not main.waiting then
+            return
+        end
+        local best, bestTask, bestPriority = nil, nil, -math.huge
+        for _, kind in ipairs(type(multi.Kinds) == "table" and multi.Kinds or {}) do
+            local taskDefinition = Tasks.findFor(kind)
+            if kind ~= main.key and taskDefinition and self._farmConfig.Tasks[kind] == true and not self:_isBlocked(kind) then
+                local group = self:_group(kind)
+                local priority = self._farmConfig.Priority[kind] or 0
+                local petOnly = kind == "pet_me" or kind == "play"
+                if group and (not petOnly or group.petEntry) and priority > bestPriority then
+                    best, bestTask, bestPriority = group, taskDefinition, priority
+                end
+            end
+        end
+        if best then
+            local owners = {}
+            for _, entry in ipairs(best.entries) do
+                table.insert(owners, entry.owner == "baby" and "baby" or tostring(entry.petKind or "pet"))
+            end
+            self:_start(best.kind, best.kind .. " (" .. table.concat(owners, " + ") .. ")", bestTask, best, false, true)
+        end
+    end
+
     -- The next Ghost Gallery round start if it is due within `lead` seconds (and the job may run), else nil.
     function TaskManager:_ghostRoundDue(lead)
         local event = self._farmConfig.Event
@@ -7639,6 +7808,14 @@ __moduleSources["Game/TaskManager"] = function(...)
             and EventTasks.cryptPlan(data:get(KEYS.Crypt), true) then
             return "crypt", "collect twigs in the Crypt (AutoNest)", EventTasks.crypt, nil
         end
+        -- User (2026-10-06): buy the Halloween pets with candy (Farm.Event.CandyPets), saving for the first one wanted
+        local candyPets = event.CandyPets
+        if type(candyPets) == "table" and candyPets.Enabled and due("candy_pet") and data:petInventoryKnown() then
+            local pick = EventTasks.candyPetTarget(data, candyPets)
+            if pick then
+                return "candy_pet", "buy " .. pick.id .. " (" .. pick.price .. " candy)", EventTasks.buyCandyPet, nil
+            end
+        end
         if event.StrayCat and due("stray_cat") then
             local cat = data:get(KEYS.StrayCat)
             if type(cat) == "table" and cat.fed_today == false then
@@ -7704,14 +7881,14 @@ __moduleSources["Game/TaskManager"] = function(...)
 
     -- A single allowlisted call outside a task (cashback). Not sent while a task runs.
     function TaskManager:sendDirect(actionName, ...)
-        if self._running or self._stopped then
+        if self._running or self._side or self._stopped then
             return false, "busy"
         end
         return self._interaction:send(actionName, ...)
     end
 
     function TaskManager:isBusy()
-        return self._running ~= nil
+        return self._running ~= nil or self._side ~= nil
     end
 
     function TaskManager:stop()
@@ -7722,6 +7899,7 @@ __moduleSources["Game/TaskManager"] = function(...)
         if self._running then
             self:_finish("CANCELLED", "farm stopped")
         end
+        self:_finish("CANCELLED", "farm stopped", "_side")
     end
 
     return TaskManager
