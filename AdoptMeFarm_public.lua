@@ -1,5 +1,4 @@
--- AdoptMe Farm  v2.0 (Adopt Victims - UI Remastered Edition) | Adopt Victims v2 - UI Remastered Edition | settings: the window
-
+-- AdoptMe Farm  v2.0.0 (Adopt Victims - UI Remastered Edition) | Adopt Victims v2 - UI Remastered Edition
 local UserConfig = {
     Farm = {
         Enabled = false,
@@ -488,6 +487,7 @@ __moduleSources["Core/Config"] = function(...)
             Descriptions = false,
             Autoload = "",
             StartHidden = false,
+            UIScale = "Auto",
             Language = "Auto",
         },
         Logging = {
@@ -1168,7 +1168,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.0 (Adopt Victims - UI Remastered Edition)"
+    Disclosure.VERSION = "2.0.2 (Adopt Victims - UI Remastered Edition)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -2221,6 +2221,8 @@ __moduleSources["Services/Lang"] = function(...)
     add("Event pop-ups", "Olay bildirimleri", "Avisos de eventos", "Avisos de eventos")
     add("Autoclose GUI on execute", "Açılışta pencereyi gizle", "Ocultar ventana al ejecutar", "Ocultar janela ao executar")
     add("Theme", "Tema", "Tema", "Tema")
+    add("UI scale", "Arayüz boyutu", "Tamaño de la interfaz", "Tamanho da interface")
+    add("How big the window is drawn (Auto: smaller on phones)", "Pencerenin boyutu (Otomatik: telefonda daha küçük)", "Tamaño de la ventana (Automático: más pequeña en móviles)", "Tamanho da janela (Automático: menor no celular)")
     add("Language", "Dil", "Idioma", "Idioma")
     add("Hide / show key", "Gizle / göster tuşu", "Tecla mostrar / ocultar", "Tecla mostrar / ocultar")
     add("Help lines", "Yardım satırları", "Líneas de ayuda", "Linhas de ajuda")
@@ -2836,6 +2838,7 @@ __moduleSources["Services/Interface"] = function(...)
         ["wand-sparkles"] = 109636225248973,
         ["wrench"] = 108764185264619,
         ["users"] = 109023655602096,
+        ["scaling"] = 72422884764012,
         ["wifi"] = 101360393607039,
         ["globe"] = 111578783307093,
         ["languages"] = 99917326264912,
@@ -3707,7 +3710,7 @@ __moduleSources["Services/Interface"] = function(...)
         ["Notifications.PingDiscordUserId"] = true, ["Notifications.Ping"] = true, ["Notifications.SendSummary"] = true,
         ["Notifications.SummaryIntervalMinutes"] = true,
         ["Interface.RememberSettings"] = true, ["Interface.Autoload"] = true, ["Interface.StartHidden"] = true,
-        ["Interface.Language"] = true }
+        ["Interface.Language"] = true, ["Interface.UIScale"] = true }
     Interface.META_KEYS = { ["Interface.RememberSettings"] = true, ["Interface.Autoload"] = true }
     Interface.PRIVATE_KEYS = { ["Notifications.Webhooks.Summary"] = true, ["Notifications.Webhooks.Alerts"] = true,
         ["Notifications.PingDiscordUserId"] = true, ["Notifications.Enabled"] = true }
@@ -4225,6 +4228,19 @@ __moduleSources["Services/Interface"] = function(...)
         end
         return count
     end
+    Interface.PC_SIZE = { 980, 600 }
+    Interface.UI_SCALES = { "Auto", "0.5", "0.6", "0.7", "0.8", "0.9", "1", "1.1", "1.25" }
+    function Interface.scaleFor(setting, touch, viewport)
+        local chosen = tonumber(setting)
+        if chosen then
+            return math.clamp(chosen, 0.5, 1.25)
+        end
+        if not touch or not viewport then
+            return 1
+        end
+        local fit = math.min((viewport.X - 40) / Interface.PC_SIZE[1], (viewport.Y - 70) / Interface.PC_SIZE[2])
+        return math.clamp(math.floor(fit * 100) / 100, 0.4, 1)
+    end
     function Interface.lookupCountry()
         if Interface.country then
             return Interface.country
@@ -4271,12 +4287,21 @@ __moduleSources["Services/Interface"] = function(...)
             end)
             touch = okTouch and isTouch == true
         end
-        local columns = touch and 1 or 2
-        local function col(n)
-            return touch and 1 or n
+        local viewport = options.viewport
+        if viewport == nil then
+            pcall(function()
+                viewport = workspace.CurrentCamera.ViewportSize
+            end)
         end
-        local rowWidth = touch and 64 or 40
-        local aboutWidth = touch and 64 or 46
+        local hasViewport = viewport ~= nil and tonumber(viewport.X) ~= nil and tonumber(viewport.Y) ~= nil
+        local scale = Interface.scaleFor(settings.UIScale, touch, hasViewport and viewport or nil)
+        local wide = not touch or scale < 1
+        local columns = wide and 2 or 1
+        local function col(n)
+            return wide and n or 1
+        end
+        local rowWidth = wide and 40 or 64
+        local aboutWidth = wide and 46 or 64
         local showDescriptions = settings.Descriptions ~= false
         local catalog = { petKinds = {}, giftIds = {} }
         if type(api.Catalog) == "function" then
@@ -4664,18 +4689,48 @@ __moduleSources["Services/Interface"] = function(...)
             NotifyOnCallbackError = true,
             FileSettings = { ConfigFolder = "AdoptMeFarm" },
         }
-        local viewport = options.viewport
-        if viewport == nil then
-            pcall(function()
-                viewport = workspace.CurrentCamera.ViewportSize
-            end)
+        local windowWidth, windowHeight
+        if hasViewport and UDim2 then
+            local width, height
+            if scale ~= 1 then
+                width, height = Interface.PC_SIZE[1], Interface.PC_SIZE[2]
+            else
+                width = touch and math.min(viewport.X - 80, 900) or math.min(viewport.X - 120, 980)
+                height = touch and math.min(viewport.Y - 120, 560) or math.min(viewport.Y - 160, 600)
+            end
+            windowWidth, windowHeight = math.floor(math.max(width, 320)), math.floor(math.max(height, 200))
+            windowSettings.DefaultSize = UDim2.fromOffset(windowWidth, windowHeight)
         end
-        if viewport ~= nil and UDim2 and tonumber(viewport.X) and tonumber(viewport.Y) then
-            local width = touch and math.min(viewport.X - 80, 900) or math.min(viewport.X - 120, 980)
-            local height = touch and math.min(viewport.Y - 120, 560) or math.min(viewport.Y - 160, 600)
-            windowSettings.DefaultSize = UDim2.fromOffset(math.floor(math.max(width, 320)), math.floor(math.max(height, 200)))
-        end
+        local scaled = scale ~= 1 and pcall(function()
+            local main = Starlight.Instance.MainWindow
+            local uiScale = main:FindFirstChild("AmeFarmScale") or Instance.new("UIScale")
+            uiScale.Name = "AmeFarmScale"
+            uiScale.Scale = scale
+            uiScale.Parent = main
+        end)
         local Window = Starlight:CreateWindow(windowSettings)
+        handle.scale = scale
+        if scaled and windowWidth then
+            local function place()
+                pcall(function()
+                    local main = Starlight.Instance.MainWindow
+                    if not Starlight.Maximized then
+                        main.Size = UDim2.fromOffset(windowWidth, windowHeight)
+                    end
+                    local inset = 36
+                    pcall(function()
+                        inset = game:GetService("GuiService"):GetGuiInset().Y
+                    end)
+                    local top = math.max(0, math.floor((viewport.Y - inset - windowHeight * scale) / 2))
+                    main.Position = UDim2.fromOffset(math.floor((viewport.X - windowWidth * scale) / 2), top)
+                end)
+                pcall(function()
+                    Starlight.Instance.Drag.Size = UDim2.new(0, 0, 0, 0)
+                end)
+            end
+            place()
+            task.delay(0.6, place)
+        end
         local boxes = {}
         local liveColor = "gray"
         local localized = false
@@ -4704,7 +4759,7 @@ __moduleSources["Services/Interface"] = function(...)
             end
         end
         local homeTab
-        if not touch and type(Window.CreateHomeTab) == "function" then
+        if wide and type(Window.CreateHomeTab) == "function" then
             local okHome, result = pcall(function()
                 return Window:CreateHomeTab({
                     SupportedExecutors = Interface.SUPPORTED_EXECUTORS,
@@ -5172,6 +5227,23 @@ __moduleSources["Services/Interface"] = function(...)
                     hideKey:Set({ Name = "Hide / show: " .. key })
                 end)
             end })
+        end
+        do
+            local scaleChoices = {}
+            for _, value in ipairs(Interface.UI_SCALES) do
+                local percent = function(n)
+                    return tostring(math.floor(n * 100 + 0.5)) .. "%"
+                end
+                table.insert(scaleChoices, { value, value == "Auto"
+                    and (T("Auto") .. " (" .. percent(Interface.scaleFor("Auto", touch, hasViewport and viewport or nil)) .. ")")
+                    or percent(tonumber(value)) })
+            end
+            bindPick(look, "uiScale", "scaling", "UI scale", { "Interface", "UIScale" }, scaleChoices, {
+                tooltip = "How big the window is drawn (Auto: smaller on phones)",
+                onPick = function()
+                    rebuild()
+                end,
+            })
         end
         bindToggle(look, "descriptions", "info", "Help lines", { "Interface", "Descriptions" })
         look:CreateButton({
