@@ -1,4 +1,4 @@
--- AdoptMe Farm  v2.0.0 (Adopt Victims - UI Remastered Edition) | Adopt Victims v2 - UI Remastered Edition
+-- AdoptMe Farm  v2.0.3 (Adopt Victims - UI Remastered Edition) | Adopt Victims v2 - UI Remastered Edition | settings: the window
 local UserConfig = {
     Farm = {
         Enabled = false,
@@ -1168,7 +1168,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.0.2 (Adopt Victims - UI Remastered Edition)"
+    Disclosure.VERSION = "2.0.3 (Adopt Victims - UI Remastered Edition)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -3312,6 +3312,7 @@ __moduleSources["Services/Interface"] = function(...)
         end
         return true
     end
+    local innerWatched = setmetatable({}, { __mode = "k" })
     function Interface.tintGroupbox(box, color)
         local instance = type(box) == "table" and box.Instance
         if not instance then
@@ -3327,7 +3328,17 @@ __moduleSources["Services/Interface"] = function(...)
             stroke.Color = c
             stroke.Transparency = 0.55
         end
-        Interface.tintFrame(backdrop.Inner, { color, color }, 0.16, 0, 90)
+        local inner = backdrop.Inner
+        inner.Size = UDim2.new(1, -2, 1, -2)
+        if not innerWatched[inner] then
+            innerWatched[inner] = true
+            instance.PART_Content:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+                task.defer(function()
+                    inner.Size = UDim2.new(1, -2, 1, -2)
+                end)
+            end)
+        end
+        Interface.tintFrame(inner, { color, color }, 0.16, 0, 90)
         return true
     end
     Interface.DASHBOARD_LAYOUT = { leftWidth = 0.36, gap = 8, topHeight = 84 }
@@ -4482,6 +4493,7 @@ __moduleSources["Services/Interface"] = function(...)
             end)
             return element
         end
+        local fitPopup
         local function sameSet(a, b)
             if #a ~= #b then
                 return false
@@ -4572,6 +4584,7 @@ __moduleSources["Services/Interface"] = function(...)
                     end
                 end,
             }, "Dropdown")
+            fitPopup(dropdown)
             local function refreshPick()
                 local want = names(multi and get() or { get() })
                 local shownNow = dropdown and dropdown.Values and dropdown.Values.CurrentOption
@@ -4656,6 +4669,26 @@ __moduleSources["Services/Interface"] = function(...)
             return fn(...)
         end
         local refreshStatus
+        function fitPopup(dropdown)
+            if handle.scale == nil or handle.scale == 1 then
+                return
+            end
+            pcall(function()
+                local scale = handle.scale
+                local anchor, popup = dropdown.Instances[1], dropdown.Instances[2]
+                local uiScale = popup:FindFirstChild("AmeFarmScale") or Instance.new("UIScale")
+                uiScale.Name = "AmeFarmScale"
+                uiScale.Scale = scale
+                uiScale.Parent = popup
+                local function width()
+                    popup.Size = UDim2.fromOffset(math.ceil(anchor.AbsoluteSize.X / scale), popup.Size.Y.Offset)
+                end
+                width()
+                table.insert(connections, anchor:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+                    task.defer(width)
+                end))
+            end)
+        end
         local tintIcon
         local function actionButton(box, index, icon, name, tooltip, run)
             return box:CreateButton({
@@ -5041,6 +5074,7 @@ __moduleSources["Services/Interface"] = function(...)
                 selected = (type(name) == "string" and name ~= "") and name or nil
             end,
         }, "Dropdown")
+        fitPopup(configDropdown)
         local autoloadLabel
         local function updateAutoloadInfo()
             pcall(function()
