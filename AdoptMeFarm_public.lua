@@ -1,4 +1,4 @@
--- AdoptMe Farm  v2.0.3 (Adopt Victims - UI Remastered Edition) | Adopt Victims v2 - UI Remastered Edition | settings: the window
+-- AdoptMe Farm  v2.0.4 (Adopt Victims - UI Remastered Edition) | Adopt Victims v2 - UI Remastered Edition | settings: the window
 local UserConfig = {
     Farm = {
         Enabled = false,
@@ -1168,7 +1168,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.0.3 (Adopt Victims - UI Remastered Edition)"
+    Disclosure.VERSION = "2.0.4 (Adopt Victims - UI Remastered Edition)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -7141,9 +7141,16 @@ __moduleSources["Game/Interaction"] = function(...)
         local startRoot = myRoot()
         local startSpot = startRoot and startRoot.Position or nil
         local lastSpot = nil
+        local released = false
         local function hold(spot)
             local root, character = myRoot()
-            if not root then
+            if not root or released then
+                return
+            end
+            local here = root.Position
+            local fx, fy, fz = here.X - spot.X, here.Y - spot.Y, here.Z - spot.Z
+            if fx * fx + fy * fy + fz * fz > 250 * 250 then
+                released = true
                 return
             end
             pcall(function()
@@ -7162,6 +7169,10 @@ __moduleSources["Game/Interaction"] = function(...)
         end
         local function step()
             local position, mode = provider()
+            if position == false then
+                released = true
+                return
+            end
             if position ~= nil and type(position.X) == "number" and type(position.Y) == "number" and type(position.Z) == "number" then
                 if mode == "below" then
                     lastSpot = Vector3.new(position.X, position.Y - GameConstants.Event.HoldBelowStuds, position.Z)
@@ -7196,7 +7207,7 @@ __moduleSources["Game/Interaction"] = function(...)
                 end
             end)
         end
-        local function stop()
+        local function stop(back)
             if not running then
                 return
             end
@@ -7206,7 +7217,13 @@ __moduleSources["Game/Interaction"] = function(...)
                 connection = nil
             end
             local root, character = myRoot()
-            if root and startSpot and lastSpot then
+            local stillHeld = false
+            if root and lastSpot and not released then
+                local here = root.Position
+                local dx, dy, dz = here.X - lastSpot.X, here.Y - lastSpot.Y, here.Z - lastSpot.Z
+                stillHeld = dx * dx + dy * dy + dz * dz <= 30 * 30
+            end
+            if back ~= false and stillHeld and startSpot then
                 pcall(function()
                     root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
                     character:PivotTo(CFrame.new(startSpot.X, startSpot.Y + 2, startSpot.Z))
@@ -9911,7 +9928,10 @@ __moduleSources["Game/EventTasks"] = function(...)
             local held = { target = nil }
             local stopKeeper, keeperStats, holdNow = ctx.interaction:keepNear(function()
                 local target = held.target
-                if not target or mg.leave then
+                if mg.leave or not inRound() then
+                    return false
+                end
+                if not target then
                     return nil
                 end
                 if target.kind == "ghost" then
@@ -9959,7 +9979,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                 end
             end
             held.target = nil
-            stopKeeper()
+            stopKeeper(inRound() and not mg.leave)
             ctx.logger:info("Event", string.format("Ghost Gallery: held %d studs under the ghosts (%d position corrections)",
                 E.HoldBelowStuds, keeperStats.corrections))
             ctx.waitUntil(function()
