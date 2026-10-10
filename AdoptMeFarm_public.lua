@@ -1,4 +1,4 @@
--- AdoptMe Farm  v2.1.0 (Adopt Victims - UI Remastered Edition) | Adopt Victims v2 - UI Remastered Edition | settings: the window
+-- AdoptMe Farm  v2.1.1 (Adopt Victims - UI Remastered Edition) | Adopt Victims v2 - UI Remastered Edition | settings: the window
 local UserConfig = {
     Farm = {
         Enabled = false,
@@ -41,6 +41,8 @@ local UserConfig = {
         Event = {
             GhostGallery = false,
             Hauntlet = false,
+            HauntletMove = "tween",
+            HauntletMoveSeconds = 0.5,
             StrayCat = false,
             Crypt = false,
             CryptOpen = { "ladder" },
@@ -451,6 +453,8 @@ __moduleSources["Core/Config"] = function(...)
                 Enabled = true,
                 GhostGallery = false,
                 Hauntlet = false,
+                HauntletMove = "tween", -- "tween" (smooth, default) | "walk" | "tp": how the bot reaches a door's circle
+                HauntletMoveSeconds = 0.5, -- tween: seconds to reach the circle (0.1 - 5; the room's time is ~25 s)
                 GhostJoinByZone = true,
                 Crypt = false,
                 MummySpider = true,
@@ -1173,7 +1177,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.0 (Adopt Victims - UI Remastered Edition)"
+    Disclosure.VERSION = "2.1.1 (Adopt Victims - UI Remastered Edition, Hauntlet solver)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -1220,8 +1224,9 @@ __moduleSources["Services/Disclosure"] = function(...)
                 .. " Pet Pen now, retry tasks that rest",
             "the window changes the farm live; your webhook URL and Discord id may be typed there too (kept on this device in"
                 .. " the window settings file, never in a shared config)",
-            "Hauntlet (Farm.Event.Hauntlet, off by default): joins a run from the Hotel, picks one door per room (1-3,"
-                .. " the safest one not revealed as the ghost), uses only the run's own items (keys, phone, potions, wand),"
+            "Hauntlet (Farm.Event.Hauntlet, off by default): joins a run from the Hotel, picks one door per room by"
+                .. " standing in its circle (never the door a phone revealed as the ghost), uses only the run's own items"
+                .. " (keys, phone, potions, wand),"
                 .. " unlocks the journal page once after a run; never while a Ghost Gallery round is near",
             "camera guard (Farm.CameraGuard, works paused): when the camera is inside your character it is pushed back out"
                 .. " through your own zoom limit for a moment (a local setting, no remote)",
@@ -3035,6 +3040,8 @@ __moduleSources["Services/Interface"] = function(...)
         ["Farm.Event.Enabled"] = "Master switch for every Halloween job",
         ["Farm.Event.GhostGallery"] = "Joins each round, vacuums ghosts (Rusty Keys)",
         ["Farm.Event.Hauntlet"] = "Auto Hauntlet — join runs, pick safer doors, use keys/items",
+        ["Farm.Event.HauntletMove"] = "How the bot reaches a door: tween (smooth), walk, or teleport",
+        ["Farm.Event.HauntletMoveSeconds"] = "Tween: seconds to reach a door (shorter = faster)",
         ["Farm.Event.GhostJoinByZone"] = "Joins by standing in the Manor circle",
         ["Farm.Event.Crypt"] = "Uses Rusty Keys on the grave going down",
         ["Farm.Event.MummySpider"] = "Bottom of the Crypt: takes the spider",
@@ -4953,6 +4960,10 @@ __moduleSources["Services/Interface"] = function(...)
             "Joins every round and vacuums the ghosts (Rusty Keys)")
         bindToggle(halloweenBox, "hauntlet", "key-round", "Auto Hauntlet", { "Farm", "Event", "Hauntlet" },
             "Auto Hauntlet — join runs, pick safer doors, use keys/items")
+        bindPick(halloweenBox, "hauntletMove", "key-round", "Door move", { "Farm", "Event", "HauntletMove" },
+            { { "tween", "Tween (smooth)" }, { "walk", "Walk" }, { "tp", "Teleport" } })
+        bindSlider(halloweenBox, "hauntletMoveSeconds", "timer", "Move time", { "Farm", "Event", "HauntletMoveSeconds" },
+            0.1, 5, 0.1, "s", "Tween: seconds to reach a door (shorter = faster)")
         bindToggle(halloweenBox, "cat", "cat", "Auto Stray Cat", { "Farm", "Event", "StrayCat" })
         local cryptBox = eventTab:CreateGroupbox({ Name = "Crypt", Icon = I("item:halloween_2026_tomb_spider|skull"), Column = 1 },
             "crypt")
@@ -6012,8 +6023,12 @@ __moduleSources["Game/GameConstants"] = function(...)
         HauntletClientPath = { "SharedModules", "ContentPacks", "Halloween2026", "Minigames", "HauntletMinigameClient" },
         HauntletItems = { cell_phone = true, key = true, gold_key = true, red_potion = true, ghost_potion = true,
             gold_potion = true, rainbow_wand = true },
-        HauntletDoorRisk = { gold_locked = 0, locked = 1, wooden = 2, rotten = 3, shadow = 4, webbed = 4, security = 5,
-            bouncy = 5, copycat = 5, nightmare = 5, electric = 6 },
+        -- v2.1.1: Hauntlet 2 solver. revealWaitSeconds: ghost unknown and no phone / wand of my own -> wait this long
+        -- for another player's phone (doors open when everyone picked; a run drops a player who never picks).
+        -- kindPenalty: door kind -> extra score (empty: no recorded run showed a kind to be safer).
+        HauntletStrategy = { revealWaitSeconds = 7, preferLockedWhenSafe = true, kindPenalty = {} },
+        HauntletDebug = false, -- true: every door's reasons in the log + AdoptMeFarm/hauntlet_db.txt (the game's door lists)
+        HauntletDBPath = { "SharedModules", "ContentPacks", "Halloween2026", "Game", "Hauntlet" },
         RoundSeconds = 600,
         GhostsFolder = "GhostClustersVisuals",
         GhostNamePattern = "^Ghost_%a+_([%x%-]+)$",
@@ -7005,6 +7020,7 @@ __moduleSources["Game/Interaction"] = function(...)
         table.insert(lines, "LOCAL call of the game's OWN travel function (InteriorsM.enter, the one every door uses): it sends the game's own door / location requests (Farm.GameTravel); also to visit other players' houses for the \"Visit player homes\" quests (Farm.Event.HouseVisits)")
         table.insert(lines, "LOCAL walking of your character in long diagonal legs (~30 studs) — ONLY for the walk need (and ride); if the game left it anchored on solid ground, it is un-anchored first")
         table.insert(lines, "LOCAL teleport of your character next to the Stray Cat (Halloween map), into the Ghost Gallery join circle in the Haunted Manor (where the popup's Yes puts you) and, inside the minigame only, 50 studs under the ghost it vacuums (held every frame, back on the floor after the round) (Farm.Event)")
+        table.insert(lines, "LOCAL teleport of your character into the selected door's join circle inside the Hauntlet rooms, requesting nearby room streaming when needed (Farm.Event.Hauntlet)")
         table.insert(lines, "LOCAL virtual click — only when Roblox says you are idle, to avoid the 20-minute kick (Farm.AntiAfk)")
         table.insert(lines, "ROBLOX rejoin of a server of this game (TeleportService) — only after 3 min with no place / no character, e.g. a white screen in a dead minigame (Farm.AutoRejoin)")
         return lines
@@ -7161,6 +7177,416 @@ __moduleSources["Game/Interaction"] = function(...)
         local now = root.Position
         local dx, dz = now.X - spot.Position.X, now.Z - spot.Position.Z
         return math.sqrt(dx * dx + dz * dz) <= E.JoinZoneRadius, "not in the circle after the teleport"
+    end
+    function Interaction:teleportToHauntletJoinZone()
+        local Players = game:GetService("Players")
+        local player = Players.LocalPlayer
+        local character = player and player.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        if not root then
+            return false, "character root not found"
+        end
+        local deadline = Util.now() + 10
+        local target
+        repeat
+            local interiors = workspace:FindFirstChild("Interiors")
+            local hotel = interiors and interiors:FindFirstChild("HauntedHotel")
+            local zone = hotel and hotel:FindFirstChild("HauntletMinigameJoinZone")
+            if zone then
+                local ring = zone:IsA("BasePart") and nil or zone:FindFirstChild("Ring", true)
+                if ring then
+                    if ring:IsA("BasePart") then
+                        target = ring
+                    else
+                        target = ring:FindFirstChild("Part")
+                        if not (target and target:IsA("BasePart")) then
+                            target = ring:FindFirstChildWhichIsA("BasePart", true)
+                        end
+                    end
+                end
+                if not target then
+                    if zone:IsA("BasePart") then
+                        target = zone
+                    else
+                        target = zone:FindFirstChildWhichIsA("BasePart", true)
+                    end
+                end
+            end
+            if not target then
+                task.wait(0.25)
+            end
+        until target or Util.now() >= deadline
+        if not target then
+            return false, "Hauntlet join zone not found"
+        end
+        local destination = target.Position + Vector3.new(0, (target.Size and target.Size.Y or 2) * 0.5 + 2.5, 0)
+        local ok, err = pcall(function()
+            character:PivotTo(CFrame.new(destination) * CFrame.Angles(0, math.rad(root.Orientation.Y), 0))
+        end)
+        if not ok then
+            return false, tostring(err)
+        end
+        self._sent += 1
+        self._state:set("farm.actionsSent", self._sent, "Interaction")
+        task.wait(0.6)
+        local now = root.Position
+        local dx, dz = now.X - target.Position.X, now.Z - target.Position.Z
+        local dist = math.sqrt(dx * dx + dz * dz)
+        if dist > 18 then
+            return false, "not in the join circle after teleport (dist " .. string.format("%.1f", dist) .. ")"
+        end
+        return true, target:GetFullName()
+    end
+    --[[
+        Hauntlet door circles (Dex, 2026-10-10): every room has a folder DoorJoinCircles with the parts "1", "2", "3"
+        (one per door; the number is the door's number in the server's messages) and the TeleportRing models; the
+        room's other folders are DoorPositions, Doors, DoorCounters, GhostPositions. Standing in a circle makes the GAME
+        send the pick itself (a pick sent by a script bugs the run: user), so the character is only moved there.
+        The room is the DoorJoinCircles folder nearest to my character (the game moves me into each new room).
+    ]]
+    local function hauntletPartOf(node)
+        if node:IsA("BasePart") then
+            return node
+        end
+        local part = node:FindFirstChild("Part")
+        if part and part:IsA("BasePart") then
+            return part
+        end
+        return node:FindFirstChildWhichIsA("BasePart", true)
+    end
+    local hauntletCenter -- set below (Interaction.hauntletCenter)
+    hauntletCenter = function(node)
+        if node:IsA("BasePart") then
+            return node.Position
+        end
+        local sum, n = nil, 0
+        for _, d in ipairs(node:GetDescendants()) do
+            if d:IsA("BasePart") then
+                sum = sum and (sum + d.Position) or d.Position
+                n += 1
+            end
+        end
+        return n > 0 and sum / n or nil
+    end
+    -- The circle part for door `doorIndex` in this DoorJoinCircles folder. bad = { [part] = true } parts that turned
+    -- out to belong to another door. Returns part, how, verified (false = a guess the pick check must confirm).
+    function Interaction.hauntletCircleFor(circles, doorIndex, bad)
+        bad = bad or {}
+        if circles.Name == "Elevators" then
+            -- nexus (ReplicatedStorage.Resources.Hauntlet.Rooms.nexus): Elevators/<elevator>/JoinCircle, the areas shown
+            -- on AreaDisplays/1, 2: the elevator named n, else the one nearest AreaDisplays/n
+            local elevators = {}
+            for _, elevator in ipairs(circles:GetChildren()) do
+                local circle = elevator:FindFirstChild("JoinCircle", true)
+                if circle and circle:IsA("BasePart") and not bad[circle] then
+                    table.insert(elevators, { node = elevator, part = circle })
+                end
+            end
+            for _, entry in ipairs(elevators) do
+                if entry.node.Name == tostring(doorIndex) then
+                    return entry.part, "elevator '" .. doorIndex .. "'", true
+                end
+            end
+            local displays = circles.Parent and circles.Parent:FindFirstChild("AreaDisplays")
+            local display = displays and displays:FindFirstChild(tostring(doorIndex))
+            local spot = display and hauntletCenter(display)
+            if spot and #elevators > 0 then
+                table.sort(elevators, function(x, y)
+                    return (x.part.Position - spot).Magnitude < (y.part.Position - spot).Magnitude
+                end)
+                return elevators[1].part, "elevator nearest AreaDisplays." .. doorIndex, true
+            end
+            if elevators[doorIndex] then
+                return elevators[doorIndex].part, "GUESS elevator " .. doorIndex, false
+            end
+            return nil, "no elevator for door " .. doorIndex
+        end
+        local named = circles:FindFirstChild(tostring(doorIndex))
+        local part = named and hauntletPartOf(named)
+        if part and not bad[part] then
+            return part, "circle '" .. doorIndex .. "'", true
+        end
+        local candidates = {}
+        for _, child in ipairs(circles:GetChildren()) do
+            local p = hauntletPartOf(child)
+            if p and not bad[p] then
+                table.insert(candidates, p)
+            end
+        end
+        if #candidates == 0 then
+            return nil, "no circle part"
+        end
+        local room = circles.Parent
+        for _, folderName in ipairs({ "DoorPositions", "Doors", "DoorCounters" }) do
+            local folder = room and room:FindFirstChild(folderName)
+            local marker = folder and folder:FindFirstChild(tostring(doorIndex))
+            local spot = marker and hauntletCenter(marker)
+            if spot then
+                local best, bestDist = nil, math.huge
+                for _, p in ipairs(candidates) do
+                    local dist = (p.Position - spot).Magnitude
+                    if dist < bestDist then
+                        best, bestDist = p, dist
+                    end
+                end
+                return best, string.format("circle nearest %s.%d", folderName, doorIndex), true
+            end
+        end
+        return candidates[math.clamp(doorIndex, 1, #candidates)], "GUESS (no named circle or door marker)", false
+    end
+    -- The DoorJoinCircles folder of the room I am in: the nearest one that is not in `avoid` ({ [folder] = true }:
+    -- groups that took no pick in this room; every room is named "default", so names do not tell them apart).
+    -- Returns circles, distance, candidates.
+    local circleIds = setmetatable({}, { __mode = "k" })
+    local nextCircleId = 0
+    function Interaction.hauntletCircleId(node)
+        if not circleIds[node] then
+            nextCircleId += 1
+            circleIds[node] = nextCircleId
+        end
+        return circleIds[node]
+    end
+    -- Every room of a run is a NEW model further along (debug log 2026-10-10: the game does not move me and the old
+    -- rooms stay; the nearest group was the room I had just left, and "1 group" grew by one each room). So the newest
+    -- group goes first: groups added after the run's interior was first seen carry their time (DescendantAdded), the
+    -- ones that were already there count as the oldest. The nexus room may name its circles differently.
+    local circleAddedAt = setmetatable({}, { __mode = "k" }) -- [group] = its order of appearance (1, 2, ...)
+    local circleSeenAt = setmetatable({}, { __mode = "k" }) -- [group] = os.clock() when it appeared
+    local circleOrder = 0
+    local watchedInteriors = setmetatable({}, { __mode = "k" })
+    local function isCircleGroup(node)
+        return node.Name == "DoorJoinCircles" or node.Name == "Elevators"
+    end
+    Interaction.hauntletIsCircleGroup = isCircleGroup
+    function Interaction.watchHauntletInterior(interior)
+        if not interior or watchedInteriors[interior] then
+            return
+        end
+        local connected = pcall(function()
+            interior.DescendantAdded:Connect(function(node)
+                if isCircleGroup(node) then
+                    circleOrder += 1
+                    circleAddedAt[node], circleSeenAt[node] = circleOrder, os.clock()
+                end
+            end)
+        end)
+        watchedInteriors[interior] = connected or nil -- not connected: tried again next time
+    end
+    local function hauntletInterior(interiorName)
+        local interiors = workspace:FindFirstChild("Interiors")
+        if not interiors then
+            return nil
+        end
+        local prefix = GameConstants.Event.HauntletInteriorPrefix
+        local interior = type(interiorName) == "string" and interiors:FindFirstChild(interiorName) or nil
+        if not interior then
+            for _, child in ipairs(interiors:GetChildren()) do
+                if string.sub(child.Name, 1, #prefix) == prefix then
+                    return child
+                end
+            end
+        end
+        return interior
+    end
+    -- Called when a run starts, so that every later room is seen being added.
+    function Interaction:watchHauntlet(interiorName)
+        local interior = hauntletInterior(interiorName)
+        Interaction.watchHauntletInterior(interior)
+        return interior ~= nil
+    end
+    -- Rooms are a chain (the run is built ahead: live log 3 had 6 rooms ready up to 230 studs ahead, one ~43 studs
+    -- behind and one ~43 ahead): every room's AttachmentPoints has an Entrance and an Exit (a nexus: Exit1, Exit2) and
+    -- the next room's Entrance sits on this room's Exit. link = { from = the last room's circle group, exit = "Exit" }.
+    local function attachmentPoint(room, name)
+        local points = room and room:FindFirstChild("AttachmentPoints")
+        local point = points and points:FindFirstChild(name)
+        return point and point:IsA("Attachment") and point.WorldPosition or nil
+    end
+    Interaction.hauntletAttachmentPoint = attachmentPoint
+    Interaction.hauntletCenter = function(node)
+        return hauntletCenter(node)
+    end
+    -- base / visited (user, live run 5: "the rooms spawn on one line going forward: the room farthest from the start is
+    -- the one to pick in; reset the start after every nexus"): the first room past the farthest room I picked in,
+    -- measured from base; when it is not loaded yet (its circles come 1-2 s after started_room), nil: wait, never back.
+    function Interaction:hauntletCircles(interiorName, avoid, link, base, visited)
+        local root = self:_myRoot()
+        local interiors = workspace:FindFirstChild("Interiors")
+        if not (root and interiors) then
+            return nil, "no character / Interiors"
+        end
+        local prefix = GameConstants.Event.HauntletInteriorPrefix
+        local interior = type(interiorName) == "string" and interiors:FindFirstChild(interiorName) or nil
+        if not interior then
+            for _, child in ipairs(interiors:GetChildren()) do
+                if string.sub(child.Name, 1, #prefix) == prefix then
+                    interior = child
+                    break
+                end
+            end
+        end
+        if not interior then
+            return nil, "no " .. prefix .. " interior"
+        end
+        Interaction.watchHauntletInterior(interior)
+        local found = {}
+        local wanted = avoid and avoid.__elevators and "Elevators" or "DoorJoinCircles"
+        for _, node in ipairs(interior:GetDescendants()) do
+            if node.Name == wanted and #node:GetChildren() > 0 then
+                local center = hauntletCenter(node)
+                if center then
+                    table.insert(found, { node = node, dist = (center - root.Position).Magnitude,
+                        added = circleAddedAt[node] or 0, seen = circleSeenAt[node] })
+                end
+            end
+        end
+        table.sort(found, function(a, b)
+            if a.added ~= b.added then
+                return a.added > b.added -- the newest room first
+            end
+            return a.dist < b.dist
+        end)
+        avoid = avoid or {}
+        local exit = link and link.from and link.from.Parent and attachmentPoint(link.from.Parent, link.exit or "Exit")
+        if exit then
+            local best, bestGap = nil, math.huge
+            for _, entry in ipairs(found) do
+                local entrance = entry.node ~= link.from and not avoid[entry.node] and attachmentPoint(entry.node.Parent, "Entrance")
+                if entrance and (entrance - exit).Magnitude < bestGap then
+                    best, bestGap = entry, (entrance - exit).Magnitude
+                end
+            end
+            if best and bestGap < 12 then
+                return best.node, best.dist, #found, best.seen, "the room after the last one"
+            end
+        end
+        if base and not (avoid and avoid.__elevators) then
+            visited = visited or {}
+            local farthestPassed = 0
+            for _, entry in ipairs(found) do
+                entry.fromBase = (hauntletCenter(entry.node) - base).Magnitude
+                if visited[entry.node] then
+                    farthestPassed = math.max(farthestPassed, entry.fromBase)
+                end
+            end
+            local nextRoom
+            for _, entry in ipairs(found) do
+                if not avoid[entry.node] and entry.fromBase > farthestPassed + 5
+                    and (not nextRoom or entry.fromBase < nextRoom.fromBase) then
+                    nextRoom = entry
+                end
+            end
+            if nextRoom then
+                return nextRoom.node, nextRoom.dist, #found, nextRoom.seen,
+                    string.format("next room forward (%d studs from the start)", math.floor(nextRoom.fromBase))
+            end
+            return nil, "the next room is not loaded yet"
+        end
+        for _, entry in ipairs(found) do
+            if not avoid[entry.node] then
+                return entry.node, entry.dist, #found, entry.seen
+            end
+        end
+        if found[1] then
+            return found[1].node, found[1].dist, #found, found[1].seen
+        end
+        return nil, "no DoorJoinCircles near (interior " .. interior.Name .. ")"
+    end
+    function Interaction:_myRoot()
+        local player = game:GetService("Players").LocalPlayer
+        local character = player and player.Character
+        return character and character:FindFirstChild("HumanoidRootPart"), character, player
+    end
+    -- Moves my character into door `doorIndex`'s circle. options = { avoid = { [circles] = true } (groups that took no
+    -- pick in this room), bad = { [part] = true } (parts that proved to be another door) }.
+    -- Returns moved, how, part, circles, verified.
+    function Interaction:teleportToHauntletDoor(interiorName, doorIndex, options)
+        options = options or {}
+        if type(doorIndex) ~= "number" or doorIndex < 1 or doorIndex > 4 then
+            return false, "door index out of range: " .. tostring(doorIndex)
+        end
+        local root, character, player = self:_myRoot()
+        if not root then
+            return false, "no character"
+        end
+        local circles, part, how, verified, dist, count, added, chained
+        for _ = 1, 6 do
+            local avoid = {}
+            for key, value in pairs(options.avoid or {}) do
+                avoid[key] = value
+            end
+            for key, value in pairs(options.visited or {}) do -- rooms already passed: never back
+                avoid[key] = value
+            end
+            avoid.__elevators = options.nexus or nil
+            circles, dist, count, added, chained = self:hauntletCircles(interiorName, avoid, options.link, options.base,
+                options.visited)
+            if circles then
+                part, how, verified = Interaction.hauntletCircleFor(circles, doorIndex, options.bad)
+                if part then
+                    how = string.format("%s of group #%d (%d studs away, %s, %d group%s in the run)", tostring(how),
+                        Interaction.hauntletCircleId(circles), math.floor(tonumber(dist) or 0),
+                        chained or (added and string.format("added %.0f s ago", os.clock() - added) or "nearest"),
+                        count or 1, (count or 1) == 1 and "" or "s")
+                    break
+                end
+            end
+            pcall(function()
+                player:RequestStreamAroundAsync(root.Position, 2)
+            end)
+            task.wait(options.base and 0.4 or 1) -- the next room loads in 1-2 s: look again soon
+        end
+        if not part then
+            return false, "door " .. doorIndex .. " circle not found (" .. tostring(how or "no circles near me") .. ")"
+        end
+        local waited = 0
+        while root.Anchored and waited < 8 do -- the game is moving me (room change): wait for it
+            task.wait(0.5)
+            waited += 0.5
+        end
+        pcall(function()
+            player:RequestStreamAroundAsync(part.Position, 2)
+        end)
+        self._sent += 1
+        self._state:set("farm.actionsSent", self._sent, "Interaction")
+        -- user (live run 3): "entering the circle plays an animation and puts me back where I was: we go too fast".
+        -- tween (default): glide there at 50 studs/s; walk: the Humanoid walks (tween when it gets stuck); tp: at once
+        local goal = part.Position + Vector3.new(0, part.Size.Y * 0.5 + 3, 0)
+        local method = options.method or "tween"
+        local function glide()
+            local seconds = math.clamp(tonumber(options.seconds) or ((root.Position - goal).Magnitude / 50), 0.1, 5)
+            local tween = game:GetService("TweenService"):Create(root, TweenInfo.new(seconds, Enum.EasingStyle.Linear),
+                { CFrame = CFrame.new(goal) * (root.CFrame - root.CFrame.Position) })
+            tween:Play()
+            local deadline = os.clock() + seconds + 1
+            while tween.PlaybackState == Enum.PlaybackState.Playing and os.clock() < deadline do
+                task.wait(0.05)
+            end
+        end
+        local ok, err = pcall(function()
+            if method == "tp" then
+                character:PivotTo(CFrame.new(goal))
+            elseif method == "walk" then
+                local humanoid = character:FindFirstChildOfClass("Humanoid")
+                humanoid:MoveTo(Vector3.new(goal.X, root.Position.Y, goal.Z))
+                local deadline = os.clock() + math.clamp((root.Position - goal).Magnitude / 12, 2, 12)
+                while os.clock() < deadline do
+                    if Vector3.new(root.Position.X - goal.X, 0, root.Position.Z - goal.Z).Magnitude < 3 then
+                        return
+                    end
+                    task.wait(0.1)
+                end
+                glide() -- a wall in the way: the last bit by tween
+            else
+                glide()
+            end
+        end)
+        if not ok then
+            return false, tostring(err)
+        end
+        self._logger:debug("Action", string.format("Hauntlet: door %d -> %s (%s, %s)", doorIndex, part:GetFullName(),
+            tostring(how), method))
+        return true, how, part, circles, verified
     end
     function Interaction:keepNear(provider)
         local stats = { corrections = 0 }
@@ -9312,12 +9738,42 @@ __moduleSources["Game/Minigame"] = function(...)
     return Minigame
 end
 __moduleSources["Game/Hauntlet"] = function(...)
+    --[[
+        Game/Hauntlet (v2.1.1: Hauntlet 2 solver)
+        STATE READER. Everything comes from MinigameAPI/MessageClient, the server's messages to me (verified in a
+        recorded run, hauntlet_recv.log, 2026-10-10):
+          join_accepted (n)                         queued
+          join_minigame (interior, session)         the run's interior + session id
+          enter_game ({ serialized_runners = { [userId] = { health, max_health, temp_health, inventory } } })
+          started_room ({ area_kind, kind, doors = { { kind, grey_locks, gold_locks } x3 } }, serverTime, { [userId] = true })
+          revealed_ghost (door)                     a phone (anyone's) shows the ghost's door; in the log it was right 3 of 3
+          used_item (item, ok)                      the answer to MY item use
+          grey_locks_removed ({ door })
+          door_counters_updated ({ n1, n2, n3 })    players standing in each door's circle
+          picked_door (true)                        my pick was taken; the next counter update shows which door
+          doors_opened ({ 1 = ghost per door }, { [userId] = damage }, { items I got })
+          temp_health_gained (userId, n)
+          kicked_from_game (reason)                 "died"
+          leave_game ({ rewards, results }, { finished_game, completed_game })
+        After the first room every recorded room had exactly ONE ghost door, so a revealed ghost makes the other doors
+        safe. Nothing tells the ghost's door before that (started_room has no ghost data; ClientData only keeps stats).
+        DECIDER: Hauntlet.decide(view, options) is pure and explains every door (tested with recorded fixtures).
+    ]]
     local import = ...
     local Util = import("Core/Util")
     local GameConstants = import("Game/GameConstants")
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local Hauntlet = {}
     Hauntlet.__index = Hauntlet
+    Hauntlet.DEFAULTS = {
+        revealWaitSeconds = 7, -- ghost unknown, no phone / wand of my own, other players in the run: wait for their phone
+        preferLockedWhenSafe = true, -- the ghost is known elsewhere: spend a key on a locked door (the richer path)
+        phoneAtRisk = 0.15, -- use my phone when the safest door is still at least this likely the ghost
+        wandAtRisk = 0.25, -- the wand (rarer) only from this risk
+        potionAtRisk = 0.15, -- a ghost potion for a door at least this risky (any risk at 1 heart)
+        safeFirstRoom = true, -- room 1 never had a ghost in any recorded run
+        kindPenalty = {}, -- door kind -> extra score
+    }
     function Hauntlet.new(logger, userId)
         local self = setmetatable({}, Hauntlet)
         self._logger = logger
@@ -9342,6 +9798,11 @@ __moduleSources["Game/Hauntlet"] = function(...)
         self.ghostShield = false
         self.kicked = nil
         self.leave = nil
+        self.counters = { 0, 0, 0, 0 }
+        self.myDoor, self.myDoorAt = nil, nil
+        self._awaitPick = false
+        self.lastOpened = nil
+        self.history = {}
     end
     local function isMine(gameKey)
         local id = GameConstants.Event.HauntletId
@@ -9368,6 +9829,9 @@ __moduleSources["Game/Hauntlet"] = function(...)
         local fromTemp = math.min(self.tempHealth, amount)
         self.tempHealth -= fromTemp
         self.health = math.max(0, self.health - (amount - fromTemp))
+        if fromTemp > 0 then
+            self.ghostShield = self.tempHealth > 0
+        end
     end
     function Hauntlet:hearts()
         return (self.health or 3) + (self.tempHealth or 0)
@@ -9375,11 +9839,21 @@ __moduleSources["Game/Hauntlet"] = function(...)
     local KNOWN = {
         join_accepted = true, join_minigame = true, enter_game = true, started_room = true, revealed_ghost = true,
         used_item = true, grey_locks_removed = true, door_counters_updated = true, picked_door = true, doors_opened = true,
-        temp_health_gained = true, kicked_from_game = true, leave_game = true,
+        temp_health_gained = true, kicked_from_game = true, leave_game = true, gained_items = true,
+        all_locks_removed = true, max_health_gained = true,
     }
     function Hauntlet:_onMessage(gameKey, message, a, b, c)
         if not isMine(gameKey) then
             return
+        end
+        if self.debugLines then
+            local parts = {}
+            for _, value in ipairs({ a, b, c }) do
+                local text = type(value) == "table" and (Util.jsonEncode(value) or "{?}") or tostring(value)
+                table.insert(parts, Util.truncate(text, 400))
+            end
+            table.insert(self.debugLines, string.format("%7.1f RECV %s | %s", Util.now() - (self.debugStart or 0),
+                tostring(message), table.concat(parts, " | ")))
         end
         if type(message) == "string" and not KNOWN[message] then
             self._seenTypes = self._seenTypes or {}
@@ -9399,6 +9873,7 @@ __moduleSources["Game/Hauntlet"] = function(...)
         elseif message == "join_minigame" and type(b) == "string" then
             self.join = { interior = a, sessionId = b, at = now }
             self._logger:info("Hauntlet", "Run starting: " .. b)
+            self:_debugStart(b, a)
         elseif message == "enter_game" and type(a) == "table" then
             self.enter = { at = now }
             local runners = type(a.serialized_runners) == "table" and a.serialized_runners or {}
@@ -9412,19 +9887,37 @@ __moduleSources["Game/Hauntlet"] = function(...)
             end
         elseif message == "started_room" and type(a) == "table" then
             local doors = {}
-            for i = 1, 3 do
+            for i = 1, 4 do
                 local d = type(a.doors) == "table" and a.doors[i] or nil
+                -- a nexus room's doors are areas: { area_kind = "copycat" } (debug log 2026-10-10)
+                local kind = type(d) == "table" and (d.kind and tostring(d.kind)
+                    or (d.area_kind and ("area:" .. tostring(d.area_kind)))) or "unknown"
                 doors[i] = {
-                    kind = type(d) == "table" and d.kind or "unknown",
+                    exists = type(d) == "table",
+                    kind = kind,
                     gold = type(d) == "table" and tonumber(d.gold_locks) or 0,
                     grey = type(d) == "table" and tonumber(d.grey_locks) or 0,
                 }
+                doors[i].wasLocked = doors[i].gold + doors[i].grey > 0 -- a key opened it: still the richer path
             end
             self.roomSeq += 1
-            self.room = { area = a.area_kind, kind = a.kind, doors = doors, at = now, seq = self.roomSeq }
+            self.room = { area = a.area_kind, kind = a.kind, doors = doors, at = now, seq = self.roomSeq,
+                startServer = tonumber(b), alive = type(c) == "table" and c or {}, safe = false }
             self.revealedGhost = nil
             self.picked = nil
-            self.ghostShield = false
+            self.counters = { 0, 0, 0, 0 }
+            self.myDoor, self.myDoorAt = nil, nil
+            self._awaitPick = false
+            self.ghostShield = (self.tempHealth or 0) > 0
+            if self.debugLines then
+                local interior = self.join and self.join.interior
+                task.delay(1.5, function()
+                    self:_debugNote(Hauntlet.describeRooms(interior))
+                    self:_debugFlush()
+                end)
+            end
+        elseif message == "gained_items" then
+            addItems(self.inventory, a) -- e.g. the run's starting items: { "cell_phone", "key", "ghost_potion", "gold_potion" }
         elseif message == "revealed_ghost" and tonumber(a) then
             self.revealedGhost = tonumber(a)
         elseif message == "used_item" and type(a) == "string" then
@@ -9432,13 +9925,26 @@ __moduleSources["Game/Hauntlet"] = function(...)
             self.usedItems[self.usedSeq] = { item = a, ok = b == true }
             if b == true then
                 self.inventory[a] = math.max(0, (self.inventory[a] or 1) - 1)
-                if a == "gold_potion" and self.maxHealth then
-                    self.health = self.maxHealth
+                if a == "red_potion" and self.maxHealth then
+                    self.health = self.maxHealth -- fills the missing red hearts
+                elseif a == "gold_potion" and self.health then
+                    self.maxHealth = (self.maxHealth or 3) + 1 -- one more red heart; empty ones stay empty
+                    self.health += 1
                 elseif a == "ghost_potion" then
-                    self.ghostShield = true
+                    self.ghostShield = true -- temp_health_gained adds the heart itself
+                elseif a == "rainbow_wand" and self.room then
+                    self.room.safe = true -- every ghost of this room is gone
                 end
             else
                 self.inventory[a] = 0
+            end
+        elseif message == "all_locks_removed" and type(a) == "table" and self.room then
+            -- live run 5: a gold key's answer (the door stayed "locked" and the bot took a 75 % door instead)
+            for _, i in pairs(a) do
+                local d = self.room.doors[tonumber(i) or 0]
+                if d then
+                    d.grey, d.gold = 0, 0
+                end
             end
         elseif message == "grey_locks_removed" and type(a) == "table" and self.room then
             for _, i in pairs(a) do
@@ -9447,14 +9953,48 @@ __moduleSources["Game/Hauntlet"] = function(...)
                     d.grey = math.max(0, d.grey - 1)
                 end
             end
+        elseif message == "door_counters_updated" and type(a) == "table" then
+            local new = {}
+            for i = 1, 4 do
+                new[i] = tonumber(a[i]) or 0
+            end
+            if self._awaitPick then
+                -- the update right after MY picked_door: the one door that gained a player is mine
+                local up = {}
+                for i = 1, 4 do
+                    if new[i] > (self.counters[i] or 0) then
+                        table.insert(up, i)
+                    end
+                end
+                if #up == 1 then
+                    self.myDoor, self.myDoorAt = up[1], now
+                end
+                self._awaitPick = false
+            end
+            self.counters = new
         elseif message == "picked_door" then
             self.picked = a == true
+            if a == true then
+                self._awaitPick = true
+            end
         elseif message == "doors_opened" then
             self.roomsOpened += 1
+            local damage = 0
             if type(b) == "table" and self._userId then
-                self:_damage(b[self._userId] or b[tonumber(self._userId)])
+                damage = tonumber(b[self._userId] or b[tonumber(self._userId)]) or 0
+                self:_damage(damage)
             end
             addItems(self.inventory, c)
+            local ghosts = {}
+            for i = 1, 4 do
+                ghosts[i] = type(a) == "table" and (tonumber(a[i]) or 0) > 0 or false
+            end
+            local room = self.room
+            self.lastOpened = { seq = self.roomSeq, ghosts = ghosts, myDoor = self.myDoor, damage = damage,
+                items = type(c) == "table" and c or {} }
+            table.insert(self.history, { seq = self.roomSeq, area = room and room.area,
+                kinds = room and { room.doors[1].kind, room.doors[2].kind, room.doors[3].kind } or {},
+                ghosts = ghosts, revealed = self.revealedGhost, myDoor = self.myDoor, damage = damage })
         elseif message == "temp_health_gained" and self._userId and tostring(a) == self._userId then
             self.tempHealth += tonumber(b) or 0
         elseif message == "kicked_from_game" then
@@ -9485,76 +10025,444 @@ __moduleSources["Game/Hauntlet"] = function(...)
                 at = now,
             }
             self._logger:info("Hauntlet", string.format("Run over: room %s, reward %d candy", tostring(self.leave.roomReached), candy))
+            self:_debugStop()
+        end
+        if message == "doors_opened" then
+            self:_debugFlush()
         end
     end
-    local function has(inventory, item)
-        return (inventory[item] or 0) > 0
-    end
-    function Hauntlet.plan(info)
-        local risk = GameConstants.Event.HauntletDoorRisk
-        local inv = info.inventory or {}
-        local tried = info.tried or {}
-        local doors = info.doors or {}
-        local ghost = info.revealedGhost
-        local hearts = info.hearts or 3
-        local function can(item)
-            return has(inv, item) and not tried[item]
+    --[[
+        DEBUG RECORDER (Event.HauntletDebug = true): from join_minigame to leave_game, whoever plays (the bot or me):
+        every server message, every [Hauntlet] line of the bot, and after each started_room the run's room models
+        (which one is new, how far, the newest one's layout). Written to AdoptMeFarm/hauntlet_debug.log as it goes.
+    ]]
+    Hauntlet.DEBUG_FILE = "AdoptMeFarm/hauntlet_debug.log"
+    function Hauntlet:_debugStart(sessionId, interiorName)
+        if not GameConstants.Event.HauntletDebug or type(writefile) ~= "function" then
+            return
         end
-        local function open(i)
-            local d = doors[i]
-            return d and d.gold == 0 and d.grey == 0
-        end
-        for i = 1, 3 do
-            local d = doors[i]
-            if d and i ~= ghost and d.gold > 0 and can("gold_key") then
-                return { use = "gold_key", door = i }
+        self:_debugStop()
+        pcall(function()
+            if type(isfolder) == "function" and type(makefolder) == "function" and not isfolder("AdoptMeFarm") then
+                makefolder("AdoptMeFarm")
             end
-        end
-        for i = 1, 3 do
-            local d = doors[i]
-            if d and i ~= ghost and d.gold == 0 and d.grey > 0 and can("key") then
-                return { use = "key", door = i }
-            end
-        end
-        if hearts <= 1 then
-            if can("gold_potion") and (info.health or 0) < (info.maxHealth or 3) then
-                return { use = "gold_potion" }
-            elseif can("red_potion") then
-                return { use = "red_potion" }
-            elseif can("ghost_potion") and not info.ghostShield then
-                return { use = "ghost_potion" }
-            end
-        end
-        if not ghost then
-            if can("rainbow_wand") then
-                return { use = "rainbow_wand" }
-            elseif can("cell_phone") then
-                return { use = "cell_phone" }
-            end
-        end
-        local best, bestRisk = nil, math.huge
-        for i = 1, 3 do
-            if open(i) and i ~= ghost then
-                local kind = doors[i].kind
-                local r = risk[kind] or 5
-                if kind == "electric" and hearts <= 1 then
-                    r += 100
+        end)
+        self.debugStart = Util.now()
+        self.debugLines = { string.format("Hauntlet debug %s, session %s, interior %s (recorded for the bot and for you)",
+            os.date("%Y-%m-%d %H:%M:%S"), tostring(sessionId), tostring(interiorName)) }
+        pcall(function()
+            self._debugConn = self._logger.OnEntry:Connect(function(level, category, message)
+                message = tostring(message)
+                if self.debugLines and (category == "Hauntlet" or string.find(message, "Hauntlet", 1, true)) then
+                    table.insert(self.debugLines, string.format("%7.1f %s [%s] %s", Util.now() - self.debugStart,
+                        tostring(level), tostring(category), message))
                 end
-                if r < bestRisk then
-                    best, bestRisk = i, r
+            end)
+        end)
+        if not Hauntlet._dbDumped then
+            Hauntlet._dbDumped = true
+            pcall(writefile, "AdoptMeFarm/hauntlet_db.txt", table.concat(Hauntlet.describeDatabases(), "\n"))
+        end
+        self:_debugNote(Hauntlet.describeRooms(interiorName))
+        self:_debugFlush()
+    end
+    function Hauntlet:_debugNote(text)
+        if self.debugLines then
+            table.insert(self.debugLines, string.format("%7.1f %s", Util.now() - (self.debugStart or 0), tostring(text)))
+        end
+    end
+    function Hauntlet:_debugFlush()
+        if self.debugLines and type(writefile) == "function" then
+            pcall(writefile, Hauntlet.DEBUG_FILE, table.concat(self.debugLines, "\n") .. "\n")
+        end
+    end
+    function Hauntlet:_debugStop()
+        if not self.debugLines then
+            return
+        end
+        self:_debugFlush()
+        pcall(function()
+            self._debugConn:Disconnect()
+        end)
+        self.debugLines, self._debugConn = nil, nil
+    end
+    -- The run's room models: each one's number (first seen order), name and distance; the newest one's layout.
+    local roomIds = setmetatable({}, { __mode = "k" })
+    local nextRoomId = 0
+    function Hauntlet.describeRooms(interiorName)
+        local lines = {}
+        local ok, err = pcall(function()
+            local interiors = workspace:FindFirstChild("Interiors")
+            local interior = interiors and type(interiorName) == "string" and interiors:FindFirstChild(interiorName)
+            local rooms = interior and interior:FindFirstChild("Rooms")
+            if not rooms then
+                table.insert(lines, "ROOMS: no Rooms folder (interior " .. tostring(interiorName) .. ")")
+                return
+            end
+            local character = game:GetService("Players").LocalPlayer.Character
+            local root = character and character:FindFirstChild("HumanoidRootPart")
+            local list, newest, newestId = {}, nil, -1
+            for _, room in ipairs(rooms:GetChildren()) do
+                if not roomIds[room] then
+                    nextRoomId += 1
+                    roomIds[room] = nextRoomId
+                end
+                local dist = "?"
+                pcall(function()
+                    dist = tostring(math.floor((room:GetPivot().Position - root.Position).Magnitude))
+                end)
+                table.insert(list, string.format("#%d %s %s studs", roomIds[room], room.Name, dist))
+                if roomIds[room] > newestId then
+                    newest, newestId = room, roomIds[room]
+                end
+            end
+            table.insert(lines, "ROOMS: " .. table.concat(list, ", "))
+            if newest then
+                local parts = {}
+                for _, child in ipairs(newest:GetChildren()) do
+                    local names = {}
+                    local kids = child:GetChildren()
+                    if #kids <= 40 then
+                        for _, kid in ipairs(kids) do
+                            if #names < 8 then
+                                table.insert(names, kid.Name)
+                            end
+                        end
+                    end
+                    table.insert(parts, child.Name .. "(" .. child.ClassName .. (#names > 0 and (": " .. table.concat(names, ","))
+                        or (#kids > 0 and (": " .. #kids .. " children") or "")) .. ")")
+                end
+                table.insert(lines, string.format("NEWEST ROOM #%d %s: %s", newestId, newest.Name, table.concat(parts, "; ")))
+            end
+        end)
+        if not ok then
+            table.insert(lines, "ROOMS: " .. tostring(err))
+        end
+        return table.concat(lines, "\n")
+    end
+    function Hauntlet:roomElapsed()
+        return self.room and math.max(0, Util.now() - self.room.at) or 0
+    end
+    -- What the decider needs, as plain values. others = players still in the run besides me (their phones count).
+    function Hauntlet:view()
+        local room = self.room or {}
+        local others = 0
+        for id in pairs(room.alive or {}) do
+            if tostring(id) ~= self._userId then
+                others += 1
+            end
+        end
+        return {
+            seq = room.seq, area = room.area, doors = room.doors or {}, revealedGhost = self.revealedGhost,
+            safe = room.safe == true, inventory = self.inventory, health = self.health or 3,
+            maxHealth = self.maxHealth or 3, tempHealth = self.tempHealth or 0, shield = self.ghostShield == true,
+            elapsed = self:roomElapsed(), others = others,
+        }
+    end
+    --[[
+        Door kinds (the game's HauntletDoorDB, dumped 2026-10-10 by the debug mode): ghost = ghost_weight (the room's
+        one ghost goes behind a door with this weight: the risk of a door = its weight / the room's total), effect =
+        what entering does, drops = the items one expects behind it. Read live from the game when possible; this copy
+        is the fallback.
+    ]]
+    Hauntlet.DOOR_FALLBACK = {
+        bouncy = { ghost = 80, effect = "player_bounce", drops = 1 },
+        copycat = { ghost = 0, effect = "transform", drops = 0 },
+        electric = { ghost = 30, effect = "player_take_damage", value = 1, drops = 1.3 },
+        gold_locked = { ghost = 0, drops = 1 },
+        locked = { ghost = 30, drops = 0.25 },
+        nightmare = { ghost = 180, drops = 1.6 },
+        rotten = { ghost = 120, drops = 0.9 },
+        security = { ghost = 20, drops = 1.2 },
+        shadow = { ghost = 150, drops = 1.3 },
+        webbed = { ghost = 5, effect = "player_lose_item", value = 1, drops = 0.3 },
+        wooden = { ghost = 90, drops = 0.45 },
+    }
+    -- Nexus: the next area's cost (its doors: copycat 0 ghost, webbed 5 but an item each, wooden 90, bouncy 80 + a
+    -- random launch, security 20 but 2 keys each, electric a sure heart each, nightmare 180).
+    Hauntlet.AREA_COST = { copycat = 0, spider = 4, hallway = 8, carnival = 10, laboratory = 12, mechanical = 25,
+        nightmare = 30 }
+    local liveDoors
+    function Hauntlet.doorInfo(kind)
+        local area = type(kind) == "string" and string.match(kind, "^area:(.+)$")
+        if area then
+            return { ghost = 0, drops = 0, area = area, cost = Hauntlet.AREA_COST[area] or 15 }
+        end
+        if liveDoors == nil then
+            liveDoors = false
+            pcall(function()
+                local node = ReplicatedStorage
+                for _, name in ipairs(GameConstants.Event.HauntletDBPath) do
+                    node = node and node:FindFirstChild(name)
+                end
+                local db = node and require(node:FindFirstChild("HauntletDoorDB"))
+                if type(db) ~= "table" then
+                    return
+                end
+                local list = {}
+                for doorKind, entry in pairs(db) do
+                    if type(entry) == "table" and tonumber(entry.ghost_weight) then
+                        local total, expected = 0, 0
+                        for key, weight in pairs(type(entry.drop_table) == "table" and entry.drop_table or {}) do
+                            weight = tonumber(weight) or 0
+                            total += weight
+                            expected += (tonumber(string.match(tostring(key), ":(%d+)$")) or 0) * weight
+                        end
+                        list[tostring(doorKind)] = { ghost = tonumber(entry.ghost_weight), effect = entry.enter_effect,
+                            value = tonumber(entry.enter_effect_value) or 1, drops = total > 0 and expected / total or 0 }
+                    end
+                end
+                if next(list) then
+                    liveDoors = list
+                end
+            end)
+        end
+        return (liveDoors and liveDoors[kind]) or Hauntlet.DOOR_FALLBACK[kind] or { ghost = 90, drops = 0.5 }
+    end
+    --[[
+        DECIDER. view = Hauntlet:view() + tried = { [item] = true } (items already tried in this room).
+        Returns ONE next step:
+          { use = item, door = n?, reason }     use a run item first (door = the door a key / potion is for)
+          { wait = true, reason }               ghost unknown: wait a little for another player's phone (never alone)
+          { door = n, reason, notes, risky }    stand in this door's circle (notes: why each door was kept or rejected)
+        Risk of a door: revealed ghost 1 / other doors 0 / the wand cleared the room 0; unknown = its ghost weight /
+        the room's total (room 1 never had a ghost in any recorded run: 0). Score = risk x 100 + entering's cost
+        (electric: a sure heart = 100; webbed: an item; bouncy: a random door) + lock cost - expected items x 3.
+        Items: red potion when hearts are missing, gold potion at once; ghost unknown and the best door still risky ->
+        my phone, else my wand, else wait for another player's phone; a key / gold key when the best door is behind
+        it; a ghost potion when the chosen door is risky. Equal doors: at random.
+    ]]
+    local function itemCount(inventory, item)
+        return tonumber(inventory and inventory[item]) or 0
+    end
+    local function ownedItems(inventory)
+        local n = 0
+        for _, count in pairs(inventory or {}) do
+            n += math.max(0, tonumber(count) or 0)
+        end
+        return n
+    end
+    function Hauntlet.decide(view, options)
+        options = options or Hauntlet.DEFAULTS
+        local inv, tried = view.inventory or {}, view.tried or {}
+        local function can(item)
+            return itemCount(inv, item) > 0 and not tried[item]
+        end
+        local health, maxHealth = tonumber(view.health) or 3, tonumber(view.maxHealth) or 3
+        local ghost = tonumber(view.revealedGhost)
+        local known = view.safe == true or ghost ~= nil
+        local firstRoomSafe = options.safeFirstRoom ~= false and view.seq == 1
+        if health < maxHealth and can("red_potion") then
+            return { use = "red_potion", reason = string.format("hearts %d/%d: the red potion fills them", health, maxHealth) }
+        end
+        if can("gold_potion") then
+            return { use = "gold_potion", reason = "one more heart for the rest of the run (run items end with the run)" }
+        end
+        -- the risk of every door
+        local doors, risks, total = view.doors or {}, {}, 0
+        for i = 1, 4 do
+            local d = doors[i]
+            if d and d.exists ~= false then
+                total += Hauntlet.doorInfo(d.kind).ghost
+            end
+        end
+        local bestUnknownRisk = math.huge
+        -- live run 3: room 8 had 2 ghost doors and room 9 a ghost that took 2 hearts: from here a revealed ghost does
+        -- not make the other doors safe (they keep half their weight)
+        local lateRoom = (tonumber(view.seq) or 0) >= (options.multiGhostFromRoom or 8)
+        local function enterable(d)
+            local gold, grey = tonumber(d.gold) or 0, tonumber(d.grey) or 0
+            return (gold == 0 or (itemCount(inv, "gold_key") >= gold and not tried.gold_key))
+                and (grey == 0 or (itemCount(inv, "key") >= grey and not tried.key))
+        end
+        local ghostWeight = ghost and doors[ghost] and doors[ghost].exists ~= false and Hauntlet.doorInfo(doors[ghost].kind).ghost or 0
+        for i = 1, 4 do
+            local d = doors[i]
+            if d and d.exists ~= false then
+                if view.safe == true or firstRoomSafe or Hauntlet.doorInfo(d.kind).area then
+                    risks[i] = 0
+                elseif ghost then
+                    if i == ghost then
+                        risks[i] = 1
+                    elseif lateRoom and total - ghostWeight > 0 then
+                        risks[i] = 0.5 * Hauntlet.doorInfo(d.kind).ghost / (total - ghostWeight)
+                    else
+                        risks[i] = 0
+                    end
+                else
+                    risks[i] = total > 0 and Hauntlet.doorInfo(d.kind).ghost / total or (1 / 3)
+                end
+                -- live run 3 (death in room 14): a locked door I cannot open is no way out, its low risk does not count
+                if enterable(d) then
+                    bestUnknownRisk = math.min(bestUnknownRisk, risks[i])
+                end
+            end
+        end
+        local lowHearts = health + (tonumber(view.tempHealth) or 0) <= 1
+        local phoneAt = lowHearts and 0.01 or (options.phoneAtRisk or 0.15)
+        if not known and not firstRoomSafe and bestUnknownRisk >= phoneAt then
+            if can("cell_phone") then
+                return { use = "cell_phone", reason = string.format("the safest door is still %d%% ghost: the phone shows "
+                    .. "the ghost's door, the other doors are then safe", math.floor(bestUnknownRisk * 100 + 0.5)) }
+            elseif can("rainbow_wand") and bestUnknownRisk >= (lowHearts and 0.01 or (options.wandAtRisk or 0.25)) then
+                return { use = "rainbow_wand", reason = "no phone: the wand clears every ghost in this room" }
+            elseif (tonumber(view.others) or 0) > 0 and (tonumber(view.elapsed) or 0) < (options.revealWaitSeconds or 0) then
+                return { wait = true, reason = "ghost unknown: waiting a moment for another player's phone" }
+            end
+        end
+        local rng = options.rng or math.random
+        local penalty = options.kindPenalty or {}
+        local notes, best, bestScore, bestNeeds, bestRisk = {}, nil, math.huge, nil, nil
+        for i = 1, 4 do
+            local d = doors[i]
+            if d and d.exists ~= false then
+                local info = Hauntlet.doorInfo(d.kind)
+                local gold, grey = tonumber(d.gold) or 0, tonumber(d.grey) or 0
+                local risk = risks[i]
+                local needs = gold > 0 and "gold_key" or (grey > 0 and "key" or nil)
+                local locks = gold > 0 and gold or grey
+                local score = risk * 100 + (tonumber(penalty[d.kind]) or 0) - (tonumber(info.drops) or 0) * 3
+                local parts = {}
+                if info.area then
+                    score += info.cost
+                    if info.area == "laboratory" and itemCount(inv, "key") < 2 then
+                        score += 20
+                        table.insert(parts, "its doors need 2 keys each")
+                    end
+                    table.insert(parts, "next area: " .. info.area .. " (cost " .. info.cost .. ")")
+                end
+                if info.effect == "player_take_damage" then
+                    score += 100 * (tonumber(info.value) or 1)
+                    table.insert(parts, "entering costs a heart")
+                elseif info.effect == "player_lose_item" and ownedItems(inv) > 0 then
+                    score += 8
+                    table.insert(parts, "entering costs an item")
+                elseif info.effect == "player_bounce" then
+                    score += 10
+                    table.insert(parts, "bounces me to a random door")
+                elseif info.effect == "transform" then
+                    score += 3
+                end
+                if needs and (itemCount(inv, needs) < locks or tried[needs]) then
+                    score += 1000
+                    table.insert(parts, string.format("locked (%d %s lock%s), cannot open it", locks,
+                        needs == "gold_key" and "gold" or "grey", locks == 1 and "" or "s"))
+                elseif needs then
+                    if known and risk == 0 and options.preferLockedWhenSafe then
+                        score -= 5
+                        table.insert(parts, "safe and locked: the " .. needs .. " opens the richer path")
+                    else
+                        score += 5
+                        table.insert(parts, "needs a " .. needs)
+                    end
+                elseif d.wasLocked and risk == 0 and options.preferLockedWhenSafe then
+                    score -= 5
+                    table.insert(parts, "safe and unlocked now: the richer path")
+                end
+                if risk >= 1 then
+                    table.insert(parts, 1, "the ghost was revealed here")
+                end
+                score += rng() * 0.5
+                notes[i] = string.format("door %d (%s): risk %s, score %.1f%s", i, tostring(d.kind),
+                    risk == 0 and "none" or (risk >= 1 and "GHOST" or (math.floor(risk * 100 + 0.5) .. "%")), score,
+                    #parts > 0 and (" - " .. table.concat(parts, "; ")) or "")
+                if score < bestScore then
+                    best, bestScore, bestRisk = i, score, risk
+                    bestNeeds = (needs and score < 1000) and needs or nil
                 end
             end
         end
         if not best then
-            local fewest = math.huge
-            for i = 1, 3 do
-                local d = doors[i]
-                if d and i ~= ghost and d.gold + d.grey < fewest then
-                    best, fewest = i, d.gold + d.grey
+            return { wait = true, reason = "no door data yet" }
+        end
+        local why = view.safe == true and "the wand cleared this room"
+            or (ghost and string.format("the ghost is behind door %d", ghost))
+            or (firstRoomSafe and "room 1 never had a ghost")
+            or string.format("ghost unknown: door %d is the least likely (%d%%)", best, math.floor(bestRisk * 100 + 0.5))
+        if bestNeeds then
+            return { use = bestNeeds, door = best, reason = why .. "; door " .. best .. " needs a " .. bestNeeds, notes = notes }
+        end
+        local potionAt = health <= 1 and 0.01 or (options.potionAtRisk or 0.15)
+        if bestRisk >= 0.5 and view.safe ~= true and can("rainbow_wand") then
+            -- live run 3: the only door left was the revealed ghost and the wand stayed in the pocket
+            return { use = "rainbow_wand", door = best, reason = why .. "; the wand clears the room first", notes = notes }
+        end
+        if bestRisk >= potionAt and can("ghost_potion") and not view.shield and (tonumber(view.tempHealth) or 0) <= 0 then
+            return { use = "ghost_potion", door = best, reason = why .. "; a ghost potion protects door " .. best, notes = notes }
+        end
+        return { door = best, reason = why, notes = notes, risky = bestRisk > 0 }
+    end
+    function Hauntlet.describeDoors(doors)
+        local parts = {}
+        for i = 1, 4 do
+            local d = doors and doors[i]
+            if d and d.exists ~= false then
+                local locks = (d.gold or 0) > 0 and (" " .. d.gold .. " gold lock") or ((d.grey or 0) > 0 and (" " .. d.grey .. " lock") or "")
+                table.insert(parts, i .. "=" .. tostring(d.kind) .. locks)
+            end
+        end
+        return table.concat(parts, ", ")
+    end
+    function Hauntlet.describeItems(inventory)
+        local parts = {}
+        for item, n in pairs(inventory or {}) do
+            if (tonumber(n) or 0) > 0 then
+                table.insert(parts, item .. (n > 1 and (" x" .. n) or ""))
+            end
+        end
+        table.sort(parts)
+        return #parts > 0 and table.concat(parts, ", ") or "none"
+    end
+    -- Debug: the game's own door / item / area lists (ReplicatedStorage...Game.Hauntlet.*DB), one level deep, so the
+    -- door kinds' real rules can be read later (Event.HauntletDebug = true writes them to AdoptMeFarm/hauntlet_db.txt).
+    function Hauntlet.describeDatabases()
+        local lines = {}
+        local node = ReplicatedStorage
+        for _, name in ipairs(GameConstants.Event.HauntletDBPath) do
+            node = node and node:FindFirstChild(name)
+        end
+        if not node then
+            return { "Hauntlet databases not found" }
+        end
+        local function show(value)
+            if type(value) == "table" then
+                local inner = {}
+                for k, v in pairs(value) do
+                    if type(v) ~= "table" and type(v) ~= "function" and #inner < 12 then
+                        table.insert(inner, tostring(k) .. "=" .. tostring(v))
+                    end
+                end
+                table.sort(inner)
+                return "{ " .. table.concat(inner, ", ") .. " }"
+            end
+            return tostring(value)
+        end
+        for _, dbName in ipairs({ "HauntletDoorDB", "HauntletItemDB", "HauntletAreaDB" }) do
+            local module = node:FindFirstChild(dbName)
+            local ok, db = pcall(require, module)
+            table.insert(lines, "== " .. dbName .. (ok and "" or (" (" .. tostring(db) .. ")")))
+            if ok and type(db) == "table" then
+                local keys = {}
+                for key in pairs(db) do
+                    table.insert(keys, tostring(key))
+                end
+                table.sort(keys)
+                for _, key in ipairs(keys) do
+                    local entry = db[key]
+                    local fields = {}
+                    if type(entry) == "table" then
+                        for field, value in pairs(entry) do
+                            if type(value) ~= "function" then
+                                table.insert(fields, tostring(field) .. "=" .. show(value))
+                            end
+                        end
+                        table.sort(fields)
+                    end
+                    table.insert(lines, key .. ": " .. table.concat(fields, "; "))
                 end
             end
         end
-        return { door = best or 1 }
+        return lines
     end
     function Hauntlet.client()
         local node = ReplicatedStorage
@@ -9581,7 +10489,54 @@ __moduleSources["Game/Hauntlet"] = function(...)
             end
         end))
         self.available = true
+        if GameConstants.Event.HauntletDebug and type(writefile) == "function" then
+            task.delay(5, function() -- in the lobby, no run needed: the game's room templates (nexus included)
+                pcall(writefile, "AdoptMeFarm/hauntlet_rooms.txt", Hauntlet.describeTemplates())
+            end)
+        end
         return true
+    end
+    -- Debug (user: "the Hauntlet opens every 20 min, too slow to test"): every room template the client has, found by
+    -- its door circles (any folder named *JoinCircle*), with its layout: the nexus room's circles without a run.
+    function Hauntlet.describeTemplates()
+        local lines, seen = {}, {}
+        local function layout(model)
+            local parts = {}
+            for _, child in ipairs(model:GetChildren()) do
+                local names, kids = {}, child:GetChildren()
+                if #kids <= 40 then
+                    for _, kid in ipairs(kids) do
+                        if #names < 10 then
+                            table.insert(names, kid.Name .. "<" .. kid.ClassName .. ">")
+                        end
+                    end
+                end
+                table.insert(parts, child.Name .. "(" .. child.ClassName .. (#names > 0 and (": " .. table.concat(names, ","))
+                    or (#kids > 0 and (": " .. #kids .. " children") or "")) .. ")")
+            end
+            return table.concat(parts, "; ")
+        end
+        local ok, err = pcall(function()
+            for _, node in ipairs(ReplicatedStorage:GetDescendants()) do
+                if #lines >= 80 then
+                    break
+                end
+                local name = string.lower(node.Name)
+                local room = (string.find(name, "joincircle", 1, true) and node.Parent)
+                    or ((name == "nexus" or name == "final_nexus") and node) or nil
+                if room and not seen[room] then
+                    seen[room] = true
+                    table.insert(lines, room:GetFullName() .. " <" .. room.ClassName .. ">: " .. layout(room))
+                end
+            end
+        end)
+        if not ok then
+            table.insert(lines, "error: " .. tostring(err))
+        end
+        if #lines == 0 then
+            table.insert(lines, "no room templates with door circles found in ReplicatedStorage")
+        end
+        return table.concat(lines, "\n")
     end
     return Hauntlet
 end
@@ -10334,8 +11289,8 @@ __moduleSources["Game/EventTasks"] = function(...)
     EventTasks._journalAt = nil
     EventTasks.hauntlet = {
         id = "hauntlet",
-        timeoutSeconds = 720,
-        run = function(ctx)
+        timeoutSeconds = 1200,
+        run = function(ctx, group)
             local h = ctx.hauntlet
             if not h or not h.available then
                 return false, "minigame messages are not available"
@@ -10344,135 +11299,352 @@ __moduleSources["Game/EventTasks"] = function(...)
             local function inRun()
                 return ctx.travel:isAt(E.HauntletInteriorPrefix)
             end
-            local pending = h.join ~= nil and not h.leave and not h.kicked and Util.now() - h.join.at < 60
+            local pending = h.join ~= nil and not h.leave and not h.kicked and Util.now() - h.join.at < 90
             if not pending then
                 local arrived, why = ctx.travel:goTo(E.HauntletLobby)
                 if not arrived then
                     return false, "travel to the Hotel failed: " .. tostring(why)
                 end
                 h:reset()
-                ctx.logger:info("Event", "Hauntlet: joining a run")
-                local joinUntil = Util.now() + 30
-                while not h.joinAcceptedAt and not h.join and Util.now() < joinUntil do
-                    ctx.interaction:send("HauntletJoin", E.HauntletId, true, nil)
+                -- Task is only scheduled near T-45. Enter the circle at T-30 (or immediately if already closer).
+                local HAUNTLET_JOIN_LEAD = 30
+                local serverNow = Minigame.serverNow()
+                local startAt = (group and tonumber(group.start))
+                    or EventTasks.nextRoundStart(ctx.gameData:get(KEYS.HauntletCycle), serverNow)
+                if startAt and startAt - serverNow > HAUNTLET_JOIN_LEAD then
+                    local waitSec = math.floor(startAt - serverNow - HAUNTLET_JOIN_LEAD)
+                    ctx.logger:info("Event", string.format(
+                        "Hauntlet: next run in ~%ds, waiting until T-%d before entering the circle",
+                        math.floor(startAt - serverNow), HAUNTLET_JOIN_LEAD))
                     ctx.waitUntil(function()
                         return h.joinAcceptedAt ~= nil or h.join ~= nil
-                    end, 4)
+                            or Minigame.serverNow() >= startAt - HAUNTLET_JOIN_LEAD
+                    end, waitSec + 8)
+                elseif startAt then
+                    ctx.logger:info("Event", string.format(
+                        "Hauntlet: cycle in ~%ds, entering join circle now",
+                        math.floor(startAt - serverNow)))
+                else
+                    ctx.logger:info("Event", "Hauntlet: no cycle timestamp, entering join circle")
                 end
-                if not h.joinAcceptedAt and not h.join then
-                    return false, "join was not accepted"
+                if h.join or h.joinAcceptedAt then
+                    -- Auto-queued while waiting near the hotel.
+                else
+                    -- Enter the circle once (retry a few times), then stay. Re-TP only if pushed out.
+                    local zoneMoved, zoneInfo = false, "not attempted"
+                    for attempt = 1, 3 do
+                        zoneMoved, zoneInfo = ctx.interaction:teleportToHauntletJoinZone()
+                        if zoneMoved then
+                            break
+                        end
+                        task.wait(1)
+                    end
+                    if zoneMoved then
+                        ctx.logger:info("Event", "Hauntlet: in hotel join circle (" .. tostring(zoneInfo)
+                            .. ") — waiting for auto-queue")
+                    else
+                        ctx.logger:warn("Event", "Hauntlet: join circle unavailable (" .. tostring(zoneInfo) .. ")")
+                    end
+                    -- Stay until queued. Soft zone refresh only if still not accepted (every 20 s, max ~2 min).
+                    local joinUntil = Util.now() + 120
+                    local nextZoneRefresh = Util.now() + 20
+                    while not h.joinAcceptedAt and not h.join and Util.now() < joinUntil do
+                        if zoneMoved and Util.now() >= nextZoneRefresh then
+                            ctx.interaction:teleportToHauntletJoinZone()
+                            nextZoneRefresh = Util.now() + 20
+                        end
+                        ctx.waitUntil(function()
+                            return h.joinAcceptedAt ~= nil or h.join ~= nil
+                        end, 2)
+                    end
+                    if not h.joinAcceptedAt and not h.join then
+                        return false, "not auto-queued from the join circle within 120 s"
+                    end
                 end
                 if not ctx.waitUntil(function()
                     return h.join ~= nil
-                end, 120) then
-                    return false, "queued, but no run took me in 120 s"
+                end, 90) then
+                    return false, "queued, but no run took me in within 90 s"
                 end
+            else
+                ctx.logger:info("Event", "Hauntlet: resuming pending run (" .. tostring(h.join.sessionId) .. ")")
             end
-            local sessionId = h.join.sessionId
-            if not ctx.waitUntil(function()
-                return h.enter ~= nil or inRun()
-            end, 15) then
-                ctx.interaction:send("HauntletJoin", sessionId, true, nil)
+            local sessionId = h.join and h.join.sessionId
+            if type(sessionId) ~= "string" then
+                return false, "no session id after join"
             end
             if not ctx.waitUntil(function()
-                return h.enter ~= nil or h.leave ~= nil or h.kicked ~= nil
-            end, 30) then
+                return h.enter ~= nil or inRun() or h.leave ~= nil or h.kicked ~= nil
+            end, 45) then
                 return false, "did not get into the run (" .. tostring(sessionId) .. ")"
             end
             local function over()
                 return h.leave ~= nil or h.kicked ~= nil
             end
-            local picks, itemsUsed, lastSeq = 0, 0, 0
+            -- PLAYING (v2.1.1): one room at a time. READING_STATE -> PLANNING (Hauntlet.decide) -> USING_ITEM ->
+            -- ENTERING_DOOR (move into the door's circle; the game sends the pick) -> VERIFYING (my picked_door + the
+            -- counter that went up = the door I really stand in) -> WAITING_FOR_TRANSITION (doors_opened /
+            -- started_room). Nothing counts as done because it was attempted: only the server's answer counts.
+            local strategy = E.HauntletStrategy or Hauntlet.DEFAULTS
+            local debugMode = E.HauntletDebug == true
+            local function say(text)
+                ctx.logger:info("Hauntlet", text)
+            end
+            local function explain(text)
+                if debugMode then
+                    ctx.logger:info("Hauntlet", text)
+                else
+                    ctx.logger:debug("Hauntlet", text)
+                end
+            end
+            local function switchedOff()
+                local farm = ctx.farmConfig
+                return type(farm) == "table" and (farm.Enabled == false
+                    or (type(farm.Event) == "table" and farm.Event.Hauntlet == false))
+            end
+            pcall(function() -- every room after this one is seen being added (the newest room = mine)
+                ctx.interaction:watchHauntlet(h.join and h.join.interior)
+            end)
+            local picks, itemsUsed, lastSeq, lastCircles = 0, 0, 0, nil
+            local lastLink = nil -- { from = the circle group I last picked in, exit = its exit's name }
+            local visited = {} -- circle groups of the rooms I already picked in (the bot only ever goes forward)
+            local base = nil -- the start of the line of rooms (room 1, then each nexus)
+            local function Interaction_center(group)
+                local ok, center = pcall(function()
+                    return ctx.interaction.hauntletCenter(group)
+                end)
+                return ok and center or nil
+            end
+            say("Client state synchronized: hearts " .. tostring(h.health or "?") .. "/" .. tostring(h.maxHealth or "?")
+                .. ", items " .. Hauntlet.describeItems(h.inventory))
             while not over() do
-                if not ctx.waitUntil(function()
-                    return over() or (h.room ~= nil and h.room.seq ~= lastSeq)
-                end, 90) then
-                    ctx.logger:warn("Event", "Hauntlet: no new room for 90 s")
+                if switchedOff() then
+                    say("Stopped: Auto Hauntlet or Farm running was switched off")
                     break
                 end
-                if over() then
+                if not ctx.waitUntil(function()
+                    return over() or switchedOff() or (h.room ~= nil and h.room.seq ~= lastSeq)
+                end, 90) then
+                    ctx.logger:warn("Hauntlet", "No new room for 90 s: leaving the run loop")
+                    break
+                end
+                if over() or switchedOff() then
                     break
                 end
                 local room = h.room
                 lastSeq = room.seq
-                task.wait(1.5)
-                local tried, forced = {}, nil
-                for _ = 1, 4 do
-                    if over() or h.room ~= room then
-                        break
-                    end
-                    local plan = Hauntlet.plan({
-                        doors = room.doors, revealedGhost = h.revealedGhost, inventory = h.inventory, hearts = h:hearts(),
-                        health = h.health, maxHealth = h.maxHealth, ghostShield = h.ghostShield, tried = tried,
-                    })
-                    if forced and forced ~= h.revealedGhost then
-                        plan = { door = forced }
-                    end
-                    if not plan.use then
-                        break
-                    end
-                    tried[plan.use] = true
-                    local seq = h.usedSeq
-                    ctx.interaction:send("HauntletMessage", sessionId, "try_use_item", plan.use)
-                    ctx.waitUntil(function()
-                        return h.usedSeq > seq or over()
-                    end, 5)
-                    local answer = h.usedItems[seq + 1]
-                    if answer and answer.ok then
-                        itemsUsed += 1
-                        ctx.logger:info("Event", "Hauntlet: used " .. plan.use .. " in room " .. room.seq)
-                        if plan.use == "key" then
-                            ctx.waitUntil(function()
-                                return room.doors[plan.door].grey == 0 or over()
-                            end, 4)
-                        elseif plan.use == "gold_key" then
-                            forced = plan.door
-                        elseif plan.use == "cell_phone" or plan.use == "rainbow_wand" then
-                            ctx.waitUntil(function()
-                                return h.revealedGhost ~= nil or over()
-                            end, 4)
-                        end
-                    end
-                end
-                if not over() and h.room == room then
-                    local door = forced
-                    if not door or door == h.revealedGhost then
-                        door = Hauntlet.plan({
-                            doors = room.doors, revealedGhost = h.revealedGhost, inventory = {}, hearts = h:hearts(),
-                        }).door
-                    end
-                    for attempt = 1, 2 do
-                        ctx.interaction:send("HauntletMessage", sessionId, "try_pick_door", door)
+                say(string.format("Room detected: #%d %s/%s, doors %s", room.seq, tostring(room.area), tostring(room.kind),
+                    Hauntlet.describeDoors(room.doors)))
+                say(string.format("Health: %d/%d%s | Items available: %s", h.health or 3, h.maxHealth or 3,
+                    (h.tempHealth or 0) > 0 and (" +" .. h.tempHealth .. " shield") or "", Hauntlet.describeItems(h.inventory)))
+                ctx.waitUntil(function() -- the game moves me into the new room first
+                    local root = myRoot()
+                    return over() or h.room ~= room or (root ~= nil and not root.Anchored)
+                end, 6)
+                local tried, chosen, circles, bad, steps, failedMoves = {}, nil, nil, {}, 0, 0
+                local moveMethod = type(ctx.farmConfig) == "table" and type(ctx.farmConfig.Event) == "table"
+                    and ctx.farmConfig.Event.HauntletMove or "tween"
+                local moveSeconds = type(ctx.farmConfig) == "table" and type(ctx.farmConfig.Event) == "table"
+                    and tonumber(ctx.farmConfig.Event.HauntletMoveSeconds) or nil
+                local avoid = {} -- circle groups that took no pick in this room
+                while not over() and h.room == room and not switchedOff() do
+                    steps += 1
+                    if steps > 150 then
+                        ctx.logger:warn("Hauntlet", "Room " .. room.seq .. ": too many steps, waiting for the room to end")
                         ctx.waitUntil(function()
-                            return h.picked ~= nil or h.room ~= room or over()
-                        end, 5)
-                        if h.picked or h.room ~= room or over() then
-                            break
-                        end
-                        task.wait(2)
+                            return over() or h.room ~= room
+                        end, 30)
+                        break
                     end
-                    picks += 1
-                    ctx.logger:debug("Event", string.format("Hauntlet: room %d (%s) door %d %s, ghost %s, hearts %d", room.seq,
-                        tostring(room.area), door, room.doors[door].kind, tostring(h.revealedGhost), h:hearts()))
+                    local view = h:view()
+                    view.tried = tried
+                    local plan = Hauntlet.decide(view, strategy)
+                    if plan.use then
+                        tried[plan.use] = true
+                        local lockedDoors = 0
+                        for i = 1, 4 do
+                            local d = room.doors[i]
+                            if d and ((d.grey or 0) > 0 or (d.gold or 0) > 0) then
+                                lockedDoors += 1
+                            end
+                        end
+                        if (plan.use == "key" or plan.use == "gold_key") and plan.door and lockedDoors > 1 then
+                            -- more than one locked door: stand at the one the key is for first
+                            local moved, how, _, used = ctx.interaction:teleportToHauntletDoor(h.join and h.join.interior,
+                                plan.door, { avoid = avoid, bad = bad })
+                            if moved then
+                                circles = used
+                                explain("At door " .. plan.door .. " for the key (" .. tostring(how) .. ")")
+                            end
+                        end
+                        local seq = h.usedSeq
+                        local sent = pcall(function()
+                            ctx.interaction:send("HauntletMessage", sessionId, "try_use_item", plan.use)
+                        end)
+                        if sent then
+                            ctx.waitUntil(function()
+                                return h.usedSeq > seq or over() or h.room ~= room
+                            end, 5)
+                        end
+                        local answer = h.usedItems[seq + 1]
+                        if answer and answer.ok then
+                            itemsUsed += 1
+                            say(string.format("Used %s | Reason: %s", plan.use, plan.reason))
+                            if plan.use == "cell_phone" then
+                                ctx.waitUntil(function()
+                                    return h.revealedGhost ~= nil or over() or h.room ~= room
+                                end, 4)
+                                if h.revealedGhost then
+                                    say("Door outcomes: ghost behind door " .. h.revealedGhost .. ", the other doors are safe")
+                                end
+                            elseif (plan.use == "key" or plan.use == "gold_key") and plan.door then
+                                ctx.waitUntil(function()
+                                    local d = room.doors[plan.door]
+                                    return over() or h.room ~= room or (d ~= nil and (d.grey or 0) == 0 and (d.gold or 0) == 0)
+                                end, 4)
+                            elseif plan.use == "rainbow_wand" then
+                                say("Door outcomes: the wand cleared this room, every door is safe")
+                            end
+                        else
+                            say(string.format("%s was not used (%s)", plan.use, answer and "the game refused it" or "no answer"))
+                        end
+                    elseif plan.wait then
+                        explain(plan.reason)
+                        ctx.waitUntil(function()
+                            return over() or h.room ~= room or h.revealedGhost ~= nil
+                        end, 1)
+                        if h.revealedGhost then
+                            say("Door outcomes: another player's phone shows the ghost behind door " .. h.revealedGhost)
+                        end
+                    else
+                        local door = plan.door
+                        local kind = room.doors[door] and room.doors[door].kind or "?"
+                        if door ~= chosen then
+                            for i = 1, 4 do
+                                if plan.notes and plan.notes[i] then
+                                    explain(plan.notes[i])
+                                end
+                            end
+                            say(string.format("Decision: door %d (%s) | Reason: %s%s", door, kind, plan.reason,
+                                plan.risky and " (not verified safe)" or ""))
+                            chosen = door
+                        end
+                        if h.myDoor == door then
+                            -- standing in the chosen circle: stay until the doors open or the plan changes
+                            local ghostNow, safeNow = h.revealedGhost, room.safe
+                            ctx.waitUntil(function()
+                                return over() or h.room ~= room or h.revealedGhost ~= ghostNow or room.safe ~= safeNow
+                                    or h.myDoor ~= door
+                            end, 2)
+                        else
+                            say("Entering selected door " .. door)
+                            local movedAt = Util.now()
+                            local moved, how, part, used, verified = ctx.interaction:teleportToHauntletDoor(
+                                h.join and h.join.interior, door, { avoid = avoid, bad = bad, method = moveMethod,
+                                    nexus = room.kind == "nexus" or room.kind == "final_nexus", link = lastLink,
+                                    visited = visited, base = base, seconds = moveSeconds })
+                            if moved then
+                                circles = used
+                                picks += 1
+                                ctx.waitUntil(function() -- a pick shows within ~0.3 s when the circle is the right one
+                                    return over() or h.room ~= room or (h.myDoorAt ~= nil and h.myDoorAt >= movedAt)
+                                end, 1.5)
+                                -- live run 4: alone, the doors open on my pick and the next room starts at once, so this
+                                -- must not wait for "still the same room": the pick counts if this room's doors opened
+                                local pickedHere = (h.room == room and h.myDoorAt ~= nil and h.myDoorAt >= movedAt)
+                                    or (h.lastOpened ~= nil and h.lastOpened.seq == room.seq)
+                                if pickedHere and used then
+                                    if room.kind == "nexus" or room.kind == "final_nexus" then
+                                        -- a new line of rooms starts at the nexus: the start is here now
+                                        visited = {}
+                                        base = Interaction_center(used)
+                                    elseif base == nil then
+                                        base = Interaction_center(used) -- room 1: the start of the line
+                                    end
+                                    visited[used] = true -- a room I picked in: never again (no going back)
+                                    local pickedDoor = (h.room == room and h.myDoor)
+                                        or (h.lastOpened and h.lastOpened.seq == room.seq and h.lastOpened.myDoor) or door
+                                    lastLink = { from = used, exit = (room.kind == "nexus" or room.kind == "final_nexus")
+                                        and ("Exit" .. tostring(pickedDoor)) or "Exit" }
+                                end
+                                if h.room == room and not over() then
+                                    if h.myDoor == door and h.myDoorAt and h.myDoorAt >= movedAt then
+                                        say(string.format("Door mapping verified: door %d = %s", door, tostring(how)))
+                                    elseif h.myDoor and h.myDoorAt and h.myDoorAt >= movedAt then
+                                        ctx.logger:warn("Hauntlet", string.format(
+                                            "Door mapping WRONG: %s is door %d, not %d; trying another circle",
+                                            tostring(how), h.myDoor, door))
+                                        bad[part] = true
+                                    else
+                                        failedMoves += 1
+                                        say(string.format("No pick seen after the move to door %d (%s%s), try %d: "
+                                            .. "trying another circle group", door, tostring(how),
+                                            verified and "" or ", unverified", failedMoves))
+                                        if used then
+                                            if avoid[used] then
+                                                avoid = {} -- every group tried: start over (the room may not have been ready)
+                                                bad = {}
+                                            else
+                                                avoid[used] = true
+                                            end
+                                        end
+                                    end
+                                end
+                            else
+                                failedMoves += 1
+                                ctx.logger:warn("Hauntlet", "Could not reach door " .. door .. ": " .. tostring(how))
+                                task.wait(1)
+                            end
+                        end
+                    end
                 end
+                lastCircles = circles or lastCircles
+                h:_debugFlush()
+                ctx.waitUntil(function()
+                    return over() or (h.lastOpened ~= nil and h.lastOpened.seq == room.seq)
+                end, 3)
+                local result = h.lastOpened
+                if result and result.seq == room.seq then
+                    local ghostDoors = {}
+                    for i = 1, 4 do
+                        if result.ghosts[i] then
+                            table.insert(ghostDoors, tostring(i))
+                        end
+                    end
+                    say(string.format("Room transition verified: room %d, I was at door %s, ghost behind %s%s", room.seq,
+                        tostring(result.myDoor or "?"), #ghostDoors > 0 and table.concat(ghostDoors, ", ") or "no door",
+                        result.damage > 0 and string.format(" (-%d heart%s)", result.damage, result.damage == 1 and "" or "s")
+                            or ""))
+                end
+            end
+            if switchedOff() and not over() then
+                -- user 2026-10-10: "it teleported me out while I was playing": switched off during a run = the run is
+                -- the player's now. No waiting, no travel, nothing more sent.
+                say("Switched off during the run: the run is yours now (no travel, nothing more sent)")
+                return false, "switched off during the run"
             end
             ctx.waitUntil(function()
                 return h.leave ~= nil
-            end, 20)
+            end, 25)
             ctx.waitUntil(function()
                 return not inRun()
             end, 15)
             local candyAfter = tonumber(ctx.gameData:get(KEYS.Candy))
             local gained = (candyAfter and candyBefore) and (candyAfter - candyBefore) or nil
             local leave = h.leave
-            ctx.logger:info("Event", string.format("Hauntlet: %s, room reached %s (best %s), %d doors, %d items, reward %s candy%s",
-                h.kicked and ("died (" .. h.kicked .. ")") or "run finished", tostring(leave and leave.roomReached or h.roomSeq),
-                tostring(leave and leave.best or "?"), picks, itemsUsed, tostring(leave and leave.candy or "?"),
+            ctx.logger:info("Event", string.format(
+                "Hauntlet: %s, room reached %s (best %s), %d door steps, %d items, reward %s candy%s",
+                h.kicked and (h.kicked == "died" and "died" or ("kicked out (" .. h.kicked .. ")")) or "run finished",
+                tostring(leave and leave.roomReached or h.roomSeq),
+                tostring(leave and leave.best or "?"), picks, itemsUsed,
+                tostring(leave and leave.candy or "?"),
                 gained and string.format(", candy %+d", gained) or ""))
             if leave and (EventTasks._journalAt == nil or Util.now() - EventTasks._journalAt > 600) then
                 EventTasks._journalAt = Util.now()
                 local before = ctx.gameData:get(KEYS.Hauntlet)
-                ctx.interaction:send("UnlockHauntletJournal")
+                pcall(function()
+                    ctx.interaction:send("UnlockHauntletJournal")
+                end)
                 ctx.waitUntil(function()
                     return ctx.gameData:get(KEYS.Hauntlet) ~= before
                 end, 5)
@@ -10481,12 +11653,17 @@ __moduleSources["Game/EventTasks"] = function(...)
                     ctx.logger:info("Event", "Hauntlet: journal pages " .. tostring(after.pages_unlocked))
                 end
             end
-            local home, homeWhy = ctx.travel:goTo(GameConstants.HouseInteriorName)
-            if not home then
-                ctx.logger:info("Event", "Hauntlet: going home after the run did not work (" .. tostring(homeWhy) .. ")")
+            if h.leave ~= nil or not inRun() then
+                local home, homeWhy = ctx.travel:goTo(GameConstants.HouseInteriorName)
+                if not home then
+                    ctx.logger:info("Event", "Hauntlet: going home after the run did not work ("
+                        .. tostring(homeWhy) .. ")")
+                end
+            else
+                ctx.logger:info("Event", "Hauntlet: the run is still going: no travel out of a run")
             end
             if picks == 0 then
-                return false, h.kicked and ("kicked before a door: " .. h.kicked) or "no door picked"
+                return false, h.kicked and ("kicked before a door: " .. h.kicked) or "no door stepped into"
             end
             if not leave and not (gained and gained > 0) then
                 return false, h.kicked and ("died in room " .. h.roomSeq .. ", no reward seen") or "run did not end"
@@ -10924,6 +12101,7 @@ __moduleSources["Game/TaskManager"] = function(...)
     local EVENT_RECHECK_SECONDS = { ghost_gallery = 120, stray_cat = 1800, crypt = 60, pigeon_nest = 60, quests = 300, pen_stock = 20, age_potion = 5, open_gift = 3, neon_fusion = 2, mega_fusion = 2, candy_pet = 30, house_visits = 300, hauntlet = 90 }
     local GHOST_GALLERY_LEAD_SECONDS = 75
     local GHOST_INTERRUPT_SECONDS = 50
+    local HAUNTLET_LEAD_SECONDS = 45
     local HAUNTLET_GHOST_GAP_SECONDS = 420
     local NO_FURNITURE_SKIP_SECONDS = 600
     local NEVER_INTERRUPT = { ghost_gallery = true, hauntlet = true, recover = true, team = true, neon_fusion = true, mega_fusion = true }
@@ -11628,6 +12806,21 @@ __moduleSources["Game/TaskManager"] = function(...)
         end
         return nil
     end
+    function TaskManager:_hauntletRoundDue(lead)
+        local event = self._farmConfig.Event
+        local data = self._gameData
+        if type(event) ~= "table" or event.Hauntlet ~= true or not data or not self._hauntlet
+            or not self._hauntlet.available or self:_isBlocked("hauntlet")
+            or Util.now() < (self._nextEventAt.hauntlet or 0) then
+            return nil
+        end
+        local serverNow = Minigame.serverNow()
+        local start = EventTasks.nextRoundStart(data:get(GameConstants.DataKeys.HauntletCycle), serverNow)
+        if start and start - serverNow <= lead and start - serverNow > -15 then
+            return start
+        end
+        return nil
+    end
     function TaskManager:_autoNest()
         local event = self._farmConfig.Event
         local data = self._gameData
@@ -11719,9 +12912,12 @@ __moduleSources["Game/TaskManager"] = function(...)
         end
         local h = self._hauntlet
         if event.Hauntlet == true and h and h.available and not self:_isBlocked("hauntlet") then
-            local pending = h.join ~= nil and not h.leave and not h.kicked and Util.now() - h.join.at < 60
-            if pending or (due("hauntlet") and not (event.GhostGallery and self:_ghostRoundDue(HAUNTLET_GHOST_GAP_SECONDS))) then
-                return "hauntlet", "Hauntlet run", EventTasks.hauntlet, nil
+            local pending = h.join ~= nil and not h.leave and not h.kicked and Util.now() - h.join.at < 90
+            -- Only start Hauntlet near cycle start (T-45), same idea as Ghost Gallery.
+            -- Do NOT take the farm for 10 minutes just because due("hauntlet") is true.
+            local hauntStart = self:_hauntletRoundDue(HAUNTLET_LEAD_SECONDS)
+            if pending or (hauntStart and not (event.GhostGallery and self:_ghostRoundDue(HAUNTLET_GHOST_GAP_SECONDS))) then
+                return "hauntlet", "Hauntlet run", EventTasks.hauntlet, hauntStart and { start = hauntStart } or nil
             end
         end
         local nest = event.PigeonNest ~= false and self:_autoNest()
