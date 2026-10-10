@@ -1994,7 +1994,11 @@ __moduleSources["Services/Telemetry"] = function(...)
                     self._counts[counter.key] = (self._counts[counter.key] or 0) + 1
                 end
             end
-            if level == Enums.LogLevel.WARN or level == Enums.LogLevel.ERROR then
+            -- v2.1.3: the Hauntlet room digests and unknown game messages go into the report lines too
+            local keep = level == Enums.LogLevel.WARN or level == Enums.LogLevel.ERROR
+                or (level == Enums.LogLevel.INFO and (category == "HauntletDigest"
+                    or (category == "Hauntlet" and string.find(message, "^New message type") ~= nil)))
+            if keep then
                 if #self._lines >= MAX_QUEUE then
                     table.remove(self._lines, 1)
                     self._dropped += 1
@@ -9311,32 +9315,49 @@ __moduleSources["Game/Tasks"] = function(...)
                     table.insert(choices, kind)
                 end
             end
+            -- the rest of the offered pool goes last in the burst: a need I cannot do beats a mystery card that never ends
+            local preferred = #choices
+            for _, kind in ipairs(entry.mysteryOptions or {}) do
+                if kind ~= "mystery" and not table.find(choices, kind) then
+                    table.insert(choices, kind)
+                end
+            end
             if #choices == 0 then
                 return false, "no doable need among the mystery options"
             end
-            ctx.logger:info("Tasks", string.format("Mystery: pool %s, seed %s, trying %d kinds",
+            if preferred == 0 then
+                ctx.logger:info("Tasks", "Mystery: no doable kind on the cards: picking any offered one to end it")
+            end
+            ctx.logger:info("Tasks", string.format("Mystery: pool %s, seed %s, sending all %d kinds on every card at once",
                 table.concat(entry.mysteryOptions or {}, ","), tostring(entry.mysterySeed), #choices))
-            local started, tries = Util.now(), 0
-            for index = 1, #choices do
-                local kind = choices[index]
-                for slot = 1, 3 do
-                    if Util.now() - started > 75 then
-                        return false, "mystery did not change into a chosen need"
+            -- v2.1.3 (user: "mystery still fails now and then: spam every need at once, no waiting between"): every doable
+            -- kind on every card in one burst (the server takes the first valid one), then one short wait. A second
+            -- burst only if the card is still there (the pool may have arrived late).
+            local function gone()
+                return ctx.findEntry("mystery", "pet", entry.petUnique) == nil
+            end
+            for burst = 1, 2 do
+                for _, kind in ipairs(choices) do
+                    for slot = 1, 3 do
+                        if gone() then
+                            break
+                        end
+                        pcall(function()
+                            ctx.interaction:send("ChooseMystery", entry.petUnique, "mystery", slot, kind)
+                        end)
                     end
-                    tries += 1
-                    ctx.logger:debug("Tasks", string.format("Mystery: choosing %s (card %d)", kind, slot))
-                    ctx.interaction:send("ChooseMystery", entry.petUnique, "mystery", slot, kind)
-                    if ctx.waitUntil(function()
-                        return ctx.findEntry("mystery", "pet", entry.petUnique) == nil
-                            and ctx.findEntry(kind, "pet", entry.petUnique) ~= nil
-                    end, 1.2) then
-                        ctx.logger:info("Tasks", string.format("Mystery accepted: %s on card %d (try %d, seed %s)", kind, slot,
-                            tries, tostring(entry.mysterySeed)))
-                        return true
+                end
+                if ctx.waitUntil(gone, 4) then
+                    local picked = "?"
+                    for _, kind in ipairs(choices) do
+                        if ctx.findEntry(kind, "pet", entry.petUnique) then
+                            picked = kind
+                            break
+                        end
                     end
-                    if not ctx.findEntry("mystery", "pet", entry.petUnique) then
-                        return true
-                    end
+                    ctx.logger:info("Tasks", string.format("Mystery accepted: %s (burst %d, seed %s)", picked, burst,
+                        tostring(entry.mysterySeed)))
+                    return true
                 end
             end
             return false, "mystery did not change into a chosen need"
@@ -10331,7 +10352,8 @@ __moduleSources["Game/Hauntlet"] = function(...)
     ]]
     Hauntlet.DEBUG_FILE = "AdoptMeFarm/hauntlet_debug.log"
     function Hauntlet:_debugStart(sessionId, interiorName)
-        if not GameConstants.Event.HauntletDebug or type(writefile) ~= "function" then
+        -- v2.1.3: on by default for your own accounts (the ones with the private squad key), off for everyone else
+        if not (GameConstants.Event.HauntletDebug or self:_squadKey()) or type(writefile) ~= "function" then
             return
         end
         self:_debugStop()
@@ -11819,7 +11841,7 @@ __moduleSources["Game/EventTasks"] = function(...)
             -- counter that went up = the door I really stand in) -> WAITING_FOR_TRANSITION (doors_opened /
             -- started_room). Nothing counts as done because it was attempted: only the server's answer counts.
             local strategy = E.HauntletStrategy or Hauntlet.DEFAULTS
-            local debugMode = E.HauntletDebug == true
+            local debugMode = E.HauntletDebug == true or h:_squadKey() ~= nil -- every door's reasons for your own accounts
             local function say(text)
                 ctx.logger:info("Hauntlet", text)
             end
@@ -11883,6 +11905,9 @@ __moduleSources["Game/EventTasks"] = function(...)
                     and tonumber(ctx.farmConfig.Event.HauntletMoveSeconds) or nil
                 local avoid = {} -- circle groups that took no pick in this room
                 local planned, potionsHere = false, 0
+                -- v2.1.3: one compact line per room for the developer report (HauntletDigest: kept in the report's lines)
+                local digest = { items = {}, hearts = string.format("%d/%d%s", h.health or 3, h.maxHealth or 3,
+                    (h.tempHealth or 0) > 0 and ("+" .. h.tempHealth) or "") }
                 -- v2.1.3 squad: my turn for the shared items (phone, wand, keys); the order is fixed for the room
                 local squadOn = type(ctx.farmConfig) == "table" and type(ctx.farmConfig.Event) == "table"
                     and ctx.farmConfig.Event.HauntletSquad ~= false
@@ -11995,6 +12020,8 @@ __moduleSources["Game/EventTasks"] = function(...)
                         if answer and answer.ok then
                             itemsUsed += 1
                             say(string.format("Used %s | Reason: %s", plan.use, plan.reason))
+                            table.insert(digest.items, string.format("%s@%.1f", (string.gsub(plan.use, "_potion", "P")),
+                                h:roomElapsed()))
                             if plan.use == "cell_phone" then
                                 ctx.waitUntil(function()
                                     return h.revealedGhost ~= nil or over() or h.room ~= room
@@ -12063,6 +12090,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                             end, 2)
                         else
                             say(string.format("Entering selected door %d at %.1f s", door, h:roomElapsed()))
+                            digest.door, digest.doorAt = door, h:roomElapsed()
                             local movedAt = Util.now()
                             h.expectDoor, h.expectAt, h.mappingSuspect = door, movedAt, nil
                             local moved, how, part, used, verified = ctx.interaction:teleportToHauntletDoor(
@@ -12156,6 +12184,31 @@ __moduleSources["Game/EventTasks"] = function(...)
                         result.damage > 0 and string.format(" (-%d heart%s)", result.damage, result.damage == 1 and "" or "s")
                             or ""))
                 end
+                pcall(function()
+                    local kinds = {}
+                    for i = 1, 4 do
+                        local d = room.doors[i]
+                        if d and d.exists ~= false then
+                            table.insert(kinds, string.sub(tostring(d.kind), 1, 8) .. ((d.wasLocked and "*") or ""))
+                        end
+                    end
+                    local ghostDoors = {}
+                    for i = 1, 4 do
+                        if result and result.seq == room.seq and result.ghosts[i] then
+                            table.insert(ghostDoors, tostring(i))
+                        end
+                    end
+                    ctx.logger:info("HauntletDigest", string.format(
+                        "R%d %s | sq %d #%d%s | h %s | %s | reveal %s | %s | door %s@%s | ghost %s | dmg %s",
+                        room.seq, tostring(room.area), #order, rank, h.squadIds and "k" or "", digest.hearts,
+                        table.concat(kinds, ","),
+                        h.revealedGhost and string.format("d%d@%.1f", h.revealedGhost, (h.revealedAt or room.at) - room.at) or "-",
+                        #digest.items > 0 and table.concat(digest.items, " ") or "no items",
+                        tostring((result and result.seq == room.seq and result.myDoor) or digest.door or "?"),
+                        digest.doorAt and string.format("%.1f", digest.doorAt) or "?",
+                        #ghostDoors > 0 and table.concat(ghostDoors, "+") or "none",
+                        tostring(result and result.seq == room.seq and result.damage or "?")))
+                end)
             end
             if switchedOff() and not over() then
                 -- user 2026-10-10: "it teleported me out while I was playing": switched off during a run = the run is
