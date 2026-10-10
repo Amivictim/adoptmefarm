@@ -43,6 +43,9 @@ local UserConfig = {
             Hauntlet = false,
             HauntletMove = "tween", -- how the bot reaches a door's circle: "tween" (smooth) | "walk" | "tp"
             HauntletMoveSeconds = 0.5, -- tween: seconds to reach the circle (0.1 - 5)
+            HauntletFirst = true, -- a Hauntlet run before a Ghost Gallery round when both are near
+            HauntletSquad = true, -- your accounts in one run play as a team (phone / keys / wand by turns)
+            HauntletSquadKey = "", -- private: only accounts with the relay's SQUAD_KEY ask it who is in the run (never shared)
             StrayCat = false,
             Crypt = false,
             CryptOpen = { "ladder" },
@@ -455,6 +458,9 @@ __moduleSources["Core/Config"] = function(...)
                 Hauntlet = false,
                 HauntletMove = "tween", -- "tween" (smooth, default) | "walk" | "tp": how the bot reaches a door's circle
                 HauntletMoveSeconds = 0.5, -- tween: seconds to reach the circle (0.1 - 5; the room's time is ~25 s)
+                HauntletFirst = true, -- a Hauntlet run comes before a Ghost Gallery round when both are near
+                HauntletSquad = true, -- several of your accounts in one run: shared items (phone, keys, wand) by turns
+                HauntletSquadKey = "", -- private squad key (= the worker's SQUAD_KEY secret): empty = nothing is sent
                 GhostJoinByZone = true,
                 Crypt = false,
                 MummySpider = true,
@@ -1177,7 +1183,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.2 (Adopt Victims - UI Remastered Edition, Hauntlet solver)"
+    Disclosure.VERSION = "2.1.3 (Adopt Victims - UI Remastered Edition, Hauntlet squad)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -1204,7 +1210,9 @@ __moduleSources["Services/Disclosure"] = function(...)
             "Halloween 2026 data (candy, Crypt graves, nest, Stray Cat, round times) and the Ghost Gallery messages the"
                 .. " server sends to you (join, score, reward); the Hauntlet messages sent to you (rooms, doors, your hearts and run"
                 .. " items, reward) and your Hauntlet stats; your Pet Pen",
-            "other players' data arrives on the same channel: it is dropped immediately and never stored",
+            "other players' data arrives on the same channel: it is dropped immediately and never stored, except the"
+                .. " hearts of the players in YOUR Hauntlet run, kept in memory for that run only (to agree on whose turn"
+                .. " it is to use a shared item)",
             "which pet model in the world is yours (to find it later)",
             "Roblox disconnect/kick messages (to report them)",
             "for the window's icons: the game's item list (pictures of pets / items) and the picture next to your Bucks /"
@@ -1227,7 +1235,9 @@ __moduleSources["Services/Disclosure"] = function(...)
             "Hauntlet (Farm.Event.Hauntlet, off by default): joins a run from the Hotel, picks one door per room by"
                 .. " standing in its circle (never the door a phone revealed as the ghost), uses only the run's own items"
                 .. " (keys, phone, potions, wand),"
-                .. " unlocks the journal page once after a run; never while a Ghost Gallery round is near",
+                .. " unlocks the journal page once after a run; a run comes before a Ghost Gallery round"
+                .. " (Farm.Event.HauntletFirst; off: never while a Ghost Gallery round is near); several of your accounts"
+                .. " in one run take turns with the shared items (Farm.Event.HauntletSquad)",
             "camera guard (Farm.CameraGuard, works paused): when the camera is inside your character it is pushed back out"
                 .. " through your own zoom limit for a moment (a local setting, no remote)",
             "configs (Config tab): the settings you save go to AdoptMeFarm/configs/ on this device; one may load at start",
@@ -1357,6 +1367,9 @@ __moduleSources["Services/Disclosure"] = function(...)
                 .. " Interface.Enabled = false: nothing loaded")
             or "OFF (nothing loaded)"))
         add("  - Developer logs (Telemetry): " .. tostring(telemetryText or "OFF"))
+        add("  - Hauntlet squad finder: ONLY when you set a private squad key (Farm.Event.HauntletSquadKey; empty by"
+            .. " default = nothing sent): your Roblox user id and the run's session id go to the relay's /squad, at most 3"
+            .. " times a run; it answers only to the same key, with the user ids of your other accounts in that run")
         add("  - " .. webhookSummary)
         add("  - Webhook summaries show the farmed pet's own picture: its address is asked once from Roblox's thumbnail"
             .. " service (thumbnails.roblox.com; only the picture's number is sent there)")
@@ -2362,6 +2375,12 @@ __moduleSources["Services/Lang"] = function(...)
     add("Auto Hauntlet — join runs, pick safer doors, use keys/items", "Otomatik Hauntlet — katıl, daha güvenli kapı seç, item kullan",
         "Hauntlet automático — entra, elige puertas seguras, usa llaves/objetos", "Hauntlet automático — entra, escolhe portas seguras, usa chaves/itens")
     add("Hauntlet run", "Hauntlet turu", "Partida de Hauntlet", "Partida de Hauntlet")
+    add("Hauntlet before Ghost Gallery", "Hauntlet, Ghost Gallery'den önce", "Hauntlet antes que Ghost Gallery", "Hauntlet antes da Ghost Gallery")
+    add("A Hauntlet run comes first when a Ghost Gallery round is near", "Ghost Gallery turu yakınken önce Hauntlet'e girer",
+        "Primero Hauntlet si una ronda de Ghost Gallery está cerca", "Primeiro Hauntlet se uma rodada da Ghost Gallery estiver perto")
+    add("Hauntlet squad play", "Hauntlet takım oyunu", "Hauntlet en equipo", "Hauntlet em equipe")
+    add("Your accounts in one run take turns with phone / keys / wand", "Aynı runda hesapların telefon / anahtar / asa için sıra alır",
+        "Tus cuentas en una partida se turnan con teléfono / llaves / varita", "Suas contas na partida revezam telefone / chaves / varinha")
     add("Joins each round, vacuums ghosts (Rusty Keys)", "Her tura katılır, hayaletleri süpürür (Paslı Anahtar)", "Entra a cada ronda, aspira fantasmas", "Entra em cada rodada, aspira fantasmas")
     add("Joins by standing in the Manor circle", "Malikanedeki çembere girerek katılır", "Entra parándose en el círculo de la mansión", "Entra ficando no círculo da mansão")
     add("Uses Rusty Keys on the grave going down", "Aşağı inerken mezarda Paslı Anahtar kullanır", "Usa llaves en la tumba al bajar", "Usa chaves no túmulo ao descer")
@@ -3041,6 +3060,9 @@ __moduleSources["Services/Interface"] = function(...)
         ["Farm.Event.GhostGallery"] = "Joins each round, vacuums ghosts (Rusty Keys)",
         ["Farm.Event.Hauntlet"] = "Auto Hauntlet — join runs, pick safer doors, use keys/items",
         ["Farm.Event.HauntletMove"] = "How the bot reaches a door: tween (smooth), walk, or teleport",
+        ["Farm.Event.HauntletFirst"] = "A Hauntlet run comes first when a Ghost Gallery round is near",
+        ["Farm.Event.HauntletSquad"] = "Your accounts in one run take turns with phone / keys / wand",
+        ["Farm.Event.HauntletSquadKey"] = "Private: the worker's SQUAD_KEY, the same on all your alts (empty = nothing sent)",
         ["Farm.Event.HauntletMoveSeconds"] = "Tween: seconds to reach a door (shorter = faster)",
         ["Farm.Event.GhostJoinByZone"] = "Joins by standing in the Manor circle",
         ["Farm.Event.Crypt"] = "Uses Rusty Keys on the grave going down",
@@ -3745,7 +3767,8 @@ __moduleSources["Services/Interface"] = function(...)
         ["Interface.Language"] = true, ["Interface.UIScale"] = true }
     Interface.META_KEYS = { ["Interface.RememberSettings"] = true, ["Interface.Autoload"] = true }
     Interface.PRIVATE_KEYS = { ["Notifications.Webhooks.Summary"] = true, ["Notifications.Webhooks.Alerts"] = true,
-        ["Notifications.PingDiscordUserId"] = true, ["Notifications.Enabled"] = true }
+        ["Notifications.PingDiscordUserId"] = true, ["Notifications.Enabled"] = true,
+        ["Farm.Event.HauntletSquadKey"] = true }
     Interface.CONFIG_FOLDER = "AdoptMeFarm/configs"
     Interface.CONFIG_EXTENSION = ".cfg"
     for _, flag in ipairs(Interface.PING_FLAGS) do
@@ -4960,6 +4983,21 @@ __moduleSources["Services/Interface"] = function(...)
             "Joins every round and vacuums the ghosts (Rusty Keys)")
         bindToggle(halloweenBox, "hauntlet", "key-round", "Auto Hauntlet", { "Farm", "Event", "Hauntlet" },
             "Auto Hauntlet — join runs, pick safer doors, use keys/items")
+        bindToggle(halloweenBox, "hauntletFirst", "key-round", "Hauntlet before Ghost Gallery", { "Farm", "Event", "HauntletFirst" },
+            "A Hauntlet run comes first when a Ghost Gallery round is near")
+        bindToggle(halloweenBox, "hauntletSquad", "users", "Hauntlet squad play", { "Farm", "Event", "HauntletSquad" },
+            "Your accounts in one run take turns with phone / keys / wand")
+        bindText(halloweenBox, "hauntletSquadKey", "key-round", "Squad key (private)", { "Farm", "Event", "HauntletSquadKey" },
+            "same key on every alt", function(key)
+                if key ~= "" and #key < 8 then
+                    return false, "At least 8 characters (the worker's SQUAD_KEY)"
+                end
+                notify("Squad key", key == "" and "Removed: nothing is sent." or "Saved on this device: from the next run.",
+                    "check")
+                return true
+            end, function(value)
+                return (type(value) == "string" and value ~= "") and "******** (set)" or ""
+            end)
         bindPick(halloweenBox, "hauntletMove", "key-round", "Door move", { "Farm", "Event", "HauntletMove" },
             { { "tween", "Tween (smooth)" }, { "walk", "Walk" }, { "tp", "Teleport" } })
         bindSlider(halloweenBox, "hauntletMoveSeconds", "timer", "Move time", { "Farm", "Event", "HauntletMoveSeconds" },
@@ -6026,7 +6064,11 @@ __moduleSources["Game/GameConstants"] = function(...)
         -- v2.1.1: Hauntlet 2 solver. revealWaitSeconds: ghost unknown and no phone / wand of my own -> wait this long
         -- for another player's phone (doors open when everyone picked; a run drops a player who never picks).
         -- kindPenalty: door kind -> extra score (empty: no recorded run showed a kind to be safer).
-        HauntletStrategy = { revealWaitSeconds = 7, preferLockedWhenSafe = true, kindPenalty = {} },
+        -- v2.1.3 (user: "a room has ~20 s: 10 s to plan, 5 s to choose"): planSeconds = the doors wait this long for a
+        -- phone's answer, commitBySeconds = by then I stand in a circle whatever happens; slotStart / slotGap = the
+        -- squad's turns for the shared items (Hauntlet:turnAt).
+        HauntletStrategy = { revealWaitSeconds = 9, planSeconds = 10, commitBySeconds = 15, slotStart = 1, slotGap = 1.2,
+            preferLockedWhenSafe = true, kindPenalty = {} },
         HauntletDebug = false, -- true: every door's reasons in the log + AdoptMeFarm/hauntlet_db.txt (the game's door lists)
         HauntletDBPath = { "SharedModules", "ContentPacks", "Halloween2026", "Game", "Hauntlet" },
         RoundSeconds = 600,
@@ -9777,7 +9819,14 @@ __moduleSources["Game/Hauntlet"] = function(...)
     local Hauntlet = {}
     Hauntlet.__index = Hauntlet
     Hauntlet.DEFAULTS = {
-        revealWaitSeconds = 7, -- ghost unknown, no phone / wand of my own, other players in the run: wait for their phone
+        revealWaitSeconds = 9, -- ghost unknown, no phone / wand of my own, other players in the run: wait for their phone
+        planSeconds = 10, -- v2.1.3: the plan phase of a room (~20 s): items + waiting for a phone
+        commitBySeconds = 15, -- ... and by this second I stand in a door's circle, whatever is still open
+        slotStart = 1, -- squad turns for the shared items: member n from slotStart + (n - 1) x slotGap
+        slotGap = 1.2,
+        potionReserve = 1, -- keep this many ghost potions ...
+        reserveBreakRisk = 0.3, -- ... unless the door is this likely a ghost, or a hit would leave 1 heart or less
+        redPotionMissing = 2, -- the red potion fills every missing heart: wait for 2 missing unless a hit is dangerous
         preferLockedWhenSafe = true, -- the ghost is known elsewhere: spend a key on a locked door (the richer path)
         -- user 2026-10-10: "use the items much more, the heart ones above all; lower the risk to the minimum before
         -- every door; some ghosts take 2 hearts"
@@ -9819,6 +9868,16 @@ __moduleSources["Game/Hauntlet"] = function(...)
         self._awaitPick = false
         self.lastOpened = nil
         self.history = {}
+        -- v2.1.3 squad: every runner's hearts (enter_game, then the broadcast damage / temp / restore messages), the
+        -- door I am moving to (my pick = that circle; the counters are shared and lie when several players move), and
+        -- the script users of this run (the relay's /squad answer; nil = everyone alive counts)
+        self.runners = {}
+        self.expectDoor, self.expectAt = nil, nil
+        self.pickedAt = nil
+        self.mappingSuspect = nil
+        self.revealedAt = nil
+        self.squadIds = nil
+        self._squadAsked = {}
     end
     local function isMine(gameKey)
         local id = GameConstants.Event.HauntletId
@@ -9851,6 +9910,150 @@ __moduleSources["Game/Hauntlet"] = function(...)
     end
     function Hauntlet:hearts()
         return (self.health or 3) + (self.tempHealth or 0)
+    end
+    -- other runners' hearts: kept for this run only, to agree on who spends a shared item first (squadOrder)
+    function Hauntlet:_runnerDamage(id, amount)
+        local r = self.runners[id]
+        if not r or amount <= 0 then
+            return
+        end
+        local fromTemp = math.min(r.temp, amount)
+        r.temp -= fromTemp
+        r.health = math.max(0, r.health - (amount - fromTemp))
+    end
+    -- the same numbers on every account (from the broadcast messages only, mine included), taken when started_room
+    -- arrives: so every account sorts the squad the same way for the whole room
+    function Hauntlet:heartsOf(id)
+        id = tostring(id)
+        local snap = self.room and self.room.heartSnap
+        if snap and snap[id] then
+            return snap[id]
+        end
+        local r = self.runners[id]
+        return r and (r.health + r.temp) or 3
+    end
+    --[[
+        SQUAD (v2.1.3, user 2026-10-10: "stop playing solo runs: win the run with several accounts"). A phone's answer
+        (revealed_ghost), an opened lock and (probably) a wand help EVERY player of the room, so one of each is enough
+        for the whole squad. No message between the accounts is needed for that: every account sees the same server
+        messages and sorts the squad the same way (fewest hearts first: those are the likeliest to die with items still
+        in their pocket, so they spend theirs first; then the lower user id). Member n may spend a shared item only
+        from its turn on: start + (n - 1) x gap seconds into the room; one that has none simply lets its turn pass.
+        Squad = the script users of this run (the relay's /squad answer), else every player still alive.
+    ]]
+    Hauntlet.SHARED_ITEMS = { cell_phone = true, rainbow_wand = true, key = true, gold_key = true }
+    function Hauntlet:squadOrder()
+        local room = self.room or {}
+        local members, seen = {}, {}
+        local listed = self.squadIds
+        for id in pairs(room.alive or {}) do
+            id = tostring(id)
+            if not seen[id] and (listed == nil or listed[id] or id == self._userId) then
+                seen[id] = true
+                table.insert(members, id)
+            end
+        end
+        if self._userId and not seen[self._userId] then
+            table.insert(members, self._userId)
+        end
+        table.sort(members, function(x, y)
+            local hx, hy = self:heartsOf(x), self:heartsOf(y)
+            if hx ~= hy then
+                return hx < hy
+            end
+            return (tonumber(x) or 0) < (tonumber(y) or 0)
+        end)
+        local rank = 1
+        for i, id in ipairs(members) do
+            if id == self._userId then
+                rank = i
+            end
+        end
+        return members, rank
+    end
+    -- Seconds into the room from which I may spend this shared item. Phones first (they decide everything else), the
+    -- wand when no phone answered, keys once the ghost is known (or when nobody could tell): never later than the
+    -- point where the doors must be chosen.
+    function Hauntlet:turnAt(item, rank, strategy)
+        local function opt(key)
+            local value = strategy and strategy[key]
+            if value == nil then
+                value = Hauntlet.DEFAULTS[key]
+            end
+            return tonumber(value) or 0
+        end
+        local start, gap, plan = opt("slotStart"), opt("slotGap"), opt("planSeconds")
+        local base = start
+        if item == "rainbow_wand" then
+            base = math.max(start, plan - 3)
+        elseif item == "key" or item == "gold_key" then
+            local room = self.room
+            local knownAt = self.revealedAt and room and (self.revealedAt - room.at) or nil
+            base = (room and room.safe) and start or (knownAt and math.max(start, knownAt + 0.3)) or math.max(start, plan - 2)
+        end
+        return math.min(base + (math.max(1, rank) - 1) * gap, opt("commitBySeconds") - 2.5)
+    end
+    -- The relay's /squad (same worker as the developer logs), only with the private squad key: my user id + the run's
+    -- session id in, the user ids of the accounts with the same key in the same run back. Three calls a run at most.
+    function Hauntlet:setSquadRelay(url, keyOf)
+        self._squadUrl = type(url) == "string" and url or nil
+        self._squadKeyOf = type(keyOf) == "function" and keyOf or nil -- the key: a header only, never logged
+        self._request = self._squadUrl and Util.getRequestFunction() or nil
+    end
+    function Hauntlet:_squadKey()
+        local ok, key = pcall(self._squadKeyOf or function() return nil end)
+        key = ok and type(key) == "string" and string.match(key, "^%s*(.-)%s*$") or nil
+        return (key and #key >= 8) and key or nil
+    end
+    function Hauntlet:askSquad(why)
+        local sessionId = self.join and self.join.sessionId
+        local squadKey = self:_squadKey()
+        if not (squadKey and self._squadUrl and self._request and self._userId) or type(sessionId) ~= "string"
+            or self._squadBusy or self._squadAsked[why] then
+            return -- no private key on this account: nothing is sent
+        end
+        self._squadAsked[why] = true
+        self._squadBusy = true
+        task.spawn(function()
+            local body = Util.jsonEncode({ session = sessionId, userId = self._userId })
+            local ok, response = pcall(self._request, { Url = self._squadUrl, Method = "POST",
+                Headers = { ["Content-Type"] = "application/json", ["X-Squad-Key"] = squadKey }, Body = body })
+            self._squadBusy = false
+            local status = ok and type(response) == "table" and tonumber(response.StatusCode) or nil
+            local data = status == 200 and Util.jsonDecode(tostring(response.Body)) or nil
+            if type(data) ~= "table" or type(data.members) ~= "table" or not (self.join and self.join.sessionId == sessionId) then
+                if why == "join" then
+                    self._logger:debug("Hauntlet", "Squad relay did not answer (" .. tostring(status) .. "): everyone alive counts")
+                end
+                return
+            end
+            local set, n = {}, 0
+            for _, id in ipairs(data.members) do
+                if not set[tostring(id)] then
+                    set[tostring(id)] = true
+                    n += 1
+                end
+            end
+            if not set[self._userId] then
+                set[self._userId] = true
+                n += 1
+            end
+            local changed = self.squadIds == nil
+            for id in pairs(set) do
+                if not (self.squadIds and self.squadIds[id]) then
+                    changed = true
+                end
+            end
+            self.squadIds = set
+            if changed then
+                self._logger:info("Hauntlet", string.format("Squad: %d of your account%s in this run", n, n == 1 and "" or "s"))
+            end
+            if why == "join" then
+                task.delay(4, function() -- the others register at about the same time: ask once more
+                    self:askSquad("join+4")
+                end)
+            end
+        end)
     end
     local KNOWN = {
         join_accepted = true, join_minigame = true, enter_game = true, started_room = true, revealed_ghost = true,
@@ -9890,10 +10093,18 @@ __moduleSources["Game/Hauntlet"] = function(...)
             self.join = { interior = a, sessionId = b, at = now }
             self._logger:info("Hauntlet", "Run starting: " .. b)
             self:_debugStart(b, a)
+            self:askSquad("join")
         elseif message == "enter_game" and type(a) == "table" then
             self.enter = { at = now }
             local runners = type(a.serialized_runners) == "table" and a.serialized_runners or {}
-            local me = self._userId and runners[self._userId]
+            self.runners = {}
+            for id, runner in pairs(runners) do
+                if type(runner) == "table" then
+                    self.runners[tostring(id)] = { health = tonumber(runner.health) or 3,
+                        maxHealth = tonumber(runner.max_health) or 3, temp = tonumber(runner.temp_health) or 0 }
+                end
+            end
+            local me = self._userId and (runners[self._userId] or runners[tonumber(self._userId)])
             if type(me) == "table" then
                 self.health = tonumber(me.health) or 3
                 self.maxHealth = tonumber(me.max_health) or 3
@@ -9917,9 +10128,24 @@ __moduleSources["Game/Hauntlet"] = function(...)
                 doors[i].wasLocked = doors[i].gold + doors[i].grey > 0 -- a key opened it: still the richer path
             end
             self.roomSeq += 1
+            local alive = {}
+            for id, flag in pairs(type(c) == "table" and c or {}) do
+                if flag then
+                    alive[tostring(id)] = true
+                end
+            end
             self.room = { area = a.area_kind, kind = a.kind, doors = doors, at = now, seq = self.roomSeq,
-                startServer = tonumber(b), alive = type(c) == "table" and c or {}, safe = false }
-            self.revealedGhost = nil
+                startServer = tonumber(b), alive = alive, safe = false, lockVersion = 0 }
+            self.revealedGhost, self.revealedAt = nil, nil
+            self.expectDoor, self.expectAt, self.pickedAt, self.mappingSuspect = nil, nil, nil, nil
+            local snap = {}
+            for id, r in pairs(self.runners) do
+                snap[id] = r.health + r.temp
+            end
+            self.room.heartSnap = snap
+            if self.roomSeq == 2 then
+                self:askSquad("room 2") -- late registrations
+            end
             self.picked = nil
             self.counters = { 0, 0, 0, 0 }
             self.myDoor, self.myDoorAt = nil, nil
@@ -9936,6 +10162,7 @@ __moduleSources["Game/Hauntlet"] = function(...)
             addItems(self.inventory, a) -- e.g. the run's starting items: { "cell_phone", "key", "ghost_potion", "gold_potion" }
         elseif message == "revealed_ghost" and tonumber(a) then
             self.revealedGhost = tonumber(a)
+            self.revealedAt = now
         elseif message == "used_item" and type(a) == "string" then
             self.usedSeq += 1
             self.usedItems[self.usedSeq] = { item = a, ok = b == true }
@@ -9965,6 +10192,7 @@ __moduleSources["Game/Hauntlet"] = function(...)
                     d.grey, d.gold = 0, 0
                 end
             end
+            self.room.lockVersion = (self.room.lockVersion or 0) + 1
         elseif message == "grey_locks_removed" and type(a) == "table" and self.room then
             for _, i in pairs(a) do
                 local d = self.room.doors[tonumber(i) or 0]
@@ -9972,21 +10200,34 @@ __moduleSources["Game/Hauntlet"] = function(...)
                     d.grey = math.max(0, d.grey - 1)
                 end
             end
+            self.room.lockVersion = (self.room.lockVersion or 0) + 1
         elseif message == "door_counters_updated" and type(a) == "table" then
             local new = {}
             for i = 1, 4 do
                 new[i] = tonumber(a[i]) or 0
             end
-            if self._awaitPick then
-                -- the update right after MY picked_door: the one door that gained a player is mine
-                local up = {}
-                for i = 1, 4 do
-                    if new[i] > (self.counters[i] or 0) then
-                        table.insert(up, i)
-                    end
+            -- v2.1.3 (user: "one alt used an item and another one still went to the ghost door"): the counters are
+            -- everyone's. Several of my accounts move at once, so "the one door that went up" was often another
+            -- player's door (-> "Door mapping WRONG" / "no pick seen" -> the bot jumped to another circle). Now my door
+            -- is the circle I moved into (expectDoor); the counters only add evidence when they cannot be someone else's.
+            local up, gained, lost = {}, 0, 0
+            for i = 1, 4 do
+                local delta = new[i] - (self.counters[i] or 0)
+                if delta > 0 then
+                    table.insert(up, i)
+                    gained += delta
+                elseif delta < 0 then
+                    lost -= delta
                 end
-                if #up == 1 then
-                    self.myDoor, self.myDoorAt = up[1], now
+            end
+            if self.expectDoor and self.expectAt and (new[self.expectDoor] or 0) > (self.counters[self.expectDoor] or 0)
+                and not (self.myDoorAt and self.myDoorAt >= self.expectAt) then
+                self.myDoor, self.myDoorAt = self.expectDoor, now -- my door went up after my move
+            end
+            if self._awaitPick then
+                -- unambiguous only when exactly one player moved (one +1, at most my own -1 elsewhere)
+                if #up == 1 and gained == 1 and lost <= 1 and self.expectDoor and up[1] ~= self.expectDoor then
+                    self.mappingSuspect = up[1]
                 end
                 self._awaitPick = false
             end
@@ -9995,6 +10236,10 @@ __moduleSources["Game/Hauntlet"] = function(...)
             self.picked = a == true
             if a == true then
                 self._awaitPick = true
+                self.pickedAt = now
+                if self.expectDoor then
+                    self.myDoor, self.myDoorAt = self.expectDoor, now
+                end
             end
         elseif message == "doors_opened" then
             self.roomsOpened += 1
@@ -10002,6 +10247,9 @@ __moduleSources["Game/Hauntlet"] = function(...)
             if type(b) == "table" and self._userId then
                 damage = tonumber(b[self._userId] or b[tonumber(self._userId)]) or 0
                 self:_damage(damage)
+                for id, amount in pairs(b) do
+                    self:_runnerDamage(tostring(id), tonumber(amount) or 0)
+                end
             end
             addItems(self.inventory, c)
             local ghosts = {}
@@ -10014,15 +10262,36 @@ __moduleSources["Game/Hauntlet"] = function(...)
             table.insert(self.history, { seq = self.roomSeq, area = room and room.area,
                 kinds = room and { room.doors[1].kind, room.doors[2].kind, room.doors[3].kind } or {},
                 ghosts = ghosts, revealed = self.revealedGhost, myDoor = self.myDoor, damage = damage })
-        elseif message == "temp_health_gained" and self._userId and tostring(a) == self._userId then
-            self.tempHealth += tonumber(b) or 0
-        elseif message == "health_restored" and self._userId and tostring(a) == self._userId then
-            self.health = self.maxHealth or self.health -- live run 6: the red potion's answer
+        elseif message == "temp_health_gained" and a ~= nil then
+            if self._userId and tostring(a) == self._userId then
+                self.tempHealth += tonumber(b) or 0
+            end
+            local r = self.runners[tostring(a)] -- every runner the same way (mine too): the squad order must agree
+            if r then
+                r.temp += tonumber(b) or 0
+            end
+        elseif message == "health_restored" and a ~= nil then
+            if self._userId and tostring(a) == self._userId then
+                self.health = self.maxHealth or self.health -- live run 6: the red potion's answer
+            end
+            local r = self.runners[tostring(a)]
+            if r then
+                r.health = r.maxHealth
+            end
+        elseif message == "max_health_gained" and a ~= nil then
+            local r = self.runners[tostring(a)]
+            if r then -- a gold potion (mine is also counted from used_item, in self.health)
+                r.maxHealth += 1
+                r.health += 1
+            end
         elseif message == "door_effect_triggered" and self.room then
             self.room.effects = self.room.effects or {}
             self.room.effects[tonumber(b) or 0] = tostring(c)
         elseif message == "kicked_from_game" then
             self.kicked = tostring(a)
+            if self._userId and self.runners[self._userId] then
+                self.runners[self._userId].health = 0
+            end
             self._logger:info("Hauntlet", "Kicked from the run: " .. tostring(a) .. " (room " .. self.roomSeq .. ")")
         elseif message == "leave_game" then
             local candy, results = 0, {}
@@ -10304,8 +10573,19 @@ __moduleSources["Game/Hauntlet"] = function(...)
         local ghost = tonumber(view.revealedGhost)
         local known = view.safe == true or ghost ~= nil
         local firstRoomSafe = opt("safeFirstRoom") ~= false and view.seq == 1
-        if health < maxHealth and can("red_potion") then
-            return { use = "red_potion", reason = string.format("hearts %d/%d: the red potion fills them", health, maxHealth) }
+        -- v2.1.3 (user: "first THINK: your items and how many hearts you have"): the red potion fills EVERY missing
+        -- heart, so it waits for 2 missing hearts unless the next ghost hit would leave 1 heart or less
+        local lateRoom = (tonumber(view.seq) or 0) >= opt("multiGhostFromRoom")
+        local temp = tonumber(view.tempHealth) or 0
+        if view.shield and temp <= 0 then
+            temp = 1
+        end
+        local worstHit = lateRoom and 2 or 1
+        local missing = maxHealth - health
+        if missing > 0 and can("red_potion") and (missing >= (tonumber(opt("redPotionMissing")) or 1)
+            or health + temp - worstHit <= 1 or itemCount(inv, "red_potion") >= 2) then
+            return { use = "red_potion", reason = string.format("hearts %d/%d (a ghost can take %d): the red potion fills them",
+                health, maxHealth, worstHit) }
         end
         if can("gold_potion") then
             return { use = "gold_potion", reason = "one more heart for the rest of the run (run items end with the run)" }
@@ -10320,8 +10600,7 @@ __moduleSources["Game/Hauntlet"] = function(...)
         end
         local bestUnknownRisk = math.huge
         -- live run 3: room 8 had 2 ghost doors and room 9 a ghost that took 2 hearts: from here a revealed ghost does
-        -- not make the other doors safe (they keep half their weight)
-        local lateRoom = (tonumber(view.seq) or 0) >= opt("multiGhostFromRoom")
+        -- not make the other doors safe (they keep half their weight) (lateRoom: above)
         local function enterable(d)
             local gold, grey = tonumber(d.gold) or 0, tonumber(d.grey) or 0
             return (gold == 0 or (itemCount(inv, "gold_key") >= gold and not tried.gold_key))
@@ -10350,13 +10629,8 @@ __moduleSources["Game/Hauntlet"] = function(...)
                 end
             end
         end
-        -- the worst hit behind a ghost door: 2 hearts from room 8 on (live runs 3 + 6), else 1. danger = such a hit can
-        -- end the run: then every item is used at any risk
-        local temp = tonumber(view.tempHealth) or 0
-        if view.shield and temp <= 0 then
-            temp = 1
-        end
-        local worstHit = lateRoom and 2 or 1
+        -- the worst hit behind a ghost door: 2 hearts from room 8 on (live runs 3 + 6), else 1 (worstHit: above).
+        -- danger = such a hit can end the run: then every item is used at any risk
         local danger = health + temp <= worstHit
         local phoneAt = danger and 0.001 or opt("phoneAtRisk")
         local wandAt = danger and 0.001 or opt("wandAtRisk")
@@ -10455,7 +10729,12 @@ __moduleSources["Game/Hauntlet"] = function(...)
         if cap and cap > 0 then
             tempTarget = math.min(tempTarget, cap)
         end
-        if bestRisk > 0 and bestRisk >= opt("potionAtRisk") and temp < tempTarget and can("ghost_potion") then
+        -- v2.1.3 budget: the last potion(s) (potionReserve) stay for a door that is >= reserveBreakRisk a ghost or a hit
+        -- that would leave 1 heart or less
+        local potions = itemCount(inv, "ghost_potion")
+        local mustProtect = health + temp - worstHit <= 1 or bestRisk >= (tonumber(opt("reserveBreakRisk")) or 0)
+        local spareOk = potions > (tonumber(opt("potionReserve")) or 0) or mustProtect
+        if bestRisk > 0 and bestRisk >= opt("potionAtRisk") and temp < tempTarget and can("ghost_potion") and spareOk then
             return { use = "ghost_potion", door = best, reason = string.format("%s; temp heart %d of %d for door %d", why,
                 temp + 1, tempTarget, best), notes = notes }
         end
@@ -11604,6 +11883,25 @@ __moduleSources["Game/EventTasks"] = function(...)
                     and tonumber(ctx.farmConfig.Event.HauntletMoveSeconds) or nil
                 local avoid = {} -- circle groups that took no pick in this room
                 local planned, potionsHere = false, 0
+                -- v2.1.3 squad: my turn for the shared items (phone, wand, keys); the order is fixed for the room
+                local squadOn = type(ctx.farmConfig) == "table" and type(ctx.farmConfig.Event) == "table"
+                    and ctx.farmConfig.Event.HauntletSquad ~= false
+                local order, rank = h:squadOrder()
+                local squadKey = h.squadIds
+                local function team()
+                    if h.squadIds ~= squadKey then -- the relay answered during the room: the order may change
+                        squadKey = h.squadIds
+                        order, rank = h:squadOrder()
+                    end
+                    return squadOn and #order > 1
+                end
+                if team() then
+                    say(string.format("Squad: %d player%s%s, I am #%d (fewest hearts first) | phone turn at %.1f s",
+                        #order, #order == 1 and "" or "s", h.squadIds and " (your accounts)" or " (everyone alive)", rank,
+                        h:turnAt("cell_phone", rank, strategy)))
+                end
+                local planSeconds = tonumber(strategy.planSeconds) or Hauntlet.DEFAULTS.planSeconds
+                local commitBy = tonumber(strategy.commitBySeconds) or Hauntlet.DEFAULTS.commitBySeconds
                 while not over() and h.room == room and not switchedOff() do
                     steps += 1
                     if steps > 150 then
@@ -11626,6 +11924,41 @@ __moduleSources["Game/EventTasks"] = function(...)
                                 table.concat(planSteps, " -> ")))
                         end
                     end
+                    local t = h:roomElapsed()
+                    -- shared item, not my turn yet: someone before me may spend theirs (the answer reaches everyone)
+                    if plan.use and Hauntlet.SHARED_ITEMS[plan.use] and team() and t < commitBy then
+                        local turnAt = h:turnAt(plan.use, rank, strategy)
+                        if t < turnAt then
+                            local ghostNow, safeNow, locksNow = h.revealedGhost, room.safe, room.lockVersion
+                            explain(string.format("Waiting for my turn (#%d) for the %s: %.1f s -> %.1f s", rank, plan.use,
+                                t, turnAt))
+                            ctx.waitUntil(function()
+                                return over() or h.room ~= room or h.revealedGhost ~= ghostNow or room.safe ~= safeNow
+                                    or room.lockVersion ~= locksNow or h:roomElapsed() >= turnAt
+                            end, turnAt - t + 0.1)
+                            if h.revealedGhost ~= ghostNow and h.revealedGhost then
+                                say("Door outcomes: a squad phone shows the ghost behind door " .. h.revealedGhost)
+                                planned = false
+                            end
+                            continue
+                        end
+                    end
+                    -- the door: with the ghost still unknown the squad decides together at planSeconds (the doors open as
+                    -- soon as everyone stands in a circle, so nobody may stand in one while a phone can still answer)
+                    if not plan.use and not plan.wait and plan.risky and team() and h.revealedGhost == nil
+                        and not room.safe and t < planSeconds then
+                        local ghostNow, safeNow = h.revealedGhost, room.safe
+                        explain(string.format("Ghost unknown: the squad picks at %.0f s (now %.1f s)", planSeconds, t))
+                        ctx.waitUntil(function()
+                            return over() or h.room ~= room or h.revealedGhost ~= ghostNow or room.safe ~= safeNow
+                                or h:roomElapsed() >= planSeconds
+                        end, planSeconds - t + 0.1)
+                        if h.revealedGhost then
+                            say("Door outcomes: a phone shows the ghost behind door " .. h.revealedGhost)
+                            planned = false
+                        end
+                        continue
+                    end
                     if plan.use then
                         if plan.use ~= "ghost_potion" then
                             tried[plan.use] = true -- ghost potions: as many as the plan wants (user: "no limit")
@@ -11640,6 +11973,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                         end
                         if (plan.use == "key" or plan.use == "gold_key") and plan.door and lockedDoors > 1 then
                             -- more than one locked door: stand at the one the key is for first
+                            h.expectDoor, h.expectAt, h.mappingSuspect = plan.door, Util.now(), nil
                             local moved, how, _, used = ctx.interaction:teleportToHauntletDoor(h.join and h.join.interior,
                                 plan.door, { avoid = avoid, bad = bad, method = moveMethod, link = lastLink, visited = visited,
                                     base = base, passed = passed, behind = behind, seconds = moveSeconds })
@@ -11722,14 +12056,15 @@ __moduleSources["Game/EventTasks"] = function(...)
                         end
                         if h.myDoor == door then
                             -- standing in the chosen circle: stay until the doors open or the plan changes
-                            local ghostNow, safeNow = h.revealedGhost, room.safe
+                            local ghostNow, safeNow, locksNow = h.revealedGhost, room.safe, room.lockVersion
                             ctx.waitUntil(function()
                                 return over() or h.room ~= room or h.revealedGhost ~= ghostNow or room.safe ~= safeNow
-                                    or h.myDoor ~= door
+                                    or h.myDoor ~= door or room.lockVersion ~= locksNow
                             end, 2)
                         else
-                            say("Entering selected door " .. door)
+                            say(string.format("Entering selected door %d at %.1f s", door, h:roomElapsed()))
                             local movedAt = Util.now()
+                            h.expectDoor, h.expectAt, h.mappingSuspect = door, movedAt, nil
                             local moved, how, part, used, verified = ctx.interaction:teleportToHauntletDoor(
                                 h.join and h.join.interior, door, { avoid = avoid, bad = bad, method = moveMethod,
                                     nexus = room.kind == "nexus" or room.kind == "final_nexus", link = lastLink,
@@ -11768,13 +12103,18 @@ __moduleSources["Game/EventTasks"] = function(...)
                                         and ("Exit" .. tostring(pickedDoor)) or "Exit" }
                                 end
                                 if h.room == room and not over() then
-                                    if h.myDoor == door and h.myDoorAt and h.myDoorAt >= movedAt then
-                                        say(string.format("Door mapping verified: door %d = %s", door, tostring(how)))
-                                    elseif h.myDoor and h.myDoorAt and h.myDoorAt >= movedAt then
+                                    -- my pick = the circle I moved into (named circles are the game's own door numbers);
+                                    -- the shared counters only overrule a GUESSED circle, and only when nobody else moved
+                                    local suspect = h.mappingSuspect
+                                    if h.myDoorAt and h.myDoorAt >= movedAt and not verified and suspect and suspect ~= door then
                                         ctx.logger:warn("Hauntlet", string.format(
                                             "Door mapping WRONG: %s is door %d, not %d; trying another circle",
-                                            tostring(how), h.myDoor, door))
+                                            tostring(how), suspect, door))
                                         bad[part] = true
+                                        h.myDoor = suspect
+                                    elseif h.myDoorAt and h.myDoorAt >= movedAt then
+                                        say(string.format("Picked: door %d (%s%s)", door, tostring(how),
+                                            verified and "" or ", guessed circle"))
                                     else
                                         failedMoves += 1
                                         say(string.format("No pick seen after the move to door %d (%s%s), try %d: "
@@ -12303,6 +12643,8 @@ __moduleSources["Game/TaskManager"] = function(...)
     local GHOST_INTERRUPT_SECONDS = 50
     local HAUNTLET_LEAD_SECONDS = 45
     local HAUNTLET_GHOST_GAP_SECONDS = 420
+    local HAUNTLET_INTERRUPT_SECONDS = 42 -- Farm.Event.HauntletFirst: a normal task stops this long before a run
+    local GHOST_ROUND_BUSY_SECONDS = 270 -- a Ghost Gallery round with travel ("Done: Ghost Gallery round in 244 s")
     local NO_FURNITURE_SKIP_SECONDS = 600
     local NEVER_INTERRUPT = { ghost_gallery = true, hauntlet = true, recover = true, team = true, neon_fusion = true, mega_fusion = true }
     local NEVER_SKIP = { neon_fusion = true, mega_fusion = true, team = true }
@@ -12759,7 +13101,13 @@ __moduleSources["Game/TaskManager"] = function(...)
         if self._running then
             if Util.now() > self._running.deadline then
                 self:_finish("TIMEOUT", "no result within " .. math.floor(self._running.deadline - self._running.startedAt) .. " s")
-            elseif not NEVER_INTERRUPT[self._running.key] and self:_ghostRoundDue(GHOST_INTERRUPT_SECONDS) then
+            elseif not NEVER_INTERRUPT[self._running.key] and self:_hauntletFirst()
+                and self:_hauntletRoundDue(HAUNTLET_INTERRUPT_SECONDS) then
+                self._logger:info("Hauntlet", "Priority interrupt: stopping " .. self._running.label .. " for the Hauntlet run")
+                self:_finish("INTERRUPTED", "Hauntlet run")
+                self:_finish("INTERRUPTED", "Hauntlet run", "_side")
+            elseif not NEVER_INTERRUPT[self._running.key] and self:_ghostRoundDue(GHOST_INTERRUPT_SECONDS)
+                and not (self:_hauntletFirst() and self:_hauntletRoundDue(GHOST_INTERRUPT_SECONDS + GHOST_ROUND_BUSY_SECONDS)) then
                 self._logger:info("Ghost", "Priority interrupt: stopping " .. self._running.label .. " for the Ghost Gallery round")
                 self:_finish("INTERRUPTED", "Ghost Gallery round")
                 self:_finish("INTERRUPTED", "Ghost Gallery round", "_side")
@@ -13006,6 +13354,11 @@ __moduleSources["Game/TaskManager"] = function(...)
         end
         return nil
     end
+    function TaskManager:_hauntletFirst()
+        local event = self._farmConfig.Event
+        return type(event) == "table" and event.Enabled == true and event.Hauntlet == true and event.HauntletFirst ~= false
+            and self._hauntlet ~= nil and self._hauntlet.available == true
+    end
     function TaskManager:_hauntletRoundDue(lead)
         local event = self._farmConfig.Event
         local data = self._gameData
@@ -13105,18 +13458,29 @@ __moduleSources["Game/TaskManager"] = function(...)
         end
         local E = GameConstants.Event
         local KEYS = GameConstants.DataKeys
+        -- v2.1.3 (user 2026-10-10: "when Ghost Gallery is open and a Hauntlet starts, it takes them to the Ghost
+        -- Gallery: only 3-4 of my alts got into the run"): with Farm.Event.HauntletFirst (default on) a Hauntlet run
+        -- comes first. A Ghost Gallery round takes ~4-5 min, so it is skipped when a Hauntlet starts before it would end.
+        local h = self._hauntlet
+        local hauntOn = event.Hauntlet == true and h ~= nil and h.available and not self:_isBlocked("hauntlet")
+        local hauntFirst = hauntOn and event.HauntletFirst ~= false
+        local hauntPending = hauntOn and h.join ~= nil and not h.leave and not h.kicked and Util.now() - h.join.at < 90
+        if hauntFirst then
+            local hauntStart = self:_hauntletRoundDue(HAUNTLET_LEAD_SECONDS)
+            if hauntPending or hauntStart then
+                return "hauntlet", "Hauntlet run", EventTasks.hauntlet, hauntStart and { start = hauntStart } or nil
+            end
+        end
         local ghostStart = self:_ghostRoundDue(GHOST_GALLERY_LEAD_SECONDS)
-        if ghostStart then
+        if ghostStart and not (hauntFirst and self:_hauntletRoundDue(GHOST_GALLERY_LEAD_SECONDS + GHOST_ROUND_BUSY_SECONDS)) then
             self._logger:info("Ghost", "Minigame available: starting the Ghost Gallery round")
             return "ghost_gallery", "Ghost Gallery round", EventTasks.ghostGallery, { start = ghostStart }
         end
-        local h = self._hauntlet
-        if event.Hauntlet == true and h and h.available and not self:_isBlocked("hauntlet") then
-            local pending = h.join ~= nil and not h.leave and not h.kicked and Util.now() - h.join.at < 90
+        if hauntOn and not hauntFirst then
             -- Only start Hauntlet near cycle start (T-45), same idea as Ghost Gallery.
             -- Do NOT take the farm for 10 minutes just because due("hauntlet") is true.
             local hauntStart = self:_hauntletRoundDue(HAUNTLET_LEAD_SECONDS)
-            if pending or (hauntStart and not (event.GhostGallery and self:_ghostRoundDue(HAUNTLET_GHOST_GAP_SECONDS))) then
+            if hauntPending or (hauntStart and not (event.GhostGallery and self:_ghostRoundDue(HAUNTLET_GHOST_GAP_SECONDS))) then
                 return "hauntlet", "Hauntlet run", EventTasks.hauntlet, hauntStart and { start = hauntStart } or nil
             end
         end
@@ -13711,6 +14075,18 @@ __moduleSources["main"] = function(...)
                 minigame:start(maid)
                 local hauntlet = Hauntlet.new(logger, game:GetService("Players").LocalPlayer.UserId)
                 hauntlet:start(maid)
+                -- v2.1.3: the squad finder (same worker, /squad), ONLY on accounts that carry the private squad key
+                -- (Farm.Event.HauntletSquadKey): everyone else sends nothing and never learns who is in a squad
+                pcall(function()
+                    local relay = config.Telemetry and config.Telemetry.Url
+                    if type(relay) == "string" and string.match(relay, "/log$") then
+                        -- the key is read at every run (typed in the window later: works from the next run)
+                        hauntlet:setSquadRelay((string.gsub(relay, "/log$", "/squad")), function()
+                            local event = config.Farm and config.Farm.Event
+                            return type(event) == "table" and event.HauntletSquadKey or nil
+                        end)
+                    end
+                end)
                 telemetry:setDiagnostics(function()
                     local diagnostics = taskManager and taskManager:getDiagnostics() or {}
                     diagnostics.status = petLocator and buildStatusLine(state, petLocator) or nil
