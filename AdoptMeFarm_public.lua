@@ -1,4 +1,4 @@
--- AdoptMe Farm  v2.1.1 (Adopt Victims - UI Remastered Edition) | Adopt Victims v2 - UI Remastered Edition | settings: the window
+-- AdoptMe Farm  v2.1.2 (Adopt Victims - UI Remastered Edition) | Adopt Victims v2 - UI Remastered Edition | settings: the window
 local UserConfig = {
     Farm = {
         Enabled = false,
@@ -41,8 +41,8 @@ local UserConfig = {
         Event = {
             GhostGallery = false,
             Hauntlet = false,
-            HauntletMove = "tween",
-            HauntletMoveSeconds = 0.5,
+            HauntletMove = "tween", -- how the bot reaches a door's circle: "tween" (smooth) | "walk" | "tp"
+            HauntletMoveSeconds = 0.5, -- tween: seconds to reach the circle (0.1 - 5)
             StrayCat = false,
             Crypt = false,
             CryptOpen = { "ladder" },
@@ -1177,7 +1177,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.1 (Adopt Victims - UI Remastered Edition, Hauntlet solver)"
+    Disclosure.VERSION = "2.1.2 (Adopt Victims - UI Remastered Edition, Hauntlet solver)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -7409,7 +7409,9 @@ __moduleSources["Game/Interaction"] = function(...)
     -- base / visited (user, live run 5: "the rooms spawn on one line going forward: the room farthest from the start is
     -- the one to pick in; reset the start after every nexus"): the first room past the farthest room I picked in,
     -- measured from base; when it is not loaded yet (its circles come 1-2 s after started_room), nil: wait, never back.
-    function Interaction:hauntletCircles(interiorName, avoid, link, base, visited)
+    -- behind = { base, limit } (live run 6, room 11: right after a nexus the old rooms were still loaded and one was
+    -- as far from the nexus as the next room): a group closer to the previous start than the nexus is behind me.
+    function Interaction:hauntletCircles(interiorName, avoid, link, base, visited, behind)
         local root = self:_myRoot()
         local interiors = workspace:FindFirstChild("Interiors")
         if not (root and interiors) then
@@ -7469,9 +7471,13 @@ __moduleSources["Game/Interaction"] = function(...)
                     farthestPassed = math.max(farthestPassed, entry.fromBase)
                 end
             end
+            local function isBehind(entry)
+                return behind ~= nil and behind.base ~= nil
+                    and (hauntletCenter(entry.node) - behind.base).Magnitude < (tonumber(behind.limit) or 0) - 5
+            end
             local nextRoom
             for _, entry in ipairs(found) do
-                if not avoid[entry.node] and entry.fromBase > farthestPassed + 5
+                if not avoid[entry.node] and entry.fromBase > farthestPassed + 5 and not isBehind(entry)
                     and (not nextRoom or entry.fromBase < nextRoom.fromBase) then
                     nextRoom = entry
                 end
@@ -7518,9 +7524,12 @@ __moduleSources["Game/Interaction"] = function(...)
             for key, value in pairs(options.visited or {}) do -- rooms already passed: never back
                 avoid[key] = value
             end
+            for key, value in pairs(options.passed or {}) do -- the rooms before the last nexus
+                avoid[key] = value
+            end
             avoid.__elevators = options.nexus or nil
             circles, dist, count, added, chained = self:hauntletCircles(interiorName, avoid, options.link, options.base,
-                options.visited)
+                options.visited, options.behind)
             if circles then
                 part, how, verified = Interaction.hauntletCircleFor(circles, doorIndex, options.bad)
                 if part then
@@ -9739,7 +9748,7 @@ __moduleSources["Game/Minigame"] = function(...)
 end
 __moduleSources["Game/Hauntlet"] = function(...)
     --[[
-        Game/Hauntlet (v2.1.1: Hauntlet 2 solver)
+        Game/Hauntlet (v2.1.2: Hauntlet 2 solver)
         STATE READER. Everything comes from MinigameAPI/MessageClient, the server's messages to me (verified in a
         recorded run, hauntlet_recv.log, 2026-10-10):
           join_accepted (n)                         queued
@@ -9753,6 +9762,8 @@ __moduleSources["Game/Hauntlet"] = function(...)
           picked_door (true)                        my pick was taken; the next counter update shows which door
           doors_opened ({ 1 = ghost per door }, { [userId] = damage }, { items I got })
           temp_health_gained (userId, n)
+          health_restored (userId)                  my red potion filled my hearts (live run 6)
+          door_effect_triggered (userId, door, effect)  "transform" when someone enters a copycat door (live run 6)
           kicked_from_game (reason)                 "died"
           leave_game ({ rewards, results }, { finished_game, completed_game })
         After the first room every recorded room had exactly ONE ghost door, so a revealed ghost makes the other doors
@@ -9768,9 +9779,14 @@ __moduleSources["Game/Hauntlet"] = function(...)
     Hauntlet.DEFAULTS = {
         revealWaitSeconds = 7, -- ghost unknown, no phone / wand of my own, other players in the run: wait for their phone
         preferLockedWhenSafe = true, -- the ghost is known elsewhere: spend a key on a locked door (the richer path)
-        phoneAtRisk = 0.15, -- use my phone when the safest door is still at least this likely the ghost
-        wandAtRisk = 0.25, -- the wand (rarer) only from this risk
-        potionAtRisk = 0.15, -- a ghost potion for a door at least this risky (any risk at 1 heart)
+        -- user 2026-10-10: "use the items much more, the heart ones above all; lower the risk to the minimum before
+        -- every door; some ghosts take 2 hearts"
+        phoneAtRisk = 0.01, -- my phone whenever the door I would take is not verified safe
+        wandAtRisk = 0.15, -- the wand when that door is still this likely a ghost (any risk when a hit can end the run)
+        potionAtRisk = 0.01, -- ghost potions before every door that is not verified safe
+        tempHearts = 1, -- ghost potions: this many temp hearts before a risky door ...
+        tempHeartsLate = 2, -- ... and this many from multiGhostFromRoom on, or when 2 red hearts or less are left
+        multiGhostFromRoom = 8, -- from here: 2 ghosts in a room, ghosts that take 2 hearts (live runs 3 + 6)
         safeFirstRoom = true, -- room 1 never had a ghost in any recorded run
         kindPenalty = {}, -- door kind -> extra score
     }
@@ -9840,7 +9856,7 @@ __moduleSources["Game/Hauntlet"] = function(...)
         join_accepted = true, join_minigame = true, enter_game = true, started_room = true, revealed_ghost = true,
         used_item = true, grey_locks_removed = true, door_counters_updated = true, picked_door = true, doors_opened = true,
         temp_health_gained = true, kicked_from_game = true, leave_game = true, gained_items = true,
-        all_locks_removed = true, max_health_gained = true,
+        all_locks_removed = true, max_health_gained = true, health_restored = true, door_effect_triggered = true,
     }
     function Hauntlet:_onMessage(gameKey, message, a, b, c)
         if not isMine(gameKey) then
@@ -9935,6 +9951,9 @@ __moduleSources["Game/Hauntlet"] = function(...)
                 elseif a == "rainbow_wand" and self.room then
                     self.room.safe = true -- every ghost of this room is gone
                 end
+            elseif a == "ghost_potion" and (self.tempHealth or 0) > 0 then
+                -- refused while a temp heart is on: they do not stack (the potion is still mine)
+                Hauntlet.learnedTempCap = self.tempHealth
             else
                 self.inventory[a] = 0
             end
@@ -9997,6 +10016,11 @@ __moduleSources["Game/Hauntlet"] = function(...)
                 ghosts = ghosts, revealed = self.revealedGhost, myDoor = self.myDoor, damage = damage })
         elseif message == "temp_health_gained" and self._userId and tostring(a) == self._userId then
             self.tempHealth += tonumber(b) or 0
+        elseif message == "health_restored" and self._userId and tostring(a) == self._userId then
+            self.health = self.maxHealth or self.health -- live run 6: the red potion's answer
+        elseif message == "door_effect_triggered" and self.room then
+            self.room.effects = self.room.effects or {}
+            self.room.effects[tonumber(b) or 0] = tostring(c)
         elseif message == "kicked_from_game" then
             self.kicked = tostring(a)
             self._logger:info("Hauntlet", "Kicked from the run: " .. tostring(a) .. " (room " .. self.roomSeq .. ")")
@@ -10156,7 +10180,7 @@ __moduleSources["Game/Hauntlet"] = function(...)
             seq = room.seq, area = room.area, doors = room.doors or {}, revealedGhost = self.revealedGhost,
             safe = room.safe == true, inventory = self.inventory, health = self.health or 3,
             maxHealth = self.maxHealth or 3, tempHealth = self.tempHealth or 0, shield = self.ghostShield == true,
-            elapsed = self:roomElapsed(), others = others,
+            elapsed = self:roomElapsed(), others = others, tempCap = Hauntlet.learnedTempCap,
         }
     end
     --[[
@@ -10167,7 +10191,7 @@ __moduleSources["Game/Hauntlet"] = function(...)
     ]]
     Hauntlet.DOOR_FALLBACK = {
         bouncy = { ghost = 80, effect = "player_bounce", drops = 1 },
-        copycat = { ghost = 0, effect = "transform", drops = 0 },
+        copycat = { ghost = 300, effect = "transform", drops = 0 }, -- the game says 0: see GHOST_OVERRIDE
         electric = { ghost = 30, effect = "player_take_damage", value = 1, drops = 1.3 },
         gold_locked = { ghost = 0, drops = 1 },
         locked = { ghost = 30, drops = 0.25 },
@@ -10178,9 +10202,17 @@ __moduleSources["Game/Hauntlet"] = function(...)
         webbed = { ghost = 5, effect = "player_lose_item", value = 1, drops = 0.3 },
         wooden = { ghost = 90, drops = 0.45 },
     }
-    -- Nexus: the next area's cost (its doors: copycat 0 ghost, webbed 5 but an item each, wooden 90, bouncy 80 + a
-    -- random launch, security 20 but 2 keys each, electric a sure heart each, nightmare 180).
-    Hauntlet.AREA_COST = { copycat = 0, spider = 4, hallway = 8, carnival = 10, laboratory = 12, mechanical = 25,
+    --[[
+        Live run 6 (2026-10-10): the game's list says copycat ("??? Door", enter effect "transform") ghost weight 0, but
+        a ghost was behind 5 of the 6 copycat doors of rooms 11-18 (room 16: -2 hearts; room 18: both copycats, the
+        death), and in those rooms a ghost was behind another door only once. The weight that fits: ~360. So a copycat
+        door counts as the likeliest ghost door, whatever the game's list says.
+    ]]
+    Hauntlet.GHOST_OVERRIDE = { copycat = 300 }
+    -- Nexus: the next area's cost (its doors: copycat = ghost magnets (the other doors are then rather safe) and many
+    -- locks, webbed 5 but an item each, wooden 90, bouncy 80 + a random launch, security 20 but 2 keys each, electric a
+    -- sure heart each, nightmare 180).
+    Hauntlet.AREA_COST = { spider = 4, hallway = 8, carnival = 10, laboratory = 12, copycat = 15, mechanical = 25,
         nightmare = 30 }
     local liveDoors
     function Hauntlet.doorInfo(kind)
@@ -10217,7 +10249,17 @@ __moduleSources["Game/Hauntlet"] = function(...)
                 end
             end)
         end
-        return (liveDoors and liveDoors[kind]) or Hauntlet.DOOR_FALLBACK[kind] or { ghost = 90, drops = 0.5 }
+        local info = (liveDoors and liveDoors[kind]) or Hauntlet.DOOR_FALLBACK[kind] or { ghost = 90, drops = 0.5 }
+        local override = Hauntlet.GHOST_OVERRIDE[kind]
+        if override and (tonumber(info.ghost) or 0) < override then
+            local copy = {}
+            for key, value in pairs(info) do
+                copy[key] = value
+            end
+            copy.ghost = override
+            info = copy
+        end
+        return info
     end
     --[[
         DECIDER. view = Hauntlet:view() + tried = { [item] = true } (items already tried in this room).
@@ -10228,9 +10270,12 @@ __moduleSources["Game/Hauntlet"] = function(...)
         Risk of a door: revealed ghost 1 / other doors 0 / the wand cleared the room 0; unknown = its ghost weight /
         the room's total (room 1 never had a ghost in any recorded run: 0). Score = risk x 100 + entering's cost
         (electric: a sure heart = 100; webbed: an item; bouncy: a random door) + lock cost - expected items x 3.
-        Items: red potion when hearts are missing, gold potion at once; ghost unknown and the best door still risky ->
-        my phone, else my wand, else wait for another player's phone; a key / gold key when the best door is behind
-        it; a ghost potion when the chosen door is risky. Equal doors: at random.
+        Items (user 2026-10-10: "use them much more, lower the risk to the minimum before every door"): the red potion
+        as soon as one heart is missing, the gold potion at once; ghost unknown -> my phone at any risk, else my wand,
+        else wait for another player's phone; a key / gold key when the best door is behind it; the wand when the
+        chosen door is still >= 15 % ghost (any risk when a hit can end the run); ghost potions before every door that
+        is not verified safe (1 temp heart; 2 from room 8 on, where ghosts take 2 hearts, or at 2 red hearts or less).
+        Equal doors: at random. Hauntlet.plan() runs this to the door once per room, for the log.
     ]]
     local function itemCount(inventory, item)
         return tonumber(inventory and inventory[item]) or 0
@@ -10244,6 +10289,13 @@ __moduleSources["Game/Hauntlet"] = function(...)
     end
     function Hauntlet.decide(view, options)
         options = options or Hauntlet.DEFAULTS
+        local function opt(key) -- a strategy table without the key: the default
+            local value = options[key]
+            if value == nil then
+                value = Hauntlet.DEFAULTS[key]
+            end
+            return value
+        end
         local inv, tried = view.inventory or {}, view.tried or {}
         local function can(item)
             return itemCount(inv, item) > 0 and not tried[item]
@@ -10251,7 +10303,7 @@ __moduleSources["Game/Hauntlet"] = function(...)
         local health, maxHealth = tonumber(view.health) or 3, tonumber(view.maxHealth) or 3
         local ghost = tonumber(view.revealedGhost)
         local known = view.safe == true or ghost ~= nil
-        local firstRoomSafe = options.safeFirstRoom ~= false and view.seq == 1
+        local firstRoomSafe = opt("safeFirstRoom") ~= false and view.seq == 1
         if health < maxHealth and can("red_potion") then
             return { use = "red_potion", reason = string.format("hearts %d/%d: the red potion fills them", health, maxHealth) }
         end
@@ -10269,7 +10321,7 @@ __moduleSources["Game/Hauntlet"] = function(...)
         local bestUnknownRisk = math.huge
         -- live run 3: room 8 had 2 ghost doors and room 9 a ghost that took 2 hearts: from here a revealed ghost does
         -- not make the other doors safe (they keep half their weight)
-        local lateRoom = (tonumber(view.seq) or 0) >= (options.multiGhostFromRoom or 8)
+        local lateRoom = (tonumber(view.seq) or 0) >= opt("multiGhostFromRoom")
         local function enterable(d)
             local gold, grey = tonumber(d.gold) or 0, tonumber(d.grey) or 0
             return (gold == 0 or (itemCount(inv, "gold_key") >= gold and not tried.gold_key))
@@ -10298,15 +10350,23 @@ __moduleSources["Game/Hauntlet"] = function(...)
                 end
             end
         end
-        local lowHearts = health + (tonumber(view.tempHealth) or 0) <= 1
-        local phoneAt = lowHearts and 0.01 or (options.phoneAtRisk or 0.15)
-        if not known and not firstRoomSafe and bestUnknownRisk >= phoneAt then
+        -- the worst hit behind a ghost door: 2 hearts from room 8 on (live runs 3 + 6), else 1. danger = such a hit can
+        -- end the run: then every item is used at any risk
+        local temp = tonumber(view.tempHealth) or 0
+        if view.shield and temp <= 0 then
+            temp = 1
+        end
+        local worstHit = lateRoom and 2 or 1
+        local danger = health + temp <= worstHit
+        local phoneAt = danger and 0.001 or opt("phoneAtRisk")
+        local wandAt = danger and 0.001 or opt("wandAtRisk")
+        if not known and not firstRoomSafe and bestUnknownRisk > 0 and bestUnknownRisk >= phoneAt then
             if can("cell_phone") then
                 return { use = "cell_phone", reason = string.format("the safest door is still %d%% ghost: the phone shows "
                     .. "the ghost's door, the other doors are then safe", math.floor(bestUnknownRisk * 100 + 0.5)) }
-            elseif can("rainbow_wand") and bestUnknownRisk >= (lowHearts and 0.01 or (options.wandAtRisk or 0.25)) then
+            elseif can("rainbow_wand") and bestUnknownRisk >= wandAt then
                 return { use = "rainbow_wand", reason = "no phone: the wand clears every ghost in this room" }
-            elseif (tonumber(view.others) or 0) > 0 and (tonumber(view.elapsed) or 0) < (options.revealWaitSeconds or 0) then
+            elseif (tonumber(view.others) or 0) > 0 and (tonumber(view.elapsed) or 0) < (opt("revealWaitSeconds") or 0) then
                 return { wait = true, reason = "ghost unknown: waiting a moment for another player's phone" }
             end
         end
@@ -10348,14 +10408,14 @@ __moduleSources["Game/Hauntlet"] = function(...)
                     table.insert(parts, string.format("locked (%d %s lock%s), cannot open it", locks,
                         needs == "gold_key" and "gold" or "grey", locks == 1 and "" or "s"))
                 elseif needs then
-                    if known and risk == 0 and options.preferLockedWhenSafe then
+                    if known and risk == 0 and opt("preferLockedWhenSafe") then
                         score -= 5
                         table.insert(parts, "safe and locked: the " .. needs .. " opens the richer path")
                     else
                         score += 5
                         table.insert(parts, "needs a " .. needs)
                     end
-                elseif d.wasLocked and risk == 0 and options.preferLockedWhenSafe then
+                elseif d.wasLocked and risk == 0 and opt("preferLockedWhenSafe") then
                     score -= 5
                     table.insert(parts, "safe and unlocked now: the richer path")
                 end
@@ -10382,15 +10442,109 @@ __moduleSources["Game/Hauntlet"] = function(...)
         if bestNeeds then
             return { use = bestNeeds, door = best, reason = why .. "; door " .. best .. " needs a " .. bestNeeds, notes = notes }
         end
-        local potionAt = health <= 1 and 0.01 or (options.potionAtRisk or 0.15)
-        if bestRisk >= 0.5 and view.safe ~= true and can("rainbow_wand") then
-            -- live run 3: the only door left was the revealed ghost and the wand stayed in the pocket
-            return { use = "rainbow_wand", door = best, reason = why .. "; the wand clears the room first", notes = notes }
+        -- the wand when the door is still risky (live run 3: the only door left was the revealed ghost and the wand
+        -- stayed in the pocket)
+        if bestRisk > 0 and bestRisk >= wandAt and view.safe ~= true and can("rainbow_wand") then
+            return { use = "rainbow_wand", door = best, reason = string.format("%s; door %d is still %d%% ghost: the "
+                .. "wand clears the room first", why, best, math.floor(bestRisk * 100 + 0.5)), notes = notes }
         end
-        if bestRisk >= potionAt and can("ghost_potion") and not view.shield and (tonumber(view.tempHealth) or 0) <= 0 then
-            return { use = "ghost_potion", door = best, reason = why .. "; a ghost potion protects door " .. best, notes = notes }
+        -- ghost potions (a temp heart each; a hit takes it first): before EVERY door that is not verified safe, no risk
+        -- limit; 2 of them where a ghost can take 2 hearts (room 8+) or when 2 red hearts or less are left
+        local tempTarget = (lateRoom or health <= 2) and opt("tempHeartsLate") or opt("tempHearts")
+        local cap = tonumber(view.tempCap)
+        if cap and cap > 0 then
+            tempTarget = math.min(tempTarget, cap)
         end
-        return { door = best, reason = why, notes = notes, risky = bestRisk > 0 }
+        if bestRisk > 0 and bestRisk >= opt("potionAtRisk") and temp < tempTarget and can("ghost_potion") then
+            return { use = "ghost_potion", door = best, reason = string.format("%s; temp heart %d of %d for door %d", why,
+                temp + 1, tempTarget, best), notes = notes }
+        end
+        return { door = best, reason = why, notes = notes, risky = bestRisk > 0, risk = bestRisk, worstHit = worstHit }
+    end
+    --[[
+        PLAN (user 2026-10-10: "always draw the plan before the pick"): decide() again and again on a copy of the room
+        where every item already had its expected effect, so the whole room is known before the first step: hearts ->
+        phone -> keys -> wand -> ghost potions -> the door. A phone ends the plan (its answer changes it), and so does
+        waiting for another player's phone. Returns the steps (text) and the door step (nil when the plan stops early).
+    ]]
+    function Hauntlet.plan(view, options)
+        local sim = {}
+        for key, value in pairs(view) do
+            sim[key] = value
+        end
+        sim.inventory, sim.tried, sim.doors = {}, {}, {}
+        for key, value in pairs(view.inventory or {}) do
+            sim.inventory[key] = value
+        end
+        for key, value in pairs(view.tried or {}) do
+            sim.tried[key] = value
+        end
+        for i, d in pairs(view.doors or {}) do
+            local copy = {}
+            for key, value in pairs(d) do
+                copy[key] = value
+            end
+            sim.doors[i] = copy
+        end
+        sim.tempHealth = tonumber(sim.tempHealth) or 0
+        if sim.shield and sim.tempHealth <= 0 then
+            sim.tempHealth = 1
+        end
+        local steps = {}
+        for _ = 1, 12 do
+            local step = Hauntlet.decide(sim, options)
+            if step.use then
+                local item = step.use
+                sim.inventory[item] = math.max(0, (tonumber(sim.inventory[item]) or 0) - 1)
+                if item == "red_potion" then
+                    sim.health = sim.maxHealth
+                    sim.tried[item] = true
+                    table.insert(steps, "red potion (hearts full)")
+                elseif item == "gold_potion" then
+                    sim.maxHealth = (tonumber(sim.maxHealth) or 3) + 1
+                    sim.health = (tonumber(sim.health) or 3) + 1
+                    table.insert(steps, "gold potion (+1 heart)")
+                elseif item == "ghost_potion" then
+                    sim.tempHealth += 1
+                    sim.shield = true
+                    table.insert(steps, "ghost potion (+1 temp heart)")
+                elseif item == "rainbow_wand" then
+                    sim.safe = true
+                    sim.tried[item] = true
+                    table.insert(steps, "wand (no ghost left)")
+                elseif (item == "key" or item == "gold_key") and step.door and sim.doors[step.door] then
+                    local d = sim.doors[step.door]
+                    if item == "key" then
+                        d.grey = math.max(0, (tonumber(d.grey) or 0) - 1)
+                    else
+                        d.gold = 0
+                    end
+                    table.insert(steps, string.format("%s for door %d", item == "key" and "key" or "gold key", step.door))
+                elseif item == "cell_phone" then
+                    table.insert(steps, "phone (shows the ghost's door, then a new plan)")
+                    return steps, nil
+                else
+                    sim.tried[item] = true
+                    table.insert(steps, item)
+                end
+            elseif step.wait then
+                table.insert(steps, "wait for another player's phone")
+                return steps, nil
+            else
+                local risk = tonumber(step.risk) or 0
+                if risk <= 0 then
+                    table.insert(steps, string.format("door %d (safe)", step.door))
+                else
+                    local hit = tonumber(step.worstHit) or 1
+                    local left = (tonumber(sim.health) or 3) + (tonumber(sim.tempHealth) or 0) - hit
+                    table.insert(steps, string.format("door %d (%d%% ghost; worst hit -%d -> %s)", step.door,
+                        math.floor(risk * 100 + 0.5), hit,
+                        left > 0 and (left .. " heart" .. (left == 1 and "" or "s") .. " left") or "DEAD"))
+                end
+                return steps, step
+            end
+        end
+        return steps, nil
     end
     function Hauntlet.describeDoors(doors)
         local parts = {}
@@ -11409,6 +11563,8 @@ __moduleSources["Game/EventTasks"] = function(...)
             local lastLink = nil -- { from = the circle group I last picked in, exit = its exit's name }
             local visited = {} -- circle groups of the rooms I already picked in (the bot only ever goes forward)
             local base = nil -- the start of the line of rooms (room 1, then each nexus)
+            local passed = {} -- circle groups of the rooms before the last nexus (never again)
+            local behind = nil -- { base = the previous start, limit = the nexus' distance from it }: closer = behind me
             local function Interaction_center(group)
                 local ok, center = pcall(function()
                     return ctx.interaction.hauntletCenter(group)
@@ -11447,6 +11603,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                 local moveSeconds = type(ctx.farmConfig) == "table" and type(ctx.farmConfig.Event) == "table"
                     and tonumber(ctx.farmConfig.Event.HauntletMoveSeconds) or nil
                 local avoid = {} -- circle groups that took no pick in this room
+                local planned, potionsHere = false, 0
                 while not over() and h.room == room and not switchedOff() do
                     steps += 1
                     if steps > 150 then
@@ -11459,8 +11616,21 @@ __moduleSources["Game/EventTasks"] = function(...)
                     local view = h:view()
                     view.tried = tried
                     local plan = Hauntlet.decide(view, strategy)
+                    if not planned then
+                        -- user 2026-10-10: "always draw the plan before the pick" (again after a phone's answer)
+                        planned = true
+                        local okPlan, planSteps = pcall(Hauntlet.plan, view, strategy)
+                        if okPlan and type(planSteps) == "table" and #planSteps > 0 then
+                            say(string.format("Plan for room %d (hearts %d/%d%s): %s", room.seq, h.health or 3,
+                                h.maxHealth or 3, (h.tempHealth or 0) > 0 and (" +" .. h.tempHealth .. " temp") or "",
+                                table.concat(planSteps, " -> ")))
+                        end
+                    end
                     if plan.use then
-                        tried[plan.use] = true
+                        if plan.use ~= "ghost_potion" then
+                            tried[plan.use] = true -- ghost potions: as many as the plan wants (user: "no limit")
+                        end
+                        local tempBefore = h.tempHealth or 0
                         local lockedDoors = 0
                         for i = 1, 4 do
                             local d = room.doors[i]
@@ -11471,7 +11641,8 @@ __moduleSources["Game/EventTasks"] = function(...)
                         if (plan.use == "key" or plan.use == "gold_key") and plan.door and lockedDoors > 1 then
                             -- more than one locked door: stand at the one the key is for first
                             local moved, how, _, used = ctx.interaction:teleportToHauntletDoor(h.join and h.join.interior,
-                                plan.door, { avoid = avoid, bad = bad })
+                                plan.door, { avoid = avoid, bad = bad, method = moveMethod, link = lastLink, visited = visited,
+                                    base = base, passed = passed, behind = behind, seconds = moveSeconds })
                             if moved then
                                 circles = used
                                 explain("At door " .. plan.door .. " for the key (" .. tostring(how) .. ")")
@@ -11495,7 +11666,10 @@ __moduleSources["Game/EventTasks"] = function(...)
                                     return h.revealedGhost ~= nil or over() or h.room ~= room
                                 end, 4)
                                 if h.revealedGhost then
-                                    say("Door outcomes: ghost behind door " .. h.revealedGhost .. ", the other doors are safe")
+                                    say("Door outcomes: ghost behind door " .. h.revealedGhost .. (room.seq >= (tonumber(
+                                        strategy.multiGhostFromRoom) or Hauntlet.DEFAULTS.multiGhostFromRoom)
+                                        and " (a second ghost can still be elsewhere)" or ", the other doors are safe"))
+                                    planned = false
                                 end
                             elseif (plan.use == "key" or plan.use == "gold_key") and plan.door then
                                 ctx.waitUntil(function()
@@ -11504,8 +11678,24 @@ __moduleSources["Game/EventTasks"] = function(...)
                                 end, 4)
                             elseif plan.use == "rainbow_wand" then
                                 say("Door outcomes: the wand cleared this room, every door is safe")
+                            elseif plan.use == "ghost_potion" then
+                                potionsHere += 1
+                                ctx.waitUntil(function()
+                                    return (h.tempHealth or 0) > tempBefore or over() or h.room ~= room
+                                end, 1.5)
+                                if h.room == room and not over() and (h.tempHealth or 0) <= tempBefore then
+                                    tried.ghost_potion = true -- no new temp heart: not again in this room
+                                    if tempBefore > 0 then
+                                        Hauntlet.learnedTempCap = tempBefore
+                                        say("Temp hearts do not stack: " .. tempBefore .. " at a time")
+                                    end
+                                end
+                                if potionsHere >= 3 then
+                                    tried.ghost_potion = true
+                                end
                             end
                         else
+                            tried[plan.use] = true
                             say(string.format("%s was not used (%s)", plan.use, answer and "the game refused it" or "no answer"))
                         end
                     elseif plan.wait then
@@ -11515,6 +11705,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                         end, 1)
                         if h.revealedGhost then
                             say("Door outcomes: another player's phone shows the ghost behind door " .. h.revealedGhost)
+                            planned = false
                         end
                     else
                         local door = plan.door
@@ -11542,7 +11733,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                             local moved, how, part, used, verified = ctx.interaction:teleportToHauntletDoor(
                                 h.join and h.join.interior, door, { avoid = avoid, bad = bad, method = moveMethod,
                                     nexus = room.kind == "nexus" or room.kind == "final_nexus", link = lastLink,
-                                    visited = visited, base = base, seconds = moveSeconds })
+                                    visited = visited, base = base, passed = passed, behind = behind, seconds = moveSeconds })
                             if moved then
                                 circles = used
                                 picks += 1
@@ -11555,9 +11746,18 @@ __moduleSources["Game/EventTasks"] = function(...)
                                     or (h.lastOpened ~= nil and h.lastOpened.seq == room.seq)
                                 if pickedHere and used then
                                     if room.kind == "nexus" or room.kind == "final_nexus" then
-                                        -- a new line of rooms starts at the nexus: the start is here now
+                                        -- a new line of rooms starts at the nexus: the start is here now. The rooms
+                                        -- before it stay loaded a while (live run 6, room 11: the bot went back into
+                                        -- one): they stay passed, and what is closer to the old start is behind me
+                                        local here = Interaction_center(used)
+                                        for group in pairs(visited) do
+                                            passed[group] = true
+                                        end
+                                        if base and here then
+                                            behind = { base = base, limit = (here - base).Magnitude }
+                                        end
                                         visited = {}
-                                        base = Interaction_center(used)
+                                        base = here
                                     elseif base == nil then
                                         base = Interaction_center(used) -- room 1: the start of the line
                                     end
