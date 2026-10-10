@@ -997,7 +997,40 @@ __moduleSources["Core/Logger"] = function(...)
         self._lastKey, self._lastTime = key, now
         self._lastLevel, self._lastCategory = level, category
         self:_output(level, category, message)
+        -- v2.1.4 (user: "the logs are off by default, these users cannot turn them on"): the last lines are always kept
+        -- in memory (nothing is sent or saved by this) for the Support tab's "Copy problem report" and the white-screen
+        -- report file
+        if level ~= "DEBUG" then
+            self.Recent = self.Recent or {}
+            table.insert(self.Recent, string.format("%s %s [%s] %s", os.date("%H:%M:%S"), level, category,
+                Util.truncate(message, 300)))
+            if #self.Recent > 120 then
+                table.remove(self.Recent, 1)
+            end
+        end
         self.OnEntry:Fire(level, category, message, fields)
+    end
+    -- header (set by main: version, executor, place) + the last lines; for a user to paste to the developer
+    function Logger:problemReport()
+        local head = ""
+        if type(self.reportHeader) == "function" then
+            local ok, text = pcall(self.reportHeader)
+            head = ok and type(text) == "string" and (text .. "\n") or ""
+        end
+        return head .. string.format("Warnings %d, errors %d\n", self.Counts.WARN, self.Counts.ERROR)
+            .. table.concat(self.Recent or {}, "\n")
+    end
+    Logger.PROBLEM_FILE = "AdoptMeFarm/problem_report.txt"
+    function Logger:saveProblemReport()
+        if type(writefile) ~= "function" then
+            return false
+        end
+        pcall(function()
+            if type(makefolder) == "function" and type(isfolder) == "function" and not isfolder("AdoptMeFarm") then
+                makefolder("AdoptMeFarm")
+            end
+        end)
+        return pcall(writefile, Logger.PROBLEM_FILE, self:problemReport())
     end
     function Logger:report(category, message)
         local saved = self._consoleRank
@@ -5633,6 +5666,24 @@ __moduleSources["Services/Interface"] = function(...)
                 copy("Discord", "https://discord.gg/" .. Interface.DISCORD_INVITE)
             end,
         }, "supportDiscord")
+        developerBox:CreateButton({
+            Name = "Copy problem report",
+            Icon = I("bug"),
+            IndicatorStyle = 1,
+            Tooltip = "Copies the last 120 lines of what the script did: paste it to the developer on Discord",
+            Callback = function()
+                local logger = options and options.logger
+                local text = logger and logger.problemReport and logger:problemReport() or "no log"
+                local copied = pcall(function()
+                    setclipboard(text)
+                end)
+                if logger and logger.saveProblemReport then
+                    logger:saveProblemReport()
+                end
+                notify("Problem report", copied and "Copied: paste it to the developer on Discord"
+                    or "Saved to AdoptMeFarm/problem_report.txt (your executor's workspace folder)", "bug")
+            end,
+        }, "problemReport")
         developerBox:CreateButton({
             Name = "Copy GitHub link",
             Icon = I("link"),
@@ -14068,6 +14119,9 @@ __moduleSources["Game/TaskManager"] = function(...)
             self._blankStep = step + 1
             self._logger:warn("Tasks", string.format("White screen? %d s without a usable character / place (%s): respawning"
                 .. " (try %d)", math.floor(blank), what, step + 1))
+            if self._logger.saveProblemReport then -- a file the user can send, with no setting to turn on
+                self._logger:saveProblemReport()
+            end
             pcall(function()
                 self._interaction:send("Respawn")
             end)
@@ -14802,6 +14856,13 @@ __moduleSources["main"] = function(...)
         local config, configWarnings = Config.build(userConfig)
         local maid = Maid.new()
         local logger = Logger.new(config.Logging)
+        logger.reportHeader = function()
+            local executor = "?"
+            pcall(function()
+                executor = type(identifyexecutor) == "function" and tostring((identifyexecutor())) or "?"
+            end)
+            return string.format("Adopt Victims %s | executor %s | %s", Disclosure.VERSION, executor, os.date("!%Y-%m-%d %H:%M UTC"))
+        end
         for _, warning in ipairs(configWarnings) do
             logger:warn("Config", warning)
         end
