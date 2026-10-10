@@ -13,6 +13,7 @@ local UserConfig = {
         FarmPetKinds = {},
         BuyEgg = false,
         EggToBuy = "cracked_egg",
+        Focus = "", -- "Mega a pet": an egg (buy + hatch on repeat) or a pet kind (grow, neon, mega it; Pet Pen copies)
         AutoPotions = {
             Enabled = false,
             Skip = {},
@@ -50,6 +51,7 @@ local UserConfig = {
             Crypt = false,
             CryptOpen = { "ladder" },
             PigeonNest = false,
+            AutoSkelicorn = false, -- Crypt -> Lightning Lever -> the machine by the Manor -> buy 1 Skelicorn (120k candy)
             CandyPets = {
                 Enabled = false,
                 Pick = {},
@@ -425,6 +427,7 @@ __moduleSources["Core/Config"] = function(...)
             PetOrder = "youngest",
             BuyEgg = false,
             EggToBuy = "cracked_egg",
+            Focus = "", -- focus pet / egg ("" = none): see GameConstants.focusOf
             MaxEggBuysPerSession = 0,
             BuyWater = true,
             BuyFood = true,
@@ -469,6 +472,7 @@ __moduleSources["Core/Config"] = function(...)
                 HouseVisits = false,
                 PigeonNest = false,
                 AutoNest = false,
+                AutoSkelicorn = false, -- Crypt (Lightning Lever) -> machine by the Manor -> 1 Skelicorn for 120000 candy
                 StrayCat = false,
                 PetPen = false,
                 PetPenMinutes = 15,
@@ -583,6 +587,9 @@ __moduleSources["Core/Config"] = function(...)
         { "Farm", "Event", "CandyPets", "Enabled" },
     }
     Config.PRESET_EXTRA_PATHS = {
+        { "Farm", "Focus" },
+        { "Farm", "Event", "AutoSkelicorn" },
+        { "Farm", "Event", "MummySpider" },
         { "Farm", "FarmPetKinds" },
         { "Farm", "AutoPotions", "PetKinds" },
         { "Farm", "PetOrder" },
@@ -648,7 +655,37 @@ __moduleSources["Core/Config"] = function(...)
         { { "Farm", "Event", "StrayCat" }, false },
         { { "Farm", "Event", "CandyPets", "Enabled" }, false },
         { { "Farm", "Event", "PetPenStock" }, false },
+        { { "Farm", "Focus" }, SPIDER },
     }
+    -- v2.1.4 (user: "pick a pet: an egg -> buy and hatch it; a pet -> mega it on repeat with its copies in the Pet Pen;
+    -- the Mummy Spider / Skelicorn -> get them; a candy pet like the Jacobean Pigeon -> buy 5, raise 1, 4 in the pen").
+    -- Farm.Focus does it at run time (GameConstants.focusOf); a preset only switches on what the focus needs.
+    local SKELICORN = "halloween_2026_skelicorn"
+    local function focusChanges(id)
+        return {
+            { { "Farm", "Focus" }, id },
+            { { "Farm", "AutoNeon", "Enabled" }, true },
+            { { "Farm", "AutoNeon", "Mega" }, true },
+            { { "Farm", "AutoPotions", "Enabled" }, true },
+            { { "Farm", "PreferNeon" }, true },
+            { { "Farm", "PetOrder" }, "oldest" },
+            { { "Farm", "Event", "PetPen" }, true },
+            { { "Farm", "Event", "PetPenStock" }, true },
+            { { "Farm", "Event", "CandyPets", "Enabled" }, false },
+            { { "Farm", "Event", "PigeonNest" }, false },
+            { { "Farm", "Event", "StrayCat" }, false },
+        }
+    end
+    Config.focusChanges = focusChanges
+    Config.SKELICORN_CHANGES = join(focusChanges(SKELICORN), {
+        { { "Farm", "BuyEgg" }, false },
+        { { "Farm", "FarmPetKinds" }, { SKELICORN } },
+        { { "Farm", "AutoPotions", "PetKinds" }, { SKELICORN } },
+        { { "Farm", "Event", "Crypt" }, true },
+        { { "Farm", "Event", "AutoSkelicorn" }, true },
+        { { "Farm", "Event", "Hauntlet" }, true },
+        { { "Farm", "Event", "GhostGallery" }, true },
+    })
     Config.Presets = {
         { id = "Off", name = "Everything Off", icon = "power",
             about = "Every feature off (the defaults). Anti-AFK and the Play button stay on.",
@@ -656,10 +693,18 @@ __moduleSources["Core/Config"] = function(...)
         { id = "Balanced", name = "Full AutoFarm", icon = "circle-gauge",
             about = "Everything: every need, eggs, potions, neon + mega neon, gifts, cashback, quests and the whole event.",
             set = join(NEEDS_ON, EXTRAS_ON, EVENT_CORE_ON, EVENT_EXTRAS_ON) },
-        { id = "Speedrun", name = "Mummy Spider Speedrun", icon = "rocket",
-            about = "Spiders first (needs, potions, Pet Pen), keys straight down the Crypt, no eggs, no candy pets, "
-                .. "no nest / Stray Cat.",
+        { id = "Speedrun", name = "Mega Mummy Spider's", icon = "rocket",
+            about = "Mummy Spiders only: keys straight down the Crypt, every spider grown (needs, potions, Pet Pen), "
+                .. "then neon + mega neon. No eggs, no candy pets, no nest / Stray Cat.",
             set = join(NEEDS_ON, EXTRAS_ON, EVENT_CORE_ON, EVENT_EXTRAS_ON, Config.SPEEDRUN_CHANGES) },
+        { id = "Skelicorn", name = "Mega Skelicorn", icon = "sparkles",
+            about = "Skelicorns only: candy from the whole event, Lightning Lever from the Crypt, a Skelicorn every "
+                .. "120k candy (up to 5 growing), grown + neon + mega neon.",
+            set = join(NEEDS_ON, EXTRAS_ON, EVENT_CORE_ON, Config.SKELICORN_CHANGES) },
+        { id = "Focus", name = "Mega a Pet", icon = "crosshair", pick = true,
+            about = "Pick one pet or egg below. Egg: bought and hatched on repeat. Candy pet: 5 bought (1 raised, 4 in "
+                .. "the Pet Pen). Any pet: grown, neon, mega neon on repeat, its copies in the Pet Pen.",
+            set = join(NEEDS_ON, EXTRAS_ON, EVENT_CORE_ON, focusChanges("")) },
         { id = "EventOnly", name = "Event Only", icon = "ghost",
             about = "Only Halloween: Ghost Gallery, Crypt + Mummy Spider, quests, Pet Pen. No pet / baby needs.",
             set = EVENT_CORE_ON },
@@ -700,7 +745,7 @@ __moduleSources["Core/Config"] = function(...)
         return node
     end
     Config.valueAt = valueAt
-    function Config.presetValues(name)
+    function Config.presetValues(name, focus)
         local preset = Config.findPreset(name)
         if not preset then
             return nil
@@ -713,6 +758,27 @@ __moduleSources["Core/Config"] = function(...)
         end
         for _, entry in ipairs(preset.set) do
             table.insert(values, { entry[1], deepCopy(entry[2]) })
+        end
+        if preset.pick then -- "Mega a Pet": the picked pet / egg drives the rest
+            local id = type(focus) == "string" and focus or ""
+            table.insert(values, { { "Farm", "Focus" }, id })
+            local isEgg = string.match(id, "_egg$") ~= nil
+            if id ~= "" and not isEgg then
+                table.insert(values, { { "Farm", "FarmPetKinds" }, { id } })
+                table.insert(values, { { "Farm", "AutoPotions", "PetKinds" }, { id } })
+                table.insert(values, { { "Farm", "BuyEgg" }, false })
+            elseif id ~= "" then
+                table.insert(values, { { "Farm", "BuyEgg" }, true })
+                table.insert(values, { { "Farm", "EggToBuy" }, id })
+                table.insert(values, { { "Farm", "PetOrder" }, "youngest" })
+            end
+            if id == SPIDER or id == SKELICORN then
+                table.insert(values, { { "Farm", "Event", "Crypt" }, true })
+                table.insert(values, { { "Farm", "Event", "MummySpider" }, true })
+            end
+            if id == SKELICORN then
+                table.insert(values, { { "Farm", "Event", "AutoSkelicorn" }, true })
+            end
         end
         return values, preset
     end
@@ -786,7 +852,8 @@ __moduleSources["Core/Config"] = function(...)
         local overrides = userConfig or {}
         local presetId
         if type(overrides) == "table" and overrides.Preset ~= nil then
-            local values, preset = Config.presetValues(overrides.Preset)
+            local values, preset = Config.presetValues(overrides.Preset,
+                type(overrides.Farm) == "table" and overrides.Farm.Focus or nil)
             if values then
                 presetId = preset.id
                 base = deepCopy(Config.Defaults)
@@ -798,7 +865,7 @@ __moduleSources["Core/Config"] = function(...)
                 end
             elseif overrides.Preset ~= "" then
                 table.insert(warnings, "Preset '" .. tostring(overrides.Preset) .. "' is not a preset (Off, Balanced, Speedrun,"
-                    .. " EventOnly, NeedsOnly); none used")
+                    .. " Skelicorn, Focus, EventOnly, NeedsOnly); none used")
             end
             overrides = table.clone(overrides)
             overrides.Preset = nil
@@ -1183,7 +1250,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.3 (Adopt Victims - UI Remastered Edition, Hauntlet squad)"
+    Disclosure.VERSION = "2.1.4 (Adopt Victims - UI Remastered Edition, Hauntlet squad)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -1238,6 +1305,9 @@ __moduleSources["Services/Disclosure"] = function(...)
                 .. " unlocks the journal page once after a run; a run comes before a Ghost Gallery round"
                 .. " (Farm.Event.HauntletFirst; off: never while a Ghost Gallery round is near); several of your accounts"
                 .. " in one run take turns with the shared items (Farm.Event.HauntletSquad)",
+            "Auto Skelicorn (Farm.Event.AutoSkelicorn, off by default): Rusty Keys look for the Lightning Lever in the Crypt,"
+                .. " the lever goes into the machine by the Manor ONCE and is pulled, then 1 Skelicorn is bought with candy;"
+                .. " idle once you own one",
             "camera guard (Farm.CameraGuard, works paused): when the camera is inside your character it is pushed back out"
                 .. " through your own zoom limit for a moment (a local setting, no remote)",
             "configs (Config tab): the settings you save go to AdoptMeFarm/configs/ on this device; one may load at start",
@@ -1256,7 +1326,7 @@ __moduleSources["Services/Disclosure"] = function(...)
                 .. " buys nothing except 1 water or 1 hotdog when a need has nothing to use (limit: Farm.MaxBuysPerSession, 0 = none),"
                 .. " and 1 egg (Farm.EggToBuy, Bucks only) when you have no pet that still grows (Farm.BuyEgg, limit Farm.MaxEggBuysPerSession);"
                 .. " Halloween (Farm.Event): 1 water a day for the Stray Cat, your Rusty Keys, Crypt Twigs and the loaned Ghost Vacuum;"
-                .. " spends candy only on the Halloween pets you pick (Farm.Event.CandyPets); age / bucks potions on the farmed pet"
+                .. " spends candy only on the Halloween pets you pick (Farm.Event.CandyPets), 1 Skelicorn (Farm.Event.AutoSkelicorn) and, with Mega a Pet (Farm.Focus), copies of the picked candy pet / Skelicorn until Pet Pen slots + 1 grow (Bucks: the picked egg); age / bucks potions on the farmed pet"
                 .. " that still grows (Farm.AutoPotions; never fly / ride potions); opens gifts and chests (Farm.AutoOpen);"
                 .. " fuses 4 of your full grown pets of one kind into 1 neon, and 4 full grown neons into 1 mega neon (Farm.AutoNeon)",
         },
@@ -2379,6 +2449,11 @@ __moduleSources["Services/Lang"] = function(...)
     add("Auto Hauntlet — join runs, pick safer doors, use keys/items", "Otomatik Hauntlet — katıl, daha güvenli kapı seç, item kullan",
         "Hauntlet automático — entra, elige puertas seguras, usa llaves/objetos", "Hauntlet automático — entra, escolhe portas seguras, usa chaves/itens")
     add("Hauntlet run", "Hauntlet turu", "Partida de Hauntlet", "Partida de Hauntlet")
+    add("Auto Skelicorn", "Otomatik Skelicorn", "Skelicorn automático", "Skelicorn automático")
+    add("Lightning Lever from the Crypt -> machine by the Manor -> 1 Skelicorn (120k candy)",
+        "Crypt'ten Şimşek Kolu -> Malikane yanındaki makine -> 1 Skelicorn (120k şeker)",
+        "Palanca del Rayo de la Cripta -> máquina junto a la Mansión -> 1 Skelicorn (120k dulces)",
+        "Alavanca do Raio da Cripta -> máquina perto da Mansão -> 1 Skelicorn (120k doces)")
     add("Hauntlet before Ghost Gallery", "Hauntlet, Ghost Gallery'den önce", "Hauntlet antes que Ghost Gallery", "Hauntlet antes da Ghost Gallery")
     add("A Hauntlet run comes first when a Ghost Gallery round is near", "Ghost Gallery turu yakınken önce Hauntlet'e girer",
         "Primero Hauntlet si una ronda de Ghost Gallery está cerca", "Primeiro Hauntlet se uma rodada da Ghost Gallery estiver perto")
@@ -2538,11 +2613,31 @@ __moduleSources["Services/Lang"] = function(...)
     add("Your Executor Is Unsupported \nBy This Script.", "Executor'ın bu scriptle \nuyumlu değil.", "Tu executor no es compatible \ncon este script.", "Seu executor não é compatível \ncom este script.")
     add("Everything Off", "Hepsi kapalı", "Todo apagado", "Tudo desligado")
     add("Full AutoFarm", "Tam otomatik çiftlik", "AutoFarm completo", "AutoFarm completo")
-    add("Mummy Spider Speedrun", "Mumya Örümcek Speedrun", "Speedrun de la Araña momia", "Speedrun da Aranha múmia")
-    add("Spiders first (needs, potions, Pet Pen), keys straight down the Crypt, no eggs, no candy pets, no nest / Stray Cat.",
-        "Önce örümcekler (ihtiyaç, iksir, Pet Ağılı), anahtarlar doğrudan mahzenin dibine, yumurta yok, şeker peti yok, yuva / sokak kedisi yok.",
-        "Arañas primero (necesidades, pociones, corral), llaves directo al fondo de la cripta, sin huevos, sin mascotas de dulces, sin nido / gato.",
-        "Aranhas primeiro (necessidades, poções, cercadinho), chaves direto ao fundo da cripta, sem ovos, sem pets de doces, sem ninho / gato.")
+    add("Mega Mummy Spider's", "Mega Mumya Örümcek", "Mega Araña momia", "Mega Aranha múmia")
+    add("Mummy Spiders only: keys straight down the Crypt, every spider grown (needs, potions, Pet Pen), then neon + mega neon. No eggs, no candy pets, no nest / Stray Cat.",
+        "Sadece Mumya Örümcekler: anahtarlar doğrudan mahzenin dibine, her örümcek büyütülür (ihtiyaç, iksir, Pet Ağılı), sonra neon + mega neon. Yumurta yok, şeker peti yok, yuva / sokak kedisi yok.",
+        "Solo arañas momia: llaves directo al fondo de la cripta, cada araña crece (necesidades, pociones, corral), luego neón + mega neón. Sin huevos, sin mascotas de dulces, sin nido / gato.",
+        "Só aranhas múmia: chaves direto ao fundo da cripta, cada aranha cresce (necessidades, poções, cercadinho), depois neon + mega neon. Sem ovos, sem pets de doces, sem ninho / gato.")
+    add("Mega Skelicorn", "Mega Skelicorn", "Mega Skelicorn", "Mega Skelicorn")
+    add("Skelicorns only: candy from the whole event, Lightning Lever from the Crypt, a Skelicorn every 120k candy (up to 5 growing), grown + neon + mega neon.",
+        "Sadece Skelicorn: tüm etkinlikten şeker, mahzenden Şimşek Kolu, her 120k şekerde bir Skelicorn (en fazla 5 büyüyen), büyüt + neon + mega neon.",
+        "Solo Skelicorns: dulces de todo el evento, palanca del rayo de la cripta, un Skelicorn cada 120k dulces (hasta 5 creciendo), crecer + neón + mega neón.",
+        "Só Skelicorns: doces do evento todo, alavanca do raio da cripta, um Skelicorn a cada 120k doces (até 5 crescendo), crescer + neon + mega neon.")
+    add("Mega a Pet", "Bir Peti Mega Yap", "Mega una mascota", "Mega um pet")
+    add("Pick one pet or egg below. Egg: bought and hatched on repeat. Candy pet: 5 bought (1 raised, 4 in the Pet Pen). Any pet: grown, neon, mega neon on repeat, its copies in the Pet Pen.",
+        "Aşağıdan bir pet ya da yumurta seç. Yumurta: sürekli alınır ve açılır. Şeker peti: 5 tane alınır (1 büyütülür, 4 Pet Ağılı'na). Her pet: büyüt, neon, mega neon sürekli, kopyaları Pet Ağılı'nda.",
+        "Elige una mascota o un huevo abajo. Huevo: se compra y se abre sin parar. Mascota de dulces: 5 compradas (1 criada, 4 en el corral). Cualquier mascota: crecer, neón, mega neón sin parar, sus copias en el corral.",
+        "Escolha um pet ou ovo abaixo. Ovo: comprado e chocado sem parar. Pet de doces: 5 comprados (1 criado, 4 no cercadinho). Qualquer pet: crescer, neon, mega neon sem parar, as cópias no cercadinho.")
+    add("Mega a Pet: pick", "Mega yapılacak pet", "Mega: elige", "Mega: escolha")
+    add("Nothing (normal farm)", "Hiçbiri (normal çiftlik)", "Nada (granja normal)", "Nada (fazenda normal)")
+    add("Picked:", "Seçilen:", "Elegido:", "Escolhido:")
+    add("Pick a pet or an egg in 'Mega a Pet: pick' first.", "Önce 'Mega yapılacak pet' kısmından bir pet ya da yumurta seç.", "Primero elige una mascota o un huevo en 'Mega: elige'.", "Primeiro escolha um pet ou ovo em 'Mega: escolha'.")
+    add("Egg: bought and hatched on repeat. Pet: grown, neon, mega neon, its copies in the Pet Pen. Works right away; the 'Mega a Pet' button also turns on needs, potions, neon and the Pet Pen.",
+        "Yumurta: sürekli alınır ve açılır. Pet: büyüt, neon, mega neon, kopyaları Pet Ağılı'nda. Hemen çalışır; 'Bir Peti Mega Yap' düğmesi ihtiyaçları, iksirleri, neonu ve Pet Ağılı'nı da açar.",
+        "Huevo: se compra y se abre sin parar. Mascota: crecer, neón, mega neón, sus copias en el corral. Funciona al instante; el botón 'Mega una mascota' también activa necesidades, pociones, neón y el corral.",
+        "Ovo: comprado e chocado sem parar. Pet: crescer, neon, mega neon, as cópias no cercadinho. Funciona na hora; o botão 'Mega um pet' também liga necessidades, poções, neon e o cercadinho.")
+    add("Mummy Spider (Crypt)", "Mumya Örümcek (Mahzen)", "Araña momia (cripta)", "Aranha múmia (cripta)")
+    add("Skelicorn (120k candy)", "Skelicorn (120k şeker)", "Skelicorn (120k dulces)", "Skelicorn (120k doces)")
     add("Event Only", "Sadece etkinlik", "Solo evento", "Só evento")
     add("Needs Only", "Sadece ihtiyaçlar", "Solo necesidades", "Só necessidades")
     add("Every feature off (the defaults). Anti-AFK and the Play button stay on.", "Her özellik kapalı (varsayılan). Anti-AFK ve Play düğmesi açık kalır.", "Todo apagado (por defecto). Anti-AFK y el botón Play siguen activos.", "Tudo desligado (padrão). Anti-AFK e o botão Play continuam ligados.")
@@ -3075,6 +3170,7 @@ __moduleSources["Services/Interface"] = function(...)
         ["Farm.Event.HouseVisits"] = "Visit-homes quests: visits houses here",
         ["Farm.Event.PigeonNest"] = "Puts Crypt Twigs into the Hotel nest",
         ["Farm.Event.AutoNest"] = "Twig graves first until the nest is built",
+        ["Farm.Event.AutoSkelicorn"] = "Lightning Lever from the Crypt -> machine by the Manor -> 1 Skelicorn (120k candy)",
         ["Farm.Event.StrayCat"] = "1 water to the Stray Cat a day (+candy)",
         ["Farm.Event.PetPen"] = "Claims the pen, keeps it full (at home)",
         ["Farm.Event.PetPenStock"] = "Buys eggs so the pen stays full",
@@ -5015,6 +5111,8 @@ __moduleSources["Services/Interface"] = function(...)
             { multi = true, placeholder = "Next floor (Mummy Spider)", tooltip = "What a Rusty Key opens, in this order" })
         bindToggle(cryptBox, "nest", "item:halloween_2026_twig|bird", "Give twigs to the nest", { "Farm", "Event", "PigeonNest" },
             "Has a Crypt Twig: takes it to the Hotel nest")
+        bindToggle(cryptBox, "skelicorn", "item:halloween_2026_skelicorn|sparkles", "Auto Skelicorn", { "Farm", "Event", "AutoSkelicorn" },
+            "Lightning Lever from the Crypt -> machine by the Manor -> 1 Skelicorn (120k candy)")
         local candy = event.CandyPets
         if type(candy) == "table" then
             local shopBox = eventTab:CreateGroupbox({ Name = "Candy Shop", Icon = I("game:candy"), Column = col(2) }, "shop")
@@ -5392,8 +5490,37 @@ __moduleSources["Services/Interface"] = function(...)
             Content = "Run: getgenv().AdoptMeFarm.OpenInterface()" }, "reopen")
         local presets = configTab:CreateGroupbox({ Name = "Presets by the developer", Icon = I("sliders-horizontal"),
             Column = col(2) }, "presets")
+        -- v2.1.4 Mega a Pet: the pet / egg the "Mega a Pet" preset (and Farm.Focus at run time) works on
+        local focusChoices = { { "", "Nothing (normal farm)" } }
+        local focusShown = { [""] = true }
+        local function addFocus(id, label)
+            if type(id) == "string" and id ~= "" and not focusShown[id] then
+                focusShown[id] = true
+                table.insert(focusChoices, { id, label or prettyKind(id) })
+            end
+        end
+        addFocus("halloween_2026_tomb_spider", "Mummy Spider (Crypt)")
+        addFocus("halloween_2026_skelicorn", "Skelicorn (120k candy)")
+        for id, label in pairs(Interface.SHOP_NAMES) do
+            addFocus(id, label .. " (candy: buy 5, raise 1, 4 in the Pet Pen)")
+        end
+        for _, egg in ipairs(Interface.EGG_NAMES) do
+            addFocus(egg[1], egg[2] .. " (buy + hatch on repeat)")
+        end
+        for _, kind in ipairs(catalog.petKinds) do
+            if not string.find(kind, "_egg$") then
+                addFocus(kind)
+            end
+        end
+        bindPick(presets, "focusPet", "crosshair", "Mega a Pet: pick", { "Farm", "Focus" }, focusChoices, {
+            tooltip = "Egg: bought and hatched on repeat. Pet: grown, neon, mega neon, its copies in the Pet Pen. "
+                .. "Works right away; the 'Mega a Pet' button also turns on needs, potions, neon and the Pet Pen.",
+            nameOf = function(value)
+                return value == "" and "Nothing (normal farm)" or prettyKind(value)
+            end,
+        })
         local function applyPreset(id, start)
-            local values, preset = Config.presetValues(id)
+            local values, preset = Config.presetValues(id, type(config.Farm.Focus) == "string" and config.Farm.Focus or "")
             if not values then
                 return
             end
@@ -5420,7 +5547,14 @@ __moduleSources["Services/Interface"] = function(...)
                 Tooltip = preset.about,
                 Callback = function()
                     local isOff = preset.id == "Off"
-                    confirm(Window, preset.name, preset.about .. (isOff and "" or " Your other settings stay."), preset.icon,
+                    local focus = type(config.Farm.Focus) == "string" and config.Farm.Focus or ""
+                    if preset.pick and focus == "" then
+                        notify(preset.name, "Pick a pet or an egg in 'Mega a Pet: pick' first.", "crosshair")
+                        return
+                    end
+                    local about = preset.pick and (Lang.tr(preset.about) .. " " .. Lang.tr("Picked:") .. " " .. prettyKind(focus) .. ".")
+                        or preset.about
+                    confirm(Window, preset.name, about .. (isOff and "" or " Your other settings stay."), preset.icon,
                         "Apply", function()
                             applyPreset(preset.id, false)
                         end, not isOff and { Name = "Apply + start", Icon = I("power"), Callback = function()
@@ -5847,6 +5981,7 @@ __moduleSources["Game/GameConstants"] = function(...)
         StrayCat = "halloween_2026_stray_cat_manager",
         Crypt = "halloween_2026_crypt_manager",
         PigeonNest = "halloween_2026_jacobean_pigeon_nest_manager",
+        LightningLever = "halloween_2026_lightning_lever_manager",
         GhostCycle = "ghost_clusters_cycle_timestamp",
         Dailies = "dailies_manager",
         Hauntlet = "halloween_2026_hauntlet_manager",
@@ -5909,6 +6044,11 @@ __moduleSources["Game/GameConstants"] = function(...)
             allowedFirstArg = { halloween_2026 = true, vanilla = true } },
         OpenGift = { remote = "ShopAPI/OpenGift", purpose = "open YOUR gift (Farm.AutoOpen)" },
         OpenChest = { remote = "LootBoxAPI/ExchangeItemForReward", purpose = "open YOUR chest (Farm.AutoOpen)" },
+        LightningLeverDeliver = { remote = "Halloween2026/LightningLeverDeliver", folder = "EventFolder",
+            purpose = "Halloween: install YOUR Lightning Lever in the machine by the Manor, once (Farm.Event.AutoSkelicorn)",
+            recordedArgs = "deliver" },
+        LightningLeverActivate = { remote = "Halloween2026/LightningLeverActivate", folder = "EventFolder",
+            purpose = "Halloween: pull the installed Lightning Lever (Farm.Event.AutoSkelicorn)", recordedArgs = "activate" },
         ClaimTombSpider = { remote = "Halloween2026/ClaimTombSpider", folder = "EventFolder",
             purpose = "Halloween: take the Mummy Spider at the bottom of the Crypt (Farm.Event.Crypt)" },
         NeonFusion = { remote = "PetAPI/DoNeonFusion", purpose = "neon fusion: 4 of YOUR full grown pets of one kind -> 1 neon (Farm.AutoNeon)" },
@@ -5973,13 +6113,53 @@ __moduleSources["Game/GameConstants"] = function(...)
     GameConstants.HouseExitCameraOffset = { x = 0.68896484375, y = 8.55078125, z = 8.8720703125,
         rx = -0.7369100451469421, ry = 0.05742141604423523, rz = 0.05203080177307129 }
     GameConstants.FullGrownAge = 6
+    -- v2.1.4 "Mega a Pet" (Farm.Focus): what the picked id is, and how its copies are got.
+    --   egg       -> bought with Bucks and hatched on repeat (Farm.EggToBuy is replaced by it)
+    --   candy     -> bought with candy until Pet Pen slots + 1 copies grow (1 raised, the rest in the pen)
+    --   spider    -> the Crypt + Mummy Spider
+    --   skelicorn -> Auto Skelicorn, bought again every 120k candy while fewer than slots + 1 grow
+    --   pet       -> only grown / neon / mega (no way to get more copies)
+    function GameConstants.focusOf(farm)
+        local id = type(farm) == "table" and type(farm.Focus) == "string" and string.match(farm.Focus, "^%s*(.-)%s*$") or ""
+        if id == "" then
+            return nil
+        end
+        if GameConstants.isEgg(id) then
+            return { id = id, kind = "egg" }
+        end
+        local E = GameConstants.Event or {}
+        if id == E.MummySpiderKind then
+            return { id = id, kind = "spider" }
+        end
+        if id == E.Skelicorn then
+            return { id = id, kind = "skelicorn" }
+        end
+        local candyPets = type(farm.Event) == "table" and type(farm.Event.CandyPets) == "table" and farm.Event.CandyPets or {}
+        for _, entry in ipairs(type(candyPets.Buy) == "table" and candyPets.Buy or {}) do
+            local price = tonumber(entry.price)
+            if (entry.id or entry[1]) == id and price and price > 0 then
+                return { id = id, kind = "candy", price = price, keepCandy = tonumber(candyPets.KeepCandy) or 0 }
+            end
+        end
+        return { id = id, kind = "pet" }
+    end
+    -- the focus pet kind (nil for none or an egg focus: the hatched pets are all kinds)
+    function GameConstants.focusKind(farm)
+        local focus = GameConstants.focusOf(farm)
+        return focus and focus.kind ~= "egg" and focus.id or nil
+    end
     function GameConstants.kindRank(farm)
         local list = type(farm) == "table" and farm.FarmPetKinds
-        if type(list) ~= "table" or #list == 0 then
+        local focusInfo = GameConstants.focusOf(farm)
+        local focus = focusInfo and focusInfo.id -- an egg focus ranks the egg first: it is hatched before the rest grows
+        if (type(list) ~= "table" or #list == 0) and not focus then
             return nil
         end
         local rank = {}
-        for index, kind in ipairs(list) do
+        if focus then
+            rank[focus] = 0
+        end
+        for index, kind in ipairs(type(list) == "table" and list or {}) do
             rank[kind] = rank[kind] or index
         end
         return rank
@@ -6084,6 +6264,20 @@ __moduleSources["Game/GameConstants"] = function(...)
         QuestTabs = { "halloween_2026", "vanilla" },
         QuestsPerBoardReward = 3,
         CryptRewards = { "ladder", "twig", "candy_corn_pile_ginormous", "candy_corn_pile_small" },
+        -- v2.1.4 Auto Skelicorn
+        LightningLever = "halloween_2026_lightning_lever",
+        Skelicorn = "halloween_2026_skelicorn",
+        MummySpiderKind = "halloween_2026_tomb_spider",
+        SkelicornPrice = 120000, -- the game's InventoryDB price wins when it can be read
+        LeverMachinePatterns = { "lightning", "lever" }, -- a model by the Manor whose name has both words
+        -- The arguments of LightningLeverDeliver / LightningLeverActivate, copied from ONE recorded manual install (a
+        -- remote spy line). nil = not recorded yet: the task goes as far as the machine and stops there (nothing is
+        -- guessed). Fill as { deliver = { ...args }, activate = { ...args } } ({} = verified "no arguments").
+        -- Recorded 2026-10-10 (SimpleSpy, the developer's own manual install): ToolAPI/Equip(<lever unique>, {}) then
+        -- adoptme_new_net "Halloween2026/LightningLeverDeliver":InvokeServer() with NO arguments; the Skelicorn was
+        -- unlocked right after (DownloadsAPI/Download("Pets", "halloween_2026_skelicorn")). LightningLeverActivate was
+        -- NOT fired in that install, so it is not recorded and never sent.
+        SkelicornArgs = { deliver = {} },
     }
     GameConstants.FarmPotions = { "pet_age_potion", "tiny_pet_age_potion", "pet_bonus_bucks_potion" }
     function GameConstants.needOn(farm, kind)
@@ -6404,6 +6598,22 @@ __moduleSources["Game/GameData"] = function(...)
         local pets = type(inventory) == "table" and inventory.pets
         local pet = type(pets) == "table" and pets[unique]
         return type(pet) == "table" and GameConstants.isNeonPet(pet.properties)
+    end
+    -- copies of one kind that still grow: in the backpack and in the Pet Pen (Mega a Pet keeps slots + 1 of them)
+    function GameData:growingCopies(kind)
+        local inventory = self._data[GameConstants.DataKeys.Inventory]
+        local pets = type(inventory) == "table" and type(inventory.pets) == "table" and inventory.pets or {}
+        local copies = 0
+        for key, pet in pairs(pets) do
+            if type(pet) == "table" and tostring(pet.kind or pet.id) == kind then
+                local properties = type(pet.properties) == "table" and pet.properties or {}
+                local age = tonumber(properties.age)
+                if age == nil or age < GameConstants.FullGrownAge then
+                    copies += 1
+                end
+            end
+        end
+        return copies
     end
     function GameData:growablePets(preferNeon, kindRank, youngestFirst)
         local inventory = self._data[GameConstants.DataKeys.Inventory]
@@ -7196,6 +7406,33 @@ __moduleSources["Game/Interaction"] = function(...)
         end
         return false, "the game moved the character back"
     end
+    -- v2.1.4 Auto Skelicorn: stand next to a part found in the map (the lever machine by the Manor)
+    function Interaction:teleportNearPart(part, studs)
+        local player = game:GetService("Players").LocalPlayer
+        local character = player and player.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        if not (root and part and part.Parent) then
+            return false, "no character / part"
+        end
+        local waited = 0
+        while root.Anchored and waited < 10 do
+            task.wait(0.5)
+            waited += 0.5
+        end
+        local away = (root.Position - part.Position) * Vector3.new(1, 0, 1)
+        local dir = away.Magnitude > 1 and away.Unit or Vector3.new(0, 0, 1)
+        local goal = part.Position + dir * (studs or 6) + Vector3.new(0, 3, 0)
+        self._sent += 1
+        self._state:set("farm.actionsSent", self._sent, "Interaction")
+        local ok, err = pcall(function()
+            character:PivotTo(CFrame.lookAt(goal, Vector3.new(part.Position.X, goal.Y, part.Position.Z)))
+        end)
+        if not ok then
+            return false, tostring(err)
+        end
+        task.wait(1)
+        return (root.Position - part.Position).Magnitude < (studs or 6) + 15, "moved back by the game"
+    end
     function Interaction:teleportToJoinZone()
         local E = GameConstants.Event
         local function find(path)
@@ -7544,6 +7781,48 @@ __moduleSources["Game/Interaction"] = function(...)
         end
         return nil, "no DoorJoinCircles near (interior " .. interior.Name .. ")"
     end
+    --[[
+        v2.1.4 (debug log 2026-10-10, kicked "out_of_time" in room 13): the room of a started_room is found along the
+        chain, NOT from where I picked: from the last room's exit (a nexus: Exit<n>, n = the area that won), the room
+        whose Entrance sits on it; elevator rooms in between (after a nexus, before room 1) have no circles: walk on
+        through their Exit. Returns the circle folder (DoorJoinCircles, or Elevators for a nexus) or nil, reason.
+    ]]
+    function Interaction:hauntletNextGroup(interiorName, fromGroup, exitName)
+        local interior = hauntletInterior(interiorName)
+        local rooms = interior and interior:FindFirstChild("Rooms")
+        local fromRoom = fromGroup and fromGroup.Parent
+        local point = fromRoom and attachmentPoint(fromRoom, exitName or "Exit")
+        if not (rooms and point) then
+            return nil, "no chain start (" .. tostring(exitName) .. ")"
+        end
+        local seen = { [fromRoom] = true }
+        for _ = 1, 4 do
+            local nextRoom, gap = nil, 12
+            for _, room in ipairs(rooms:GetChildren()) do
+                if not seen[room] then
+                    local entrance = attachmentPoint(room, "Entrance")
+                    if entrance and (entrance - point).Magnitude < gap then
+                        nextRoom, gap = room, (entrance - point).Magnitude
+                    end
+                end
+            end
+            if not nextRoom then
+                return nil, "the next room is not loaded yet"
+            end
+            seen[nextRoom] = true
+            for _, name in ipairs({ "DoorJoinCircles", "Elevators" }) do
+                local group = nextRoom:FindFirstChild(name)
+                if group and #group:GetChildren() > 0 then
+                    return group
+                end
+            end
+            point = attachmentPoint(nextRoom, "Exit") -- an elevator room: on through it
+            if not point then
+                return nil, "a room without circles or exit"
+            end
+        end
+        return nil, "no room with circles along the chain"
+    end
     function Interaction:_myRoot()
         local player = game:GetService("Players").LocalPlayer
         local character = player and player.Character
@@ -7562,7 +7841,17 @@ __moduleSources["Game/Interaction"] = function(...)
             return false, "no character"
         end
         local circles, part, how, verified, dist, count, added, chained
-        for _ = 1, 6 do
+        if options.group and options.group.Parent then
+            -- v2.1.4: the room's circles are known from the chain: no search (it took up to 4 s and could pick a room
+            -- that was not mine)
+            circles = options.group
+            part, how, verified = Interaction.hauntletCircleFor(circles, doorIndex, options.bad)
+            if part then
+                how = string.format("%s of the room on the chain (%d studs away)", tostring(how),
+                    math.floor((part.Position - root.Position).Magnitude))
+            end
+        end
+        for _ = 1, (part and 0 or 6) do
             local avoid = {}
             for key, value in pairs(options.avoid or {}) do
                 avoid[key] = value
@@ -7592,14 +7881,16 @@ __moduleSources["Game/Interaction"] = function(...)
             task.wait(options.base and 0.4 or 1) -- the next room loads in 1-2 s: look again soon
         end
         if not part then
-            return false, "door " .. doorIndex .. " circle not found (" .. tostring(how or "no circles near me") .. ")"
+            -- v2.1.3: say why (hauntletCircles' reason comes back in the distance slot when no group was found)
+            return false, "door " .. doorIndex .. " circle not found (" .. tostring(how or (type(dist) == "string" and dist)
+                or "no circles near me") .. ")"
         end
         local waited = 0
         while root.Anchored and waited < 8 do -- the game is moving me (room change): wait for it
             task.wait(0.5)
             waited += 0.5
         end
-        pcall(function()
+        task.spawn(pcall, function() -- v2.1.4: not waited for (it could hold the move for seconds)
             player:RequestStreamAroundAsync(part.Position, 2)
         end)
         self._sent += 1
@@ -7971,6 +8262,42 @@ __moduleSources["Game/Interaction"] = function(...)
             local _, message = ...
             if not action.allowedMessages[message] then
                 error("Interaction: " .. actionName .. " may not send message " .. tostring(message), 2)
+            end
+        end
+        if action.recordedArgs then
+            -- only the arguments copied from a recorded manual install (GameConstants.Event.SkelicornArgs)
+            local recorded = type(GameConstants.Event.SkelicornArgs) == "table" and GameConstants.Event.SkelicornArgs[action.recordedArgs]
+            if type(recorded) ~= "table" then
+                error("Interaction: " .. actionName .. " has no recorded arguments yet", 2)
+            end
+            local function match(want, got, depth)
+                if want == "$LEVER" then -- the lever's unique id: different for every player
+                    return type(got) == "string" and got ~= ""
+                end
+                if type(want) == "table" and type(got) == "table" and depth < 3 then
+                    for k, v in pairs(want) do
+                        if not match(v, got[k], depth + 1) then
+                            return false
+                        end
+                    end
+                    for k in pairs(got) do
+                        if want[k] == nil then
+                            return false
+                        end
+                    end
+                    return true
+                end
+                return want == got
+            end
+            local n = select("#", ...)
+            local same = n == #recorded
+            for i = 1, n do
+                if not match(recorded[i], (select(i, ...)), 0) then
+                    same = false
+                end
+            end
+            if not same then
+                error("Interaction: " .. actionName .. " may only be sent with the recorded arguments", 2)
             end
         end
         if action.noArgs and select("#", ...) ~= 0 then
@@ -9328,37 +9655,31 @@ __moduleSources["Game/Tasks"] = function(...)
             if preferred == 0 then
                 ctx.logger:info("Tasks", "Mystery: no doable kind on the cards: picking any offered one to end it")
             end
-            ctx.logger:info("Tasks", string.format("Mystery: pool %s, seed %s, sending all %d kinds on every card at once",
+            ctx.logger:info("Tasks", string.format("Mystery: pool %s, seed %s, %d kinds, one kind on all 3 cards at a time",
                 table.concat(entry.mysteryOptions or {}, ","), tostring(entry.mysterySeed), #choices))
-            -- v2.1.3 (user: "mystery still fails now and then: spam every need at once, no waiting between"): every doable
-            -- kind on every card in one burst (the server takes the first valid one), then one short wait. A second
-            -- burst only if the card is still there (the pool may have arrived late).
+            -- v2.1.3: the one-burst spam failed (reports: 15 done / 55 failed: the server only takes the first few
+            -- messages of a burst). Now: one kind on cards 1-3 at once (3 messages: one of the cards shows it, if any), a
+            -- short wait, the next kind. 14 kinds: ~11 s at most instead of ~50 s.
             local function gone()
                 return ctx.findEntry("mystery", "pet", entry.petUnique) == nil
             end
-            for burst = 1, 2 do
-                for _, kind in ipairs(choices) do
-                    for slot = 1, 3 do
-                        if gone() then
-                            break
-                        end
-                        pcall(function()
-                            ctx.interaction:send("ChooseMystery", entry.petUnique, "mystery", slot, kind)
-                        end)
-                    end
+            for index, kind in ipairs(choices) do
+                if gone() then
+                    break
                 end
-                if ctx.waitUntil(gone, 4) then
-                    local picked = "?"
-                    for _, kind in ipairs(choices) do
-                        if ctx.findEntry(kind, "pet", entry.petUnique) then
-                            picked = kind
-                            break
-                        end
-                    end
-                    ctx.logger:info("Tasks", string.format("Mystery accepted: %s (burst %d, seed %s)", picked, burst,
-                        tostring(entry.mysterySeed)))
+                for slot = 1, 3 do
+                    pcall(function()
+                        ctx.interaction:send("ChooseMystery", entry.petUnique, "mystery", slot, kind)
+                    end)
+                end
+                if ctx.waitUntil(gone, 0.8) then
+                    ctx.logger:info("Tasks", string.format("Mystery accepted: %s (kind %d of %d, seed %s)", kind, index,
+                        #choices, tostring(entry.mysterySeed)))
                     return true
                 end
+            end
+            if ctx.waitUntil(gone, 2) then
+                return true
             end
             return false, "mystery did not change into a chosen need"
         end,
@@ -9592,7 +9913,8 @@ __moduleSources["Game/Tasks"] = function(...)
         name = "buy_egg",
         timeoutSeconds = 90,
         run = function(ctx, group)
-            local id = ctx.farmConfig.EggToBuy or "cracked_egg"
+            local focus = GameConstants.focusOf(ctx.farmConfig)
+            local id = focus and focus.kind == "egg" and focus.id or ctx.farmConfig.EggToBuy or "cracked_egg"
             if GameConstants.NeverBuyEggs[id] then
                 return false, id .. " costs Robux: never bought"
             end
@@ -10081,6 +10403,7 @@ __moduleSources["Game/Hauntlet"] = function(...)
         used_item = true, grey_locks_removed = true, door_counters_updated = true, picked_door = true, doors_opened = true,
         temp_health_gained = true, kicked_from_game = true, leave_game = true, gained_items = true,
         all_locks_removed = true, max_health_gained = true, health_restored = true, door_effect_triggered = true,
+        ghosts_dispelled = true,
     }
     function Hauntlet:_onMessage(gameKey, message, a, b, c)
         if not isMine(gameKey) then
@@ -10157,6 +10480,10 @@ __moduleSources["Game/Hauntlet"] = function(...)
             end
             self.room = { area = a.area_kind, kind = a.kind, doors = doors, at = now, seq = self.roomSeq,
                 startServer = tonumber(b), alive = alive, safe = false, lockVersion = 0 }
+            if self.room then -- the room that just ended, for its digest line
+                self.lastReveal = { seq = self.room.seq, door = self.revealedGhost,
+                    at = self.revealedAt and (self.revealedAt - self.room.at) or nil, safe = self.room.safe }
+            end
             self.revealedGhost, self.revealedAt = nil, nil
             self.expectDoor, self.expectAt, self.pickedAt, self.mappingSuspect = nil, nil, nil, nil
             local snap = {}
@@ -10204,6 +10531,14 @@ __moduleSources["Game/Hauntlet"] = function(...)
                 Hauntlet.learnedTempCap = self.tempHealth
             else
                 self.inventory[a] = 0
+            end
+        elseif message == "ghosts_dispelled" and self.room then
+            -- v2.1.3: someone's rainbow wand (19 times in the reports; the wand room had no ghost): the room is safe for
+            -- everyone, not only for the one who used it
+            self.room.safe = true
+            self.room.dispelledAt = now
+            if self.debugLines then
+                self:_debugNote("ghosts_dispelled: room " .. tostring(self.room.seq))
             end
         elseif message == "all_locks_removed" and type(a) == "table" and self.room then
             -- live run 5: a gold key's answer (the door stayed "locked" and the bot took a 75 % door instead)
@@ -10258,6 +10593,7 @@ __moduleSources["Game/Hauntlet"] = function(...)
             if a == true then
                 self._awaitPick = true
                 self.pickedAt = now
+                self.pickedSeq = self.room and self.room.seq
                 if self.expectDoor then
                     self.myDoor, self.myDoorAt = self.expectDoor, now
                 end
@@ -10499,7 +10835,40 @@ __moduleSources["Game/Hauntlet"] = function(...)
         death), and in those rooms a ghost was behind another door only once. The weight that fits: ~360. So a copycat
         door counts as the likeliest ghost door, whatever the game's list says.
     ]]
-    Hauntlet.GHOST_OVERRIDE = { copycat = 300 }
+    Hauntlet.GHOST_OVERRIDE = {}
+    --[[
+        v2.1.3 MEASURED (717 rooms of the v2.1.3 room digests, 2026-10-10; which door had the ghost, rooms with ONE
+        ghost, weights fitted so that risk = weight / the room's total; wooden = 90 as the scale): these replace the game's
+        list for the kinds seen often enough. The game's list was off for shadow (150 -> ~255: 64 % of the shadow doors),
+        copycat (300 -> ~70), electric (30 -> ~50); gold_locked and security never had a ghost.
+    ]]
+    Hauntlet.MEASURED_GHOST = { shadow = 255, rotten = 100, wooden = 90, bouncy = 85, copycat = 70, electric = 50,
+        locked = 23, webbed = 5, security = 2, gold_locked = 0 }
+    --[[
+        How many ghosts a room has (same data): room 1 none; 2-7 one; 8 two in 78 %, 9 in 69 %; 11-15 one (the area after
+        a nexus starts calm again); 16 56 %, 17 48 %, 18 53 %, 19 29 %; 21-23 one; 24 50 %, 25 33 %, 26-27 85 %, 28 67 %;
+        later rooms: about 60 %, and from room 41 two or three. The chance of a second ghost per room:
+    ]]
+    Hauntlet.TWO_GHOSTS = { [8] = 0.8, [9] = 0.7, [16] = 0.6, [17] = 0.5, [18] = 0.55, [19] = 0.3, [24] = 0.5, [25] = 0.4,
+        [26] = 0.85, [27] = 0.85, [28] = 0.7, [29] = 0.5 }
+    function Hauntlet.twoGhostChance(seq)
+        seq = tonumber(seq) or 0
+        local known = Hauntlet.TWO_GHOSTS[seq]
+        if known then
+            return known
+        end
+        if seq < 30 then
+            return seq <= 1 and 0 or 0.02 -- rooms 2-7, 11-15, 21-23: one ghost (a few % margin)
+        end
+        if seq >= 41 then
+            return 0.95
+        end
+        return (seq % 10 == 1) and 0.2 or 0.6
+    end
+    -- the worst hit (same data): 1 heart before room 16 (2 hearts in 2 of 34 hits in rooms 8-9), 2 hearts from 16 on
+    function Hauntlet.worstHit(seq)
+        return (tonumber(seq) or 0) >= 16 and 2 or 1
+    end
     -- Nexus: the next area's cost (its doors: copycat = ghost magnets (the other doors are then rather safe) and many
     -- locks, webbed 5 but an item each, wooden 90, bouncy 80 + a random launch, security 20 but 2 keys each, electric a
     -- sure heart each, nightmare 180).
@@ -10541,8 +10910,8 @@ __moduleSources["Game/Hauntlet"] = function(...)
             end)
         end
         local info = (liveDoors and liveDoors[kind]) or Hauntlet.DOOR_FALLBACK[kind] or { ghost = 90, drops = 0.5 }
-        local override = Hauntlet.GHOST_OVERRIDE[kind]
-        if override and (tonumber(info.ghost) or 0) < override then
+        local override = Hauntlet.MEASURED_GHOST[kind] or Hauntlet.GHOST_OVERRIDE[kind]
+        if override and (tonumber(info.ghost) or 0) ~= override then
             local copy = {}
             for key, value in pairs(info) do
                 copy[key] = value
@@ -10597,12 +10966,13 @@ __moduleSources["Game/Hauntlet"] = function(...)
         local firstRoomSafe = opt("safeFirstRoom") ~= false and view.seq == 1
         -- v2.1.3 (user: "first THINK: your items and how many hearts you have"): the red potion fills EVERY missing
         -- heart, so it waits for 2 missing hearts unless the next ghost hit would leave 1 heart or less
-        local lateRoom = (tonumber(view.seq) or 0) >= opt("multiGhostFromRoom")
+        local twoGhosts = Hauntlet.twoGhostChance(view.seq) -- v2.1.3: measured per room (see TWO_GHOSTS)
+        local lateRoom = twoGhosts >= 0.3
         local temp = tonumber(view.tempHealth) or 0
         if view.shield and temp <= 0 then
             temp = 1
         end
-        local worstHit = lateRoom and 2 or 1
+        local worstHit = Hauntlet.worstHit(view.seq)
         local missing = maxHealth - health
         if missing > 0 and can("red_potion") and (missing >= (tonumber(opt("redPotionMissing")) or 1)
             or health + temp - worstHit <= 1 or itemCount(inv, "red_potion") >= 2) then
@@ -10637,13 +11007,29 @@ __moduleSources["Game/Hauntlet"] = function(...)
                 elseif ghost then
                     if i == ghost then
                         risks[i] = 1
-                    elseif lateRoom and total - ghostWeight > 0 then
-                        risks[i] = 0.5 * Hauntlet.doorInfo(d.kind).ghost / (total - ghostWeight)
+                    elseif twoGhosts > 0 and total - ghostWeight > 0 then
+                        -- the phone shows one ghost: a second one is behind another door with this room's chance
+                        risks[i] = twoGhosts * Hauntlet.doorInfo(d.kind).ghost / (total - ghostWeight)
                     else
                         risks[i] = 0
                     end
+                elseif total > 0 then
+                    -- one ghost: weight / total; two (drawn one after the other by weight): P(first) + P(second)
+                    local w = Hauntlet.doorInfo(d.kind).ghost
+                    local one = w / total
+                    local two = one
+                    for j = 1, 4 do
+                        local o = doors[j]
+                        if j ~= i and o and o.exists ~= false then
+                            local wj = Hauntlet.doorInfo(o.kind).ghost
+                            if total - wj > 0 then
+                                two += (wj / total) * (w / (total - wj))
+                            end
+                        end
+                    end
+                    risks[i] = (1 - twoGhosts) * one + twoGhosts * math.min(1, two)
                 else
-                    risks[i] = total > 0 and Hauntlet.doorInfo(d.kind).ghost / total or (1 / 3)
+                    risks[i] = 1 / 3
                 end
                 -- live run 3 (death in room 14): a locked door I cannot open is no way out, its low risk does not count
                 if enterable(d) then
@@ -10718,7 +11104,7 @@ __moduleSources["Game/Hauntlet"] = function(...)
                 if risk >= 1 then
                     table.insert(parts, 1, "the ghost was revealed here")
                 end
-                score += rng() * 0.5
+                score += ((type(options.tie) == "table" and tonumber(options.tie[i])) or rng()) * 0.5
                 notes[i] = string.format("door %d (%s): risk %s, score %.1f%s", i, tostring(d.kind),
                     risk == 0 and "none" or (risk >= 1 and "GHOST" or (math.floor(risk * 100 + 0.5) .. "%")), score,
                     #parts > 0 and (" - " .. table.concat(parts, "; ")) or "")
@@ -10754,7 +11140,8 @@ __moduleSources["Game/Hauntlet"] = function(...)
         -- v2.1.3 budget: the last potion(s) (potionReserve) stay for a door that is >= reserveBreakRisk a ghost or a hit
         -- that would leave 1 heart or less
         local potions = itemCount(inv, "ghost_potion")
-        local mustProtect = health + temp - worstHit <= 1 or bestRisk >= (tonumber(opt("reserveBreakRisk")) or 0)
+        local mustProtect = (health + temp - worstHit <= 1 and bestRisk >= 0.05)
+            or bestRisk >= (tonumber(opt("reserveBreakRisk")) or 0)
         local spareOk = potions > (tonumber(opt("potionReserve")) or 0) or mustProtect
         if bestRisk > 0 and bestRisk >= opt("potionAtRisk") and temp < tempTarget and can("ghost_potion") and spareOk then
             return { use = "ghost_potion", door = best, reason = string.format("%s; temp heart %d of %d for door %d", why,
@@ -11131,6 +11518,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                     local rewardHere = lookup(graves, index)
                     local isOpen = opened[floor * E.OpenedIdPerFloor + index] == true
                     local wanted = rewardHere == reward or (reward == "twig" and rewardHere == E.Twig)
+                        or (reward == "lever" and type(rewardHere) == "string" and string.find(string.lower(rewardHere), "lever", 1, true) ~= nil)
                     if wanted and rewardHere ~= E.Ladder then
                         if not isOpen then
                             return { floor = floor, grave = index, reward = reward }
@@ -11221,15 +11609,32 @@ __moduleSources["Game/EventTasks"] = function(...)
         end
         return start
     end
-    function EventTasks.penPlan(pen, growable, keep, slots)
+    -- focus / kindOf (Mega a Pet): a pen pet of another kind makes room for a waiting copy of the focus pet
+    function EventTasks.penPlan(pen, growable, keep, slots, focus, kindOf)
         local plan = { claim = count(pen) > 0, remove = {}, add = {} }
+        local others = {}
         for unique, record in pairs(pen) do
             if type(record) == "table" and record.max_age == true then
                 table.insert(plan.remove, unique)
+            elseif focus and kindOf and kindOf(unique) ~= focus then
+                table.insert(others, unique)
             end
         end
         table.sort(plan.remove)
+        table.sort(others)
         local free = slots - count(pen) + #plan.remove
+        if focus then
+            local waiting = 0
+            for _, pet in ipairs(growable) do
+                if pet.kind == focus and not keep[pet.unique] then
+                    waiting += 1
+                end
+            end
+            while waiting > free and #others > 0 do
+                table.insert(plan.remove, table.remove(others, 1))
+                free += 1
+            end
+        end
         for _, pet in ipairs(growable) do
             if free <= 0 then
                 break
@@ -11303,7 +11708,10 @@ __moduleSources["Game/EventTasks"] = function(...)
             end
             local slots = tonumber(ctx.farmConfig.Event.PetPenSlots) or E.PetPenSlots
             local plan = EventTasks.penPlan(ctx.gameData:petPenPets(),
-                ctx.gameData:growablePets(ctx.farmConfig.PreferNeon == true, GameConstants.kindRank(ctx.farmConfig)), keep, slots)
+                ctx.gameData:growablePets(ctx.farmConfig.PreferNeon == true, GameConstants.kindRank(ctx.farmConfig)), keep, slots,
+                GameConstants.focusKind(ctx.farmConfig), function(unique)
+                    return ctx.gameData:getPetKind(unique)
+                end)
             local done = {}
             if plan.claim then
                 local before = penSignature(ctx)
@@ -11318,14 +11726,17 @@ __moduleSources["Game/EventTasks"] = function(...)
                 table.insert(done, "claimed" .. ((tonumber(after) and tonumber(bucks) and after > bucks)
                     and string.format(" (+%d Bucks)", after - bucks) or ""))
             end
+            local penNow = ctx.gameData:petPenPets()
             for _, unique in ipairs(plan.remove) do
+                local grown = type(penNow[unique]) == "table" and penNow[unique].max_age == true
                 ctx.interaction:send("PetPenRemove", unique)
                 if not ctx.waitUntil(function()
                     return ctx.gameData:petPenPets()[unique] == nil
                 end, 6) then
-                    return false, "full grown pet " .. unique .. " did not leave the pen"
+                    return false, "pet " .. unique .. " did not leave the pen"
                 end
-                table.insert(done, "took out a full grown pet")
+                table.insert(done, grown and "took out a full grown pet"
+                    or ("made room for the focus pet (took out " .. tostring(ctx.gameData:getPetKind(unique) or unique) .. ")"))
             end
             for _, unique in ipairs(plan.add) do
                 ctx.interaction:send("PetPenAdd", unique)
@@ -11438,6 +11849,12 @@ __moduleSources["Game/EventTasks"] = function(...)
                 #ctx.gameData:itemsOfId(TOYS, E.Twig), key and 1 or 0)
             local preferTwig = ctx.farmConfig.Event.AutoNest ~= false and nestState == "COLLECT_TWIGS"
             local plan, why = EventTasks.cryptPick(ctx.gameData:get(KEYS.Crypt), ctx.farmConfig.Event.CryptOpen, preferTwig)
+            if EventTasks.skelicornOn(ctx.farmConfig) and EventTasks.skelicornStep(ctx.gameData, ctx.farmConfig) == "crypt" then
+                -- v2.1.4 Auto Skelicorn: the lever's grave first; none on the floors I can reach: the ladder down
+                plan = EventTasks.reachableGrave(ctx.gameData:get(KEYS.Crypt), "lever")
+                    or EventTasks.cryptPlan(ctx.gameData:get(KEYS.Crypt)) or plan
+                preferTwig = false
+            end
             if not plan then
                 ctx.logger:info("Event", "Crypt: " .. tostring(why))
                 return true
@@ -11551,6 +11968,247 @@ __moduleSources["Game/EventTasks"] = function(...)
                     return false, string.format("nest not finished after building (%d of %d)", placed(), E.NestTwigs)
                 end
                 ctx.logger:success("AutoNest", "Nest completed")
+            end
+            return true
+        end,
+    }
+    --[[
+        AUTO SKELICORN (v2.1.4, Farm.Event.AutoSkelicorn, off by default). Steps, each checked in your data:
+          1) no Lightning Lever and not installed: the Crypt task looks for a grave whose reward has "lever" in it
+          2) lever in the backpack: to the machine by the Manor (a map model named "...lightning...lever...")
+          3) hold the lever (ToolAPI/Equip(unique, {})), then Halloween2026/LightningLeverDeliver() with no arguments,
+             ONCE - exactly the recorded manual install (GameConstants.Event.SkelicornArgs). Activate was not part of it
+             and is not sent
+          4) halloween_2026_lightning_lever_manager tells "installed": never delivered twice
+          5) candy >= the price: ShopAPI/BuyItem("pets", skelicorn, { buy_count = 1 }) (the Candy Shop's own call)
+          6) one Skelicorn bought (or already owned): idle
+        The lever manager's field names are not known yet: its content is logged once, and "installed" is read from
+        fields named like install / deliver / placed (plus what this session saw: a delivered lever leaves the backpack).
+    ]]
+    EventTasks._skelicorn = { delivered = false, activated = false, bought = false, logged = nil }
+    function EventTasks.findLever(gameData)
+        local inventory = gameData:get(KEYS.Inventory)
+        for category, items in pairs(type(inventory) == "table" and inventory or {}) do
+            if type(items) == "table" then
+                for unique, item in pairs(items) do
+                    if type(item) == "table" and item.id == E.LightningLever then
+                        return tostring(item.unique or unique), category
+                    end
+                end
+            end
+        end
+        return nil
+    end
+    function EventTasks.leverState(manager)
+        local installed, activated = false, false
+        local function scan(t, depth)
+            for k, v in pairs(t) do
+                local key = string.lower(tostring(k))
+                if type(v) == "table" then
+                    if depth < 2 then
+                        scan(v, depth + 1)
+                    end
+                elseif v == true or (type(v) == "number" and v > 0) then
+                    if string.find(key, "install") or string.find(key, "deliver") or string.find(key, "placed")
+                        or string.find(key, "insert") then
+                        installed = true
+                    end
+                    if string.find(key, "activ") or string.find(key, "pull") then
+                        activated = true
+                    end
+                end
+            end
+        end
+        if type(manager) == "table" then
+            scan(manager, 0)
+        end
+        return installed, activated
+    end
+    function EventTasks.skelicornPrice()
+        local price = E.SkelicornPrice
+        pcall(function()
+            local fsys = game:GetService("ReplicatedStorage"):FindFirstChild("Fsys")
+            local db = fsys and require(fsys).load("InventoryDB")
+            local entry = type(db) == "table" and type(db.pets) == "table" and db.pets[E.Skelicorn]
+            local cost = type(entry) == "table" and tonumber(entry.cost or entry.price)
+            if cost and cost > 0 then
+                price = cost
+            end
+        end)
+        return price
+    end
+    -- the next step, or nil (nothing to do now). "crypt" = find the lever in the Crypt first.
+    -- on with the toggle, or with "Mega Skelicorn" / Mega a Pet = Skelicorn
+    function EventTasks.skelicornOn(farm)
+        local focus = GameConstants.focusOf(farm)
+        return (type(farm) == "table" and type(farm.Event) == "table" and farm.Event.AutoSkelicorn == true)
+            or (focus ~= nil and focus.kind == "skelicorn")
+    end
+    function EventTasks.skelicornStep(gameData, farm)
+        local state = EventTasks._skelicorn
+        local focus = GameConstants.focusOf(farm)
+        if focus and focus.kind == "skelicorn" then
+            -- Mega Skelicorn: keep buying while fewer than Pet Pen slots + 1 Skelicorns still grow
+            local event = type(farm.Event) == "table" and farm.Event or {}
+            local wanted = (tonumber(event.PetPenSlots) or E.PetPenSlots or 4) + 1
+            local growing = gameData:growingCopies(E.Skelicorn)
+            if growing >= wanted then
+                return nil, string.format("%d Skelicorns still grow (%d wanted): idle", growing, wanted)
+            end
+        elseif state.bought or next(gameData:petUniquesOfKind(E.Skelicorn)) ~= nil then
+            return nil, "a Skelicorn is yours: idle"
+        end
+        local installed, activated = EventTasks.leverState(gameData:get(KEYS.LightningLever))
+        -- owning a Skelicorn proves the machine was unlocked (the manager's field names are still a guess)
+        installed = installed or state.delivered or next(gameData:petUniquesOfKind(E.Skelicorn)) ~= nil
+        activated = activated or state.activated
+        if not installed then
+            if EventTasks.findLever(gameData) then
+                return "install"
+            end
+            return "crypt"
+        end
+        if not activated and type(E.SkelicornArgs) == "table" and type(E.SkelicornArgs.activate) == "table" then
+            return "activate" -- only if an Activate call is ever recorded: the recorded install needed none
+        end
+        local candy = tonumber(gameData:get(KEYS.Candy)) or 0
+        if candy >= EventTasks.skelicornPrice() then
+            return "buy"
+        end
+        return nil, string.format("waiting for candy (%d / %d)", candy, EventTasks.skelicornPrice())
+    end
+    function EventTasks.findLeverMachine()
+        local best
+        pcall(function()
+            for _, node in ipairs(workspace:GetDescendants()) do
+                if node:IsA("Model") or node:IsA("BasePart") then
+                    local name = string.lower(node.Name)
+                    local all = true
+                    for _, word in ipairs(E.LeverMachinePatterns) do
+                        if not string.find(name, word, 1, true) then
+                            all = false
+                        end
+                    end
+                    if all then
+                        local part = node:IsA("BasePart") and node or node.PrimaryPart or node:FindFirstChildWhichIsA("BasePart", true)
+                        if part then
+                            best = best or { node = node, part = part }
+                        end
+                    end
+                end
+            end
+        end)
+        return best
+    end
+    local function leverArgs(kind, leverUnique)
+        local recorded = type(E.SkelicornArgs) == "table" and E.SkelicornArgs[kind]
+        if type(recorded) ~= "table" then
+            return nil
+        end
+        local function fill(v, depth)
+            if v == "$LEVER" then
+                return leverUnique
+            end
+            if type(v) == "table" and depth < 3 then
+                local copy = {}
+                for k, x in pairs(v) do
+                    copy[k] = fill(x, depth + 1)
+                end
+                return copy
+            end
+            return v
+        end
+        local args = {}
+        for i, v in ipairs(recorded) do
+            args[i] = fill(v, 0)
+        end
+        return args
+    end
+    EventTasks.skelicorn = {
+        id = "skelicorn",
+        timeoutSeconds = 120,
+        run = function(ctx)
+            local state = EventTasks._skelicorn
+            local manager = ctx.gameData:get(KEYS.LightningLever)
+            local text = Util.truncate(Util.jsonEncode(manager) or tostring(manager), 300)
+            if text ~= state.logged then -- the manager's fields, once per change: so "installed" can be read for sure
+                state.logged = text
+                ctx.logger:info("Skelicorn", "Lever data: " .. text)
+            end
+            local step, why = EventTasks.skelicornStep(ctx.gameData, ctx.farmConfig)
+            if not step or step == "crypt" then
+                ctx.logger:info("Skelicorn", tostring(why or "no lever yet: the Crypt looks for it"))
+                return true
+            end
+            if step == "buy" then
+                local price = EventTasks.skelicornPrice()
+                local before = ctx.gameData:petUniquesOfKind(E.Skelicorn)
+                local candyBefore = tonumber(ctx.gameData:get(KEYS.Candy)) or 0
+                local sent, answer = ctx.interaction:send("BuyItem", GameConstants.EggCategory, E.Skelicorn, { buy_count = 1 })
+                local got = ctx.waitUntil(function()
+                    for unique in pairs(ctx.gameData:petUniquesOfKind(E.Skelicorn)) do
+                        if not before[unique] then
+                            return true
+                        end
+                    end
+                    return false
+                end, 8)
+                if not got then
+                    return false, string.format("no Skelicorn arrived (price %d, candy %d, answer %s %s)", price, candyBefore,
+                        tostring(sent), Util.truncate(tostring(answer), 60))
+                end
+                state.bought = true
+                local focused = GameConstants.focusKind(ctx.farmConfig) == E.Skelicorn
+                ctx.logger:success("Skelicorn", string.format("Skelicorn bought for %d candy: %s",
+                    candyBefore - (tonumber(ctx.gameData:get(KEYS.Candy)) or candyBefore),
+                    focused and "Mega Skelicorn buys the next one at 120k candy" or "Auto Skelicorn is done"))
+                return true
+            end
+            -- install / activate: at the machine by the Manor
+            local arrived, travelWhy = ctx.travel:goTo("MainMap")
+            if not arrived then
+                return false, "travel to the main map failed: " .. tostring(travelWhy)
+            end
+            local machine = EventTasks.findLeverMachine()
+            if not machine then
+                return false, "the lever machine was not found in the map (a model named lightning + lever)"
+            end
+            local near, nearWhy = ctx.interaction:teleportNearPart(machine.part, 6)
+            if not near then
+                return false, "could not stand at the machine: " .. tostring(nearWhy)
+            end
+            ctx.logger:info("Skelicorn", "At the machine: " .. machine.node:GetFullName())
+            local lever = EventTasks.findLever(ctx.gameData)
+            local args = leverArgs(step == "install" and "deliver" or "activate", lever)
+            if step == "install" and args and lever then
+                -- as recorded: the lever is held first (ToolAPI/Equip(unique, {})), then Deliver with no arguments
+                ctx.interaction:send("EquipItem", lever, {})
+                task.wait(0.6)
+            end
+            if not args then
+                return false, "the " .. (step == "install" and "LightningLeverDeliver" or "LightningLeverActivate")
+                    .. " arguments are not recorded yet (one manual install with a remote spy, then SkelicornArgs)"
+            end
+            local signature = function()
+                return (Util.jsonEncode(ctx.gameData:get(KEYS.LightningLever)) or "") .. "|" .. tostring(EventTasks.findLever(ctx.gameData))
+            end
+            local before = signature()
+            local sent, answer = ctx.interaction:send(step == "install" and "LightningLeverDeliver" or "LightningLeverActivate",
+                table.unpack(args))
+            local changed = ctx.waitUntil(function()
+                return signature() ~= before
+            end, 6)
+            if step == "install" then
+                if not changed then
+                    return false, "the lever install showed no change in my data (answer: " .. tostring(sent) .. " "
+                        .. Util.truncate(tostring(answer), 60) .. ")"
+                end
+                state.delivered = true
+                state.activated = true -- the recorded install: Deliver alone unlocked the Skelicorn
+                ctx.logger:success("Skelicorn", "Lightning Lever installed: the Skelicorn is unlocked")
+            else
+                state.activated = true -- pulled once; the data shows more when its fields are known
+                ctx.logger:success("Skelicorn", "Lightning Lever pulled" .. (changed and "" or " (no data change seen)"))
             end
             return true
         end,
@@ -11828,6 +12486,9 @@ __moduleSources["Game/EventTasks"] = function(...)
             if type(sessionId) ~= "string" then
                 return false, "no session id after join"
             end
+            -- v2.1.3 (reports: 54 x "not auto-queued", always the round right after a run): one run per 20 min. The
+            -- round after this one is skipped (TaskManager:_hauntletRoundDue), the Ghost Gallery gets it instead.
+            h.lastRunStart = (group and tonumber(group.start)) or Minigame.serverNow()
             if not ctx.waitUntil(function()
                 return h.enter ~= nil or inRun() or h.leave ~= nil or h.kicked ~= nil
             end, 45) then
@@ -11866,6 +12527,9 @@ __moduleSources["Game/EventTasks"] = function(...)
             local base = nil -- the start of the line of rooms (room 1, then each nexus)
             local passed = {} -- circle groups of the rooms before the last nexus (never again)
             local behind = nil -- { base = the previous start, limit = the nexus' distance from it }: closer = behind me
+            -- v2.1.4 chain: the circle folder of the room being played, found from the previous room's exit when the
+            -- room starts (not from where I picked: others can open the doors before I arrive)
+            local prevGroup, prevRoom = nil, nil
             local function Interaction_center(group)
                 local ok, center = pcall(function()
                     return ctx.interaction.hauntletCenter(group)
@@ -11925,6 +12589,38 @@ __moduleSources["Game/EventTasks"] = function(...)
                         #order, #order == 1 and "" or "s", h.squadIds and " (your accounts)" or " (everyone alive)", rank,
                         h:turnAt("cell_phone", rank, strategy)))
                 end
+                local chainGroup = nil
+                local chainExit = "Exit"
+                if prevRoom and (prevRoom.kind == "nexus" or prevRoom.kind == "final_nexus") then
+                    for i = 1, 4 do
+                        local d = prevRoom.doors[i]
+                        if d and d.kind == "area:" .. tostring(room.area) then
+                            chainExit = "Exit" .. i
+                        end
+                    end
+                end
+                local function ensureGroup()
+                    if chainGroup and chainGroup.Parent then
+                        return chainGroup
+                    end
+                    chainGroup = nil
+                    if prevGroup and prevGroup.Parent then
+                        local ok, found = pcall(function()
+                            return ctx.interaction:hauntletNextGroup(h.join and h.join.interior, prevGroup, chainExit)
+                        end)
+                        if ok and found then
+                            chainGroup = found
+                        end
+                    end
+                    return chainGroup
+                end
+                ctx.waitUntil(function() -- the next room streams in within 1-2 s
+                    return over() or h.room ~= room or ensureGroup() ~= nil or prevGroup == nil
+                end, 3)
+                -- one fixed tie-break per room: equal doors no longer swap places between two looks (room 11 of the
+                -- debug log: picked door 3, then "door 1", moved into the next room's circle)
+                strategy = setmetatable({ tie = { math.random(), math.random(), math.random(), math.random() } },
+                    { __index = E.HauntletStrategy or Hauntlet.DEFAULTS })
                 local planSeconds = tonumber(strategy.planSeconds) or Hauntlet.DEFAULTS.planSeconds
                 local commitBy = tonumber(strategy.commitBySeconds) or Hauntlet.DEFAULTS.commitBySeconds
                 while not over() and h.room == room and not switchedOff() do
@@ -12001,7 +12697,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                             h.expectDoor, h.expectAt, h.mappingSuspect = plan.door, Util.now(), nil
                             local moved, how, _, used = ctx.interaction:teleportToHauntletDoor(h.join and h.join.interior,
                                 plan.door, { avoid = avoid, bad = bad, method = moveMethod, link = lastLink, visited = visited,
-                                    base = base, passed = passed, behind = behind, seconds = moveSeconds })
+                                    base = base, passed = passed, behind = behind, seconds = moveSeconds, group = ensureGroup() })
                             if moved then
                                 circles = used
                                 explain("At door " .. plan.door .. " for the key (" .. tostring(how) .. ")")
@@ -12027,9 +12723,10 @@ __moduleSources["Game/EventTasks"] = function(...)
                                     return h.revealedGhost ~= nil or over() or h.room ~= room
                                 end, 4)
                                 if h.revealedGhost then
-                                    say("Door outcomes: ghost behind door " .. h.revealedGhost .. (room.seq >= (tonumber(
-                                        strategy.multiGhostFromRoom) or Hauntlet.DEFAULTS.multiGhostFromRoom)
-                                        and " (a second ghost can still be elsewhere)" or ", the other doors are safe"))
+                                    local second = Hauntlet.twoGhostChance(room.seq)
+                                    say("Door outcomes: ghost behind door " .. h.revealedGhost .. (second >= 0.1
+                                        and string.format(" (a second ghost elsewhere: %d%%)", math.floor(second * 100 + 0.5))
+                                        or ", the other doors are safe"))
                                     planned = false
                                 end
                             elseif (plan.use == "key" or plan.use == "gold_key") and plan.door then
@@ -12096,7 +12793,8 @@ __moduleSources["Game/EventTasks"] = function(...)
                             local moved, how, part, used, verified = ctx.interaction:teleportToHauntletDoor(
                                 h.join and h.join.interior, door, { avoid = avoid, bad = bad, method = moveMethod,
                                     nexus = room.kind == "nexus" or room.kind == "final_nexus", link = lastLink,
-                                    visited = visited, base = base, passed = passed, behind = behind, seconds = moveSeconds })
+                                    visited = visited, base = base, passed = passed, behind = behind, seconds = moveSeconds,
+                                    group = ensureGroup() })
                             if moved then
                                 circles = used
                                 picks += 1
@@ -12105,8 +12803,12 @@ __moduleSources["Game/EventTasks"] = function(...)
                                 end, 1.5)
                                 -- live run 4: alone, the doors open on my pick and the next room starts at once, so this
                                 -- must not wait for "still the same room": the pick counts if this room's doors opened
-                                local pickedHere = (h.room == room and h.myDoorAt ~= nil and h.myDoorAt >= movedAt)
-                                    or (h.lastOpened ~= nil and h.lastOpened.seq == room.seq)
+                                -- v2.1.4: only MY pick in THIS room counts (debug log: the others opened the doors while I was
+                                -- still on the way, the bot took the next room's circles for this room's and lost the chain)
+                                local pickedHere = h.pickedSeq == room.seq and h.pickedAt ~= nil and h.pickedAt >= movedAt
+                                if pickedHere and used and not chainGroup then
+                                    chainGroup = used -- room 1 (or a lost chain): the room I picked in is this room
+                                end
                                 if pickedHere and used then
                                     if room.kind == "nexus" or room.kind == "final_nexus" then
                                         -- a new line of rooms starts at the nexus: the start is here now. The rooms
@@ -12167,6 +12869,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                     end
                 end
                 lastCircles = circles or lastCircles
+                prevGroup, prevRoom = chainGroup, room -- the next room is found from this one's exit
                 h:_debugFlush()
                 ctx.waitUntil(function()
                     return over() or (h.lastOpened ~= nil and h.lastOpened.seq == room.seq)
@@ -12202,7 +12905,14 @@ __moduleSources["Game/EventTasks"] = function(...)
                         "R%d %s | sq %d #%d%s | h %s | %s | reveal %s | %s | door %s@%s | ghost %s | dmg %s",
                         room.seq, tostring(room.area), #order, rank, h.squadIds and "k" or "", digest.hearts,
                         table.concat(kinds, ","),
-                        h.revealedGhost and string.format("d%d@%.1f", h.revealedGhost, (h.revealedAt or room.at) - room.at) or "-",
+                        (function()
+                            local r = (h.lastReveal and h.lastReveal.seq == room.seq) and h.lastReveal
+                                or { door = h.revealedGhost, at = h.revealedAt and (h.revealedAt - room.at), safe = room.safe }
+                            if r.safe then
+                                return "wand"
+                            end
+                            return r.door and string.format("d%d@%.1f", r.door, r.at or 0) or "-"
+                        end)(),
                         #digest.items > 0 and table.concat(digest.items, " ") or "no items",
                         tostring((result and result.seq == room.seq and result.myDoor) or digest.door or "?"),
                         digest.doorAt and string.format("%.1f", digest.doorAt) or "?",
@@ -12454,6 +13164,10 @@ __moduleSources["Game/EventTasks"] = function(...)
         for _, kind in ipairs(type(settings.PetKinds) == "table" and settings.PetKinds or {}) do
             kinds[kind] = true
         end
+        local focus = GameConstants.focusKind(farm)
+        if focus then -- Mega a Pet: potions only on the focus pet
+            kinds = { [focus] = true }
+        end
         for _, pet in ipairs(gameData:equippedPetList()) do
             local age = pet.unique and gameData:petAge(pet.unique)
             if age and age < GameConstants.FullGrownAge and (next(kinds) == nil or kinds[gameData:getPetKind(pet.unique) or ""]) then
@@ -12496,7 +13210,13 @@ __moduleSources["Game/EventTasks"] = function(...)
             exclude[kind] = true
         end
         local bestKind, bestList
-        for kind, list in pairs(gameData:neonFusionGroups(exclude, mega)) do
+        local groups = gameData:neonFusionGroups(exclude, mega)
+        local focus = GameConstants.focusKind(farm)
+        if focus and type(groups[focus]) == "table" and #groups[focus] >= 4 then -- Mega a Pet: the focus pet first
+            local list = groups[focus]
+            return focus, { list[1], list[2], list[3], list[4] }
+        end
+        for kind, list in pairs(groups) do
             if #list >= 4 and (not bestList or #list > #bestList or (#list == #bestList and kind < bestKind)) then
                 bestKind, bestList = kind, list
             end
@@ -12596,32 +13316,48 @@ __moduleSources["Game/EventTasks"] = function(...)
     end
     EventTasks.buyCandyPet = {
         id = "candy_pet",
-        timeoutSeconds = 30,
-        run = function(ctx)
+        timeoutSeconds = 75,
+        run = function(ctx, group)
             local settings = ctx.farmConfig.Event and ctx.farmConfig.Event.CandyPets or {}
-            local pick = EventTasks.candyPetTarget(ctx.gameData, settings)
+            local pick = group and group.pick or EventTasks.candyPetTarget(ctx.gameData, settings)
             if not pick then
                 return true
             end
-            local before = ctx.gameData:petUniquesOfKind(pick.id)
-            local candyBefore = tonumber(ctx.gameData:get(GameConstants.DataKeys.Candy)) or 0
-            local sent, answer = ctx.interaction:send("BuyItem", GameConstants.EggCategory, pick.id, { buy_count = 1 })
-            local newUnique
-            ctx.waitUntil(function()
-                for unique in pairs(ctx.gameData:petUniquesOfKind(pick.id)) do
-                    if not before[unique] then
-                        newUnique = unique
-                        return true
-                    end
+            -- Mega a Pet asks for several copies at once (one BuyItem each: buy_count 1 is the call seen working)
+            local wanted, bought = math.max(1, math.min(tonumber(pick.count) or 1, 8)), 0
+            local candyStart = tonumber(ctx.gameData:get(GameConstants.DataKeys.Candy)) or 0
+            for _ = 1, wanted do
+                local candyNow = tonumber(ctx.gameData:get(GameConstants.DataKeys.Candy)) or 0
+                if bought > 0 and candyNow - (tonumber(pick.keepCandy) or 0) < pick.price then
+                    break
                 end
-                return false
-            end, 8)
-            if not newUnique then
-                return false, string.format("no %s arrived in your backpack (server answer: %s %s)", pick.id, tostring(sent),
-                    Util.truncate(tostring(answer), 60))
+                local before = ctx.gameData:petUniquesOfKind(pick.id)
+                local sent, answer = ctx.interaction:send("BuyItem", GameConstants.EggCategory, pick.id, { buy_count = 1 })
+                local newUnique
+                ctx.waitUntil(function()
+                    for unique in pairs(ctx.gameData:petUniquesOfKind(pick.id)) do
+                        if not before[unique] then
+                            newUnique = unique
+                            return true
+                        end
+                    end
+                    return false
+                end, 8)
+                if not newUnique then
+                    if bought > 0 then
+                        break
+                    end
+                    return false, string.format("no %s arrived in your backpack (server answer: %s %s)", pick.id, tostring(sent),
+                        Util.truncate(tostring(answer), 60))
+                end
+                bought += 1
             end
-            local candyAfter = tonumber(ctx.gameData:get(GameConstants.DataKeys.Candy)) or candyBefore
-            ctx.logger:success("Event", string.format("Bought %s for %d candy (candy left: %d)", pick.id, candyBefore - candyAfter, candyAfter))
+            local candyAfter = tonumber(ctx.gameData:get(GameConstants.DataKeys.Candy)) or candyStart
+            ctx.logger:success("Event", string.format("Bought %d x %s for %d candy (candy left: %d)", bought, pick.id,
+                candyStart - candyAfter, candyAfter))
+            if group and group.onBought then
+                group.onBought()
+            end
             return true
         end,
     }
@@ -12691,7 +13427,7 @@ __moduleSources["Game/TaskManager"] = function(...)
     local TaskManager = {}
     TaskManager.__index = TaskManager
     local TEAM_KEY = "team"
-    local EVENT_RECHECK_SECONDS = { ghost_gallery = 120, stray_cat = 1800, crypt = 60, pigeon_nest = 60, quests = 300, pen_stock = 20, age_potion = 5, open_gift = 3, neon_fusion = 2, mega_fusion = 2, candy_pet = 30, house_visits = 300, hauntlet = 90 }
+    local EVENT_RECHECK_SECONDS = { ghost_gallery = 120, stray_cat = 1800, crypt = 60, pigeon_nest = 60, quests = 300, pen_stock = 20, age_potion = 5, open_gift = 3, neon_fusion = 2, mega_fusion = 2, candy_pet = 30, house_visits = 300, hauntlet = 90, skelicorn = 120 }
     local GHOST_GALLERY_LEAD_SECONDS = 75
     local GHOST_INTERRUPT_SECONDS = 50
     local HAUNTLET_LEAD_SECONDS = 45
@@ -13287,7 +14023,22 @@ __moduleSources["Game/TaskManager"] = function(...)
                 end
             end
             local lastAgeUnknown = self._lastPet ~= nil and self._gameData:petAge(self._lastPet) == nil
-            if self._farmConfig.BuyEgg and known and self._gameData:petInventoryKnown() and not pickGrowable()
+            local focusNow = GameConstants.focusOf(self._farmConfig)
+            -- Mega a Pet with an egg: one of that egg is always on hand, so the hatching never stops
+            if focusNow and focusNow.kind == "egg" and known and self._gameData:petInventoryKnown()
+                and self._gameData:growingCopies(focusNow.id) == 0 and not (lastAgeUnknown and not current)
+                and not self:_isBlocked("buy_egg") then
+                local max = tonumber(self._farmConfig.MaxEggBuysPerSession) or 0
+                self._eggBuys = self._eggBuys or 0
+                if max <= 0 or self._eggBuys < max then
+                    self:_start("buy_egg", "Mega a Pet: buy the next " .. focusNow.id, Tasks.buyEgg, { onBought = function()
+                        self._eggBuys += 1
+                    end })
+                    return
+                end
+            end
+            if (self._farmConfig.BuyEgg or (focusNow and focusNow.kind == "egg")) and known
+                and self._gameData:petInventoryKnown() and not pickGrowable()
                 and not (lastAgeUnknown and not current) and not self:_isBlocked("buy_egg") then
                 local max = tonumber(self._farmConfig.MaxEggBuysPerSession) or 0
                 self._eggBuys = self._eggBuys or 0
@@ -13422,6 +14173,10 @@ __moduleSources["Game/TaskManager"] = function(...)
         end
         local serverNow = Minigame.serverNow()
         local start = EventTasks.nextRoundStart(data:get(GameConstants.DataKeys.HauntletCycle), serverNow)
+        if start and self._hauntlet.lastRunStart and start - self._hauntlet.lastRunStart < 900 then
+            -- the round right after a run never takes me in (reports, v2.1.3): skip it
+            start = start + GameConstants.Event.RoundSeconds
+        end
         if start and start - serverNow <= lead and start - serverNow > -15 then
             return start
         end
@@ -13544,6 +14299,33 @@ __moduleSources["Game/TaskManager"] = function(...)
             and EventTasks.cryptPlan(data:get(KEYS.Crypt), true) then
             return "crypt", "collect twigs in the Crypt (AutoNest)", EventTasks.crypt, nil
         end
+        -- v2.1.4 Auto Skelicorn (right under Auto Nest): lever from the Crypt -> machine -> 1 Skelicorn
+        local focus = GameConstants.focusOf(self._farmConfig)
+        if EventTasks.skelicornOn(self._farmConfig) and data:petInventoryKnown() then
+            local step = EventTasks.skelicornStep(data, self._farmConfig)
+            if step == "crypt" then
+                if due("crypt") and data:get(KEYS.Crypt) ~= nil and #data:itemsOfId(GameConstants.ToyCategory, E.RustyKey) > 0 then
+                    return "crypt", "look for the Lightning Lever in the Crypt (Auto Skelicorn)", EventTasks.crypt, nil
+                end
+            elseif step and due("skelicorn") then
+                return "skelicorn", "Auto Skelicorn: " .. step, EventTasks.skelicorn, nil
+            end
+        end
+        -- Mega a Pet with a candy pet: Pet Pen slots + 1 copies growing (1 raised, the rest in the pen)
+        if focus and focus.kind == "candy" and due("candy_pet") and data:petInventoryKnown() then
+            local wanted = (tonumber(event.PetPenSlots) or E.PetPenSlots or 4) + 1
+            local growing = data:growingCopies(focus.id)
+            local candy = tonumber(data:get(KEYS.Candy)) or 0
+            local affordable = math.floor((candy - focus.keepCandy) / focus.price)
+            local count = math.min(wanted - growing, affordable)
+            if count > 0 then
+                return "candy_pet", string.format("Mega a Pet: buy %d x %s (%d grow, %d wanted)", count, focus.id, growing,
+                    wanted), EventTasks.buyCandyPet, { pick = { id = focus.id, price = focus.price, count = count,
+                    keepCandy = focus.keepCandy }, onBought = function()
+                        self._nextEventAt.pet_pen = 0
+                    end }
+            end
+        end
         local candyPets = event.CandyPets
         if type(candyPets) == "table" and candyPets.Enabled and due("candy_pet") and data:petInventoryKnown() then
             local pick = EventTasks.candyPetTarget(data, candyPets)
@@ -13557,7 +14339,8 @@ __moduleSources["Game/TaskManager"] = function(...)
                 return "stray_cat", "feed the Stray Cat", EventTasks.strayCat, nil
             end
         end
-        if event.Crypt and due("crypt") and data:get(KEYS.Crypt) ~= nil then
+        local cryptOn = event.Crypt or (focus ~= nil and focus.kind == "spider")
+        if cryptOn and due("crypt") and data:get(KEYS.Crypt) ~= nil then
             local plan = EventTasks.cryptPick(data:get(KEYS.Crypt), event.CryptOpen)
             if plan and plan.spider and event.MummySpider ~= false then
                 return "crypt", "claim the Mummy Spider", EventTasks.crypt, nil
@@ -13582,7 +14365,9 @@ __moduleSources["Game/TaskManager"] = function(...)
                 return "pigeon_nest", "twig to the pigeon nest", EventTasks.pigeonNest, nil
             end
         end
-        if event.PetPen and event.PetPenStock ~= false and self._farmConfig.BuyEgg and due("pen_stock")
+        local focusEgg = focus ~= nil and focus.kind == "egg"
+        local penByEggs = not focus or focusEgg -- a pet focus fills the pen with its own copies, not with eggs
+        if event.PetPen and event.PetPenStock ~= false and (self._farmConfig.BuyEgg or focusEgg) and penByEggs and due("pen_stock")
             and not self:_isBlocked("buy_egg") and data:get(KEYS.PetPen) ~= nil and data:petInventoryKnown()
             and (tonumber(data:get(KEYS.Money)) or 0) >= (tonumber(event.PetPenStockMinBucks) or 750)
             and self._travel and self._travel:isAt(GameConstants.HouseInteriorName) then
@@ -14465,8 +15250,8 @@ __moduleSources["main"] = function(...)
             notifier:pump()
             return true, "Test message sent: check your Discord channel"
         end
-        function api.ApplyPreset(name)
-            local values, preset = Config.presetValues(name)
+        function api.ApplyPreset(name, focus)
+            local values, preset = Config.presetValues(name, focus or config.Farm.Focus)
             if not values then
                 return false, "No preset called " .. tostring(name)
             end
