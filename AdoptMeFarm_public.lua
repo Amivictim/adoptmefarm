@@ -73,7 +73,7 @@ local UserConfig = {
     },
     Telemetry = {
         Enabled = false,
-        IncludeInventory = false,
+        IncludeInventory = true,
     },
     Notifications = {
         Enabled = true,
@@ -521,7 +521,7 @@ __moduleSources["Core/Config"] = function(...)
             Url = "https://adoptmelogs.04demirali123.workers.dev/log",
             Owner = "victimoffate_",
             SummaryMinutes = 30,
-            IncludeInventory = false,
+            IncludeInventory = true,
         },
         Notifications = {
             Enabled = false,
@@ -3074,7 +3074,7 @@ __moduleSources["Services/Interface"] = function(...)
     }
     Interface.POTION_NAMES = { pet_age_potion = "Age-Up Potion", tiny_pet_age_potion = "Tiny Age-Up Potion",
         pet_bonus_bucks_potion = "Bucks Potion" }
-    Interface.CRYPT_NAMES = { { "ladder", "Next floor (Mummy Spider)" }, { "twig", "Twig" },
+    Interface.CRYPT_NAMES = { { "ladder", "Next floor (Mummy Spider)" }, { "lever", "Lightning Lever (Skelicorn)" }, { "twig", "Twig" },
         { "candy_corn_pile_ginormous", "Big candy pile" }, { "candy_corn_pile_small", "Small candy pile" } }
     Interface.SHOP_NAMES = { halloween_2026_jump_scare = "Jump Scare", halloween_2026_jacobean_pigeon = "Jacobean Pigeon" }
     Interface.EGG_NAMES = { { "cracked_egg", "Cracked Egg (350 Bucks)" }, { "pet_egg", "Pet Egg (600 Bucks)" },
@@ -11637,7 +11637,8 @@ __moduleSources["Game/EventTasks"] = function(...)
                     local rewardHere = lookup(graves, index)
                     local isOpen = opened[floor * E.OpenedIdPerFloor + index] == true
                     local wanted = rewardHere == reward or (reward == "twig" and rewardHere == E.Twig)
-                        or (reward == "lever" and type(rewardHere) == "string" and string.find(string.lower(rewardHere), "lever", 1, true) ~= nil)
+                        or (reward == "lever" and type(rewardHere) == "string" and (string.find(string.lower(rewardHere), "lever", 1, true)
+                            or string.find(string.lower(rewardHere), "lightning", 1, true)) ~= nil)
                     if wanted and rewardHere ~= E.Ladder then
                         if not isOpen then
                             return { floor = floor, grave = index, reward = reward }
@@ -11970,9 +11971,17 @@ __moduleSources["Game/EventTasks"] = function(...)
             local plan, why = EventTasks.cryptPick(ctx.gameData:get(KEYS.Crypt), ctx.farmConfig.Event.CryptOpen, preferTwig)
             if EventTasks.skelicornOn(ctx.farmConfig) and EventTasks.skelicornStep(ctx.gameData, ctx.farmConfig) == "crypt" then
                 -- v2.1.4 Auto Skelicorn: the lever's grave first; none on the floors I can reach: the ladder down
-                plan = EventTasks.reachableGrave(ctx.gameData:get(KEYS.Crypt), "lever")
-                    or EventTasks.cryptPlan(ctx.gameData:get(KEYS.Crypt)) or plan
+                local crypt = ctx.gameData:get(KEYS.Crypt)
+                local lever = EventTasks.reachableGrave(crypt, "lever")
+                plan = lever or EventTasks.cryptPlan(crypt) or plan
                 preferTwig = false
+                local text = Util.truncate(Util.jsonEncode(type(crypt) == "table" and crypt.floors or crypt) or "?", 400)
+                if text ~= EventTasks._leverFloorsLogged then -- the graves' rewards, once per change: the lever's name
+                    EventTasks._leverFloorsLogged = text
+                    ctx.logger:info("Skelicorn", "Crypt floors: " .. text)
+                end
+                ctx.logger:info("Skelicorn", lever and string.format("Lever grave: floor %s grave %s", tostring(lever.floor),
+                    tostring(lever.grave)) or "No lever grave on the floors I can reach: next floor down")
             end
             if not plan then
                 ctx.logger:info("Event", "Crypt: " .. tostring(why))
@@ -14460,7 +14469,11 @@ __moduleSources["Game/TaskManager"] = function(...)
             end
         end
         local cryptOn = event.Crypt or (focus ~= nil and focus.kind == "spider")
-        if cryptOn and due("crypt") and data:get(KEYS.Crypt) ~= nil then
+        -- user 2026-10-11: "with Auto Skelicorn on, the lever comes first, 100%": while the lever is still needed the
+        -- Crypt picks (Farm.Event.CryptOpen) do not run; the Auto Skelicorn block above opens the Crypt for the lever
+        local leverFirst = EventTasks.skelicornOn(self._farmConfig) and data:petInventoryKnown()
+            and EventTasks.skelicornStep(data, self._farmConfig) == "crypt"
+        if cryptOn and not leverFirst and due("crypt") and data:get(KEYS.Crypt) ~= nil then
             local plan = EventTasks.cryptPick(data:get(KEYS.Crypt), event.CryptOpen)
             if plan and plan.spider and event.MummySpider ~= false then
                 return "crypt", "claim the Mummy Spider", EventTasks.crypt, nil
