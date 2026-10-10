@@ -72,8 +72,8 @@ local UserConfig = {
         SessionFile = false,
     },
     Telemetry = {
-        Enabled = true,
-        IncludeInventory = true,
+        Enabled = false,
+        IncludeInventory = false,
     },
     Notifications = {
         Enabled = true,
