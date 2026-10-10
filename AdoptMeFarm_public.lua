@@ -6251,7 +6251,7 @@ __moduleSources["Game/GameConstants"] = function(...)
         -- v2.1.3 (user: "a room has ~20 s: 10 s to plan, 5 s to choose"): planSeconds = the doors wait this long for a
         -- phone's answer, commitBySeconds = by then I stand in a circle whatever happens; slotStart / slotGap = the
         -- squad's turns for the shared items (Hauntlet:turnAt).
-        HauntletStrategy = { revealWaitSeconds = 9, planSeconds = 10, commitBySeconds = 15, slotStart = 1, slotGap = 1.2,
+        HauntletStrategy = { revealWaitSeconds = 5, planSeconds = 5, commitBySeconds = 10, slotStart = 1, slotGap = 0.6,
             preferLockedWhenSafe = true, kindPenalty = {} },
         HauntletDebug = false, -- true: every door's reasons in the log + AdoptMeFarm/hauntlet_db.txt (the game's door lists)
         HauntletDBPath = { "SharedModules", "ContentPacks", "Halloween2026", "Game", "Hauntlet" },
@@ -7476,7 +7476,10 @@ __moduleSources["Game/Interaction"] = function(...)
             local hotel = interiors and interiors:FindFirstChild("HauntedHotel")
             local zone = hotel and hotel:FindFirstChild("HauntletMinigameJoinZone")
             if zone then
-                local ring = zone:IsA("BasePart") and nil or zone:FindFirstChild("Ring", true)
+                local ring = nil
+                if not zone:IsA("BasePart") then
+                    ring = zone:FindFirstChild("Ring", true)
+                end
                 if ring then
                     if ring:IsA("BasePart") then
                         target = ring
@@ -7683,6 +7686,15 @@ __moduleSources["Game/Interaction"] = function(...)
     local function attachmentPoint(room, name)
         local points = room and room:FindFirstChild("AttachmentPoints")
         local point = points and points:FindFirstChild(name)
+        if not point and points and (name == "Exit" or name == "Entrance") then
+            -- another area's rooms may number them (Exit1 / Entrance1): the first one of that kind
+            for _, child in ipairs(points:GetChildren()) do
+                if child:IsA("Attachment") and string.sub(child.Name, 1, #name) == name then
+                    point = child
+                    break
+                end
+            end
+        end
         return point and point:IsA("Attachment") and point.WorldPosition or nil
     end
     Interaction.hauntletAttachmentPoint = attachmentPoint
@@ -7776,7 +7788,7 @@ __moduleSources["Game/Interaction"] = function(...)
                 return entry.node, entry.dist, #found, entry.seen
             end
         end
-        if found[1] then
+        if found[1] and next(visited or {}) == nil then -- never back into a room already passed
             return found[1].node, found[1].dist, #found, found[1].seen
         end
         return nil, "no DoorJoinCircles near (interior " .. interior.Name .. ")"
@@ -10162,11 +10174,11 @@ __moduleSources["Game/Hauntlet"] = function(...)
     local Hauntlet = {}
     Hauntlet.__index = Hauntlet
     Hauntlet.DEFAULTS = {
-        revealWaitSeconds = 9, -- ghost unknown, no phone / wand of my own, other players in the run: wait for their phone
-        planSeconds = 10, -- v2.1.3: the plan phase of a room (~20 s): items + waiting for a phone
-        commitBySeconds = 15, -- ... and by this second I stand in a door's circle, whatever is still open
+        revealWaitSeconds = 5, -- ghost unknown, no phone / wand of my own, other players in the run: wait for their phone
+        planSeconds = 5, -- v2.1.4 (user: "plan 5 s, not 10"): the plan phase of a room: items + waiting for a phone
+        commitBySeconds = 10, -- ... and by this second I stand in a door's circle, whatever is still open
         slotStart = 1, -- squad turns for the shared items: member n from slotStart + (n - 1) x slotGap
-        slotGap = 1.2,
+        slotGap = 0.6, -- 9 accounts: every phone used by ~6 s
         potionReserve = 1, -- keep this many ghost potions ...
         reserveBreakRisk = 0.05, -- ... unless the door is this likely a ghost, or a hit would leave 1 heart or less
         redPotionMissing = 2, -- the red potion fills every missing heart: wait for 2 missing unless a hit is dangerous
@@ -10199,6 +10211,7 @@ __moduleSources["Game/Hauntlet"] = function(...)
         self.roomsOpened = 0
         self.revealedGhost = nil
         self._heartDumps, self._heartSign = 0, nil
+        self.lastPickSeq, self.lastPickAt = nil, nil
         self.usedItems = {}
         self.usedSeq = 0
         self.picked = nil
@@ -10629,6 +10642,8 @@ __moduleSources["Game/Hauntlet"] = function(...)
                 self._awaitPick = true
                 self.pickedAt = now
                 self.pickedSeq = self.room and self.room.seq
+                -- kept through started_room (which clears pickedAt): the room loop reads them after the next room began
+                self.lastPickSeq, self.lastPickAt = self.pickedSeq, now
                 if self.expectDoor then
                     self.myDoor, self.myDoorAt = self.expectDoor, now
                 end
@@ -10790,7 +10805,7 @@ __moduleSources["Game/Hauntlet"] = function(...)
     -- dumps what could show it (the Hauntlet UI in PlayerGui, the player's / character's attributes, Hauntlet modules),
     -- into the debug file only, so the heart reader can be written from a real run. Read-only.
     function Hauntlet.describeHeartUi()
-        local lines, budget = {}, 160
+        local lines, budget = {}, 260
         local function add(text)
             if budget > 0 then
                 budget -= 1
@@ -10817,10 +10832,24 @@ __moduleSources["Game/Hauntlet"] = function(...)
                 attrs("character", player.Character)
             end
             local gui = player:FindFirstChildOfClass("PlayerGui")
+            -- every screen first (log 2026-10-11: the journal used the whole budget, the heart display was not reached)
+            local screens = {}
+            for _, child in ipairs(gui and gui:GetChildren() or {}) do
+                local on = true
+                pcall(function()
+                    on = child.Enabled ~= false
+                end)
+                table.insert(screens, child.Name .. (on and "" or "(off)"))
+            end
+            table.sort(screens)
+            add("SCREENS " .. table.concat(screens, ", "))
             for _, node in ipairs(gui and gui:GetDescendants() or {}) do
                 local path = node:GetFullName()
                 local lower = string.lower(path)
-                if string.find(lower, "aunt") or string.find(lower, "heart") or string.find(lower, "health") then
+                local noise = string.find(lower, "journalapp", 1, true) or string.find(lower, "exitbutton", 1, true)
+                    or string.find(lower, "xboxbutton", 1, true)
+                if not noise and (string.find(lower, "aunt") or string.find(lower, "heart") or string.find(lower, "health")
+                    or string.find(lower, "minigame") or string.find(lower, "lives") or string.find(lower, "potion")) then
                     local extra = ""
                     pcall(function()
                         if node:IsA("GuiObject") then
@@ -11188,8 +11217,12 @@ __moduleSources["Game/Hauntlet"] = function(...)
                     score += 100 * (tonumber(info.value) or 1)
                     table.insert(parts, "entering costs a heart")
                 elseif info.effect == "player_lose_item" and ownedItems(inv) > 0 then
-                    score += 8
-                    table.insert(parts, "entering costs an item")
+                    -- log 2026-10-11: webbed doors took every potion one by one (no items left from room 24 to 42).
+                    -- Holding a heart item, a webbed door is worth it only when the other doors are clearly riskier.
+                    local precious = itemCount(inv, "red_potion") + itemCount(inv, "gold_potion")
+                        + itemCount(inv, "ghost_potion") + itemCount(inv, "rainbow_wand")
+                    score += precious > 0 and 18 or 8
+                    table.insert(parts, precious > 0 and "entering costs an item (maybe a heart item)" or "entering costs an item")
                 elseif info.effect == "player_bounce" then
                     score += 10
                     table.insert(parts, "bounces me to a random door")
@@ -12934,7 +12967,10 @@ __moduleSources["Game/EventTasks"] = function(...)
                                 -- must not wait for "still the same room": the pick counts if this room's doors opened
                                 -- v2.1.4: only MY pick in THIS room counts (debug log: the others opened the doors while I was
                                 -- still on the way, the bot took the next room's circles for this room's and lost the chain)
-                                local pickedHere = h.pickedSeq == room.seq and h.pickedAt ~= nil and h.pickedAt >= movedAt
+                                -- v2.1.4 fix (log 2026-10-11, rooms 31-37 went back into old rooms): started_room clears
+                                -- pickedAt, and alone the next room starts right on my pick, so this was false exactly
+                                -- when the pick worked: the room was never marked as passed and the chain was lost
+                                local pickedHere = h.lastPickSeq == room.seq and h.lastPickAt ~= nil and h.lastPickAt >= movedAt
                                 if pickedHere and used and not chainGroup then
                                     chainGroup = used -- room 1 (or a lost chain): the room I picked in is this room
                                 end
@@ -14003,9 +14039,54 @@ __moduleSources["Game/TaskManager"] = function(...)
         self:_start("recover", "recover: stuck, go home", Tasks.recover, nil)
         return true
     end
+    -- v2.1.4 (users: "stuck on a white screen, 10 minutes after joining"): the checks below stop at "game not ready"
+    -- and "Play menu open", so a white screen (no character / no place) was never recovered. This watch runs first:
+    -- 90 s without a character or a place -> respawn (TeamAPI/Spawn, the game's own spawn), again at 180 s, then a
+    -- rejoin after Farm.StuckRejoinSeconds when Farm.AutoRejoin is on. Every step is logged with what was missing.
+    function TaskManager:_whiteScreenCheck()
+        if self._state:get("session.disconnectReason") ~= nil
+            or (self._running and NEVER_INTERRUPT[self._running.key] and self._running.key ~= "recover") then
+            self._blankSince, self._blankStep = nil, nil
+            return false
+        end
+        local character = game:GetService("Players").LocalPlayer.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        local ready = self._state:get("game.ready") == true
+        local team = self._state:get("player.team")
+        local place = self._state:get("player.interior")
+        if root and place ~= nil and ready and team ~= "Choosing" then
+            self._blankSince, self._blankStep = nil, nil
+            return false
+        end
+        local now = Util.now()
+        self._blankSince = self._blankSince or now
+        local blank = now - self._blankSince
+        local what = string.format("ready %s, team %s, place %s, character %s", tostring(ready), tostring(team),
+            tostring(place), root and "yes" or "NO")
+        local step = self._blankStep or 0
+        if (step == 0 and blank > 90) or (step == 1 and blank > 180) then
+            self._blankStep = step + 1
+            self._logger:warn("Tasks", string.format("White screen? %d s without a usable character / place (%s): respawning"
+                .. " (try %d)", math.floor(blank), what, step + 1))
+            pcall(function()
+                self._interaction:send("Respawn")
+            end)
+            return false
+        end
+        local limit = math.max(120, tonumber(self._farmConfig.StuckRejoinSeconds) or 180)
+        if step >= 1 and blank > math.max(limit, 240) and self._farmConfig.AutoRejoin and not self._rejoinSent then
+            self._rejoinSent = true
+            self:_rejoin(string.format("white screen for %d s (%s)", math.floor(blank), what))
+            return true
+        end
+        return false
+    end
     function TaskManager:_tickInner()
         if self._stopped or not self._farmConfig.Enabled then
             self._why = self._stopped and "stopped" or "Farm.Enabled = false (watch only)"
+            return
+        end
+        if self:_whiteScreenCheck() then
             return
         end
         self:_expireDisabled()
@@ -15013,21 +15094,25 @@ __moduleSources["main"] = function(...)
             end
             if config.Farm.AutoAcceptMenu and playerGui then
                 local function watchMenu()
-                    for _ = 1, 180 do
+                    -- v2.1.4: watched the whole session (was: the first 3 minutes only). A slow load showed the menu
+                    -- later than that and the account sat on it; the menu can also come back after a respawn.
+                    local clicks = 0
+                    while clicks < 20 do
                         local button = config.Farm.AutoAcceptMenu and findPlayButton()
                         if button and menuOpen(button) then
                             task.wait(2)
+                            clicks += 1
                             if clickUntilClosed("Main menu (Play)", button, function()
                                 return menuOpen(button)
                             end) then
                                 handleLocationDialog()
                                 closePopups()
                             end
-                            return
+                            task.wait(5)
+                        else
+                            task.wait(2)
                         end
-                        task.wait(1)
                     end
-                    logger:debug("Game", "Main menu not seen within 3 minutes (already playing?)")
                 end
                 maid:Give(task.spawn(watchMenu))
             end
