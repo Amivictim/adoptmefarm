@@ -13222,7 +13222,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                                         base = Interaction_center(used) -- room 1: the start of the line
                                     end
                                     visited[used] = true -- a room I picked in: never again (no going back)
-                                    local key = Interaction.hauntletPosKey and Interaction.hauntletPosKey(used)
+                                    local key = ctx.interaction.hauntletPosKey and ctx.interaction.hauntletPosKey(used)
                                     if key then
                                         visitedPos[key] = room.seq
                                     end
