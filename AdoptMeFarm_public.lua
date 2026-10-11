@@ -3146,6 +3146,7 @@ __moduleSources["Services/Interface"] = function(...)
         "Hauntlet: squad play, potions before risky doors, no going back",
         "Hauntlet: ghost potions saved for the late rooms, 2-lock doors get both keys",
         "White screen: a stuck stream no longer freezes the Hauntlet task",
+        "Auto Potions: every age / bucks potion in your bag, says why it waits",
         "Mystery: tries every need until one is taken",
         "Stray Cat found at its new place; white screen recovery",
         "Support > Copy problem report",
@@ -14044,19 +14045,82 @@ __moduleSources["Game/EventTasks"] = function(...)
             return true
         end,
     }
-    function EventTasks.potionList(farm)
+    -- v2.1.5 (user: "auto potion never seems to work; every potion that speeds up the mega neon, bucks too"): the ids
+    -- in the player's own Food bag that are age / bonus-bucks potions are taken as well (event versions of the Age-Up
+    -- Potion carry other ids). Never a fly / ride potion: those match neither pattern.
+    function GameConstants.isFarmPotion(id)
+        id = tostring(id or "")
+        return (string.find(id, "age_potion", 1, true) ~= nil or string.find(id, "bonus_bucks_potion", 1, true) ~= nil)
+            and string.find(id, "fly", 1, true) == nil and string.find(id, "ride", 1, true) == nil
+    end
+    function EventTasks.potionList(farm, gameData)
         local settings = type(farm.AutoPotions) == "table" and farm.AutoPotions or {}
         local skip = {}
         for _, id in ipairs(type(settings.Skip) == "table" and settings.Skip or {}) do
             skip[id] = true
         end
-        local list = {}
-        for _, id in ipairs(type(settings.Potions) == "table" and settings.Potions or GameConstants.AgePotions) do
-            if not skip[id] then
+        local list, seen = {}, {}
+        for _, id in ipairs(type(settings.Potions) == "table" and settings.Potions or GameConstants.FarmPotions) do
+            if not skip[id] and not seen[id] then
+                seen[id] = true
                 table.insert(list, id)
             end
         end
-        return list
+        if gameData then
+            -- age potions first (they grow the pet), the bucks potion after them
+            local found = {}
+            for _, item in ipairs(gameData:findItems(GameConstants.ItemCategory, nil)) do
+                if GameConstants.isFarmPotion(item.id) and not skip[item.id] and not seen[item.id] then
+                    seen[item.id] = true
+                    table.insert(found, item.id)
+                end
+            end
+            table.sort(found, function(a, b)
+                local aAge, bAge = string.find(a, "age_potion", 1, true) ~= nil, string.find(b, "age_potion", 1, true) ~= nil
+                if aAge ~= bAge then
+                    return aAge
+                end
+                return a < b
+            end)
+            for _, id in ipairs(found) do
+                table.insert(list, id)
+            end
+        end
+        -- every age potion before any bucks potion (the growth is what makes the mega neon faster)
+        local ordered = {}
+        for pass = 1, 2 do
+            for _, id in ipairs(list) do
+                if (string.find(id, "age_potion", 1, true) ~= nil) == (pass == 1) then
+                    table.insert(ordered, id)
+                end
+            end
+        end
+        return ordered
+    end
+    -- what Auto Potions waits for, in words (written to the log when it changes: it was silent)
+    function EventTasks.potionWhy(gameData, farm)
+        local settings = type(farm.AutoPotions) == "table" and farm.AutoPotions or {}
+        if not settings.Enabled then
+            return "off (Farm.AutoPotions.Enabled)"
+        end
+        local potions = {}
+        for _, item in ipairs(gameData:findItems(GameConstants.ItemCategory, nil)) do
+            if string.find(tostring(item.id), "potion", 1, true) then
+                potions[item.id] = (potions[item.id] or 0) + 1
+            end
+        end
+        local bag = {}
+        for id, count in pairs(potions) do
+            table.insert(bag, id .. " x" .. count)
+        end
+        table.sort(bag)
+        local usable = gameData:findItems(GameConstants.ItemCategory, EventTasks.potionList(farm, gameData))[1]
+        local target = EventTasks.potionTarget(gameData, farm)
+        local why = (not usable and "no usable potion in the Food bag")
+            or (not target and "no equipped pet that still grows" .. (GameConstants.focusKind(farm)
+                and (" of the focus kind " .. tostring(GameConstants.focusKind(farm))) or ""))
+            or "ready"
+        return string.format("%s | potions in the bag: %s", why, #bag > 0 and table.concat(bag, ", ") or "none")
     end
     function EventTasks.potionTarget(gameData, farm)
         local settings = type(farm.AutoPotions) == "table" and farm.AutoPotions or {}
@@ -14081,7 +14145,7 @@ __moduleSources["Game/EventTasks"] = function(...)
         timeoutSeconds = 40,
         run = function(ctx)
             local petUnique = EventTasks.potionTarget(ctx.gameData, ctx.farmConfig)
-            local potions = EventTasks.potionList(ctx.farmConfig)
+            local potions = EventTasks.potionList(ctx.farmConfig, ctx.gameData)
             local item = #potions > 0 and ctx.gameData:findItems(GameConstants.ItemCategory, potions)[1] or nil
             if not petUnique or not item then
                 return true
@@ -15224,9 +15288,17 @@ __moduleSources["Game/TaskManager"] = function(...)
                 return not self:_isBlocked(key) and nowExtra >= (self._nextEventAt[key] or 0)
             end
             local potions = self._farmConfig.AutoPotions
+            if type(potions) == "table" and potions.Enabled and nowExtra - (self._potionWhyAt or -1e9) >= 60 then
+                self._potionWhyAt = nowExtra
+                local okWhy, why = pcall(EventTasks.potionWhy, data, self._farmConfig)
+                if okWhy and why ~= self._potionWhy then
+                    self._potionWhy = why
+                    self._logger:info("Tasks", "Auto Potions: " .. why)
+                end
+            end
             if type(potions) == "table" and potions.Enabled and dueExtra("age_potion")
                 and EventTasks.potionTarget(data, self._farmConfig)
-                and data:findItems(GameConstants.ItemCategory, EventTasks.potionList(self._farmConfig))[1] then
+                and data:findItems(GameConstants.ItemCategory, EventTasks.potionList(self._farmConfig, data))[1] then
                 return "age_potion", "age potion", EventTasks.agePotion, nil
             end
             local open = self._farmConfig.AutoOpen
