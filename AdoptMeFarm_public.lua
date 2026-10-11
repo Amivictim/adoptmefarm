@@ -7749,6 +7749,15 @@ __moduleSources["Game/Interaction"] = function(...)
         return point and point:IsA("Attachment") and point.WorldPosition or nil
     end
     Interaction.hauntletAttachmentPoint = attachmentPoint
+    Interaction.hauntletPosKey = function(node)
+        local ok, center = pcall(function()
+            return hauntletCenter(node)
+        end)
+        if not ok or not center then
+            return nil
+        end
+        return string.format("%d:%d:%d", math.floor(center.X / 6 + 0.5), math.floor(center.Y / 6 + 0.5), math.floor(center.Z / 6 + 0.5))
+    end
     Interaction.hauntletCenter = function(node)
         return hauntletCenter(node)
     end
@@ -7942,6 +7951,16 @@ __moduleSources["Game/Interaction"] = function(...)
                 player:RequestStreamAroundAsync(root.Position, 2)
             end)
             task.wait(options.base and 0.4 or 1) -- the next room loads in 1-2 s: look again soon
+        end
+        -- v2.1.4 BUG B: never into the circles of a room already picked in (same object or same place)
+        if part and circles then
+            local key = Interaction.hauntletPosKey(circles)
+            local seenAt = (options.visited and options.visited[circles]) and "this group"
+                or (key and options.visitedPos and options.visitedPos[key] and ("room " .. tostring(options.visitedPos[key])))
+            if seenAt then
+                return false, string.format("backtrack blocked roomSeq=%s (door %d: the circles of %s, already passed)",
+                    tostring(options.roomSeq), doorIndex, seenAt)
+            end
         end
         if not part then
             -- v2.1.3: say why (hauntletCircles' reason comes back in the distance slot when no group was found)
@@ -12490,8 +12509,10 @@ __moduleSources["Game/EventTasks"] = function(...)
                         EventTasks.skelicornNote("shop: not for sale until this account's lever is in the machine")
                         return true
                     end
-                    return false, string.format("no Skelicorn arrived (price %d, candy %d, answer %s %s)", price, candyBefore,
-                        tostring(sent), Util.truncate(tostring(answer), 60))
+                    -- (skelicorn.log: "no answer from server" twice = 2 failures toward the 15 min pause of this task)
+                    EventTasks.skelicornNote(string.format("buy: no Skelicorn (answer %s %s): again in 2 min", tostring(sent),
+                        Util.truncate(tostring(answer), 60)))
+                    return true
                 end
                 state.bought = true
                 state.delivered = true -- it sells: whatever the lever manager says, the machine is open for me
@@ -12869,6 +12890,9 @@ __moduleSources["Game/EventTasks"] = function(...)
             local picks, itemsUsed, lastSeq, lastCircles = 0, 0, 0, nil
             local lastLink = nil -- { from = the circle group I last picked in, exit = its exit's name }
             local visited = {} -- circle groups of the rooms I already picked in (the bot only ever goes forward)
+            -- v2.1.4 BUG B: + where they are (a room's circles can be rebuilt as a new object at the same place)
+            local visitedPos = {}
+            local moveLockUntil = 0 -- after an electric door's pick: no move while its effect plays
             local base = nil -- the start of the line of rooms (room 1, then each nexus)
             local passed = {} -- circle groups of the rooms before the last nexus (never again)
             local behind = nil -- { base = the previous start, limit = the nexus' distance from it }: closer = behind me
@@ -12944,7 +12968,11 @@ __moduleSources["Game/EventTasks"] = function(...)
                         end
                     end
                 end
+                local chainBroken = false
                 local function ensureGroup()
+                    if chainBroken then
+                        return nil -- the chain pointed back into a passed room: the forward search decides
+                    end
                     if chainGroup and chainGroup.Parent then
                         return chainGroup
                     end
@@ -12962,22 +12990,8 @@ __moduleSources["Game/EventTasks"] = function(...)
                 ctx.waitUntil(function() -- the next room streams in within 1-2 s
                     return over() or h.room ~= room or ensureGroup() ~= nil or prevGroup == nil
                 end, 3)
-                do -- v2.1.4: my items as the game's hotbar shows them (webbed doors took potions the bot still counted)
-                    local bar = Hauntlet.readHotbar()
-                    if bar and h.room == room then
-                        local changed = {}
-                        for item, n in pairs(bar) do
-                            if (h.inventory[item] or 0) ~= n then
-                                table.insert(changed, string.format("%s %d -> %d", item, h.inventory[item] or 0, n))
-                                h.inventory[item] = n
-                            end
-                        end
-                        if #changed > 0 then
-                            table.sort(changed)
-                            say("Items from the game's hotbar: " .. table.concat(changed, ", "))
-                        end
-                    end
-                end
+                -- (v2.1.4 hotbar item sync removed: debug log 2026-10-11, the hotbar counts were stale -> the bot tried items
+                -- it did not have, every one was refused and the plan time was gone)
                 -- one fixed tie-break per room: equal doors no longer swap places between two looks (room 11 of the
                 -- debug log: picked door 3, then "door 1", moved into the next room's circle)
                 strategy = setmetatable({ tie = { math.random(), math.random(), math.random(), math.random() } },
@@ -13150,6 +13164,16 @@ __moduleSources["Game/EventTasks"] = function(...)
                                     or h.myDoor ~= door or room.lockVersion ~= locksNow
                             end, 2)
                         else
+                            if h.lastOpened and h.lastOpened.seq == room.seq then
+                                -- this room's doors already opened: the next started_room is on its way, no move back
+                                ctx.waitUntil(function()
+                                    return over() or h.room ~= room
+                                end, 3)
+                                break
+                            end
+                            if Util.now() < moveLockUntil then
+                                task.wait(moveLockUntil - Util.now())
+                            end
                             say(string.format("Entering selected door %d at %.1f s", door, h:roomElapsed()))
                             digest.door, digest.doorAt = door, h:roomElapsed()
                             local movedAt = Util.now()
@@ -13158,7 +13182,11 @@ __moduleSources["Game/EventTasks"] = function(...)
                                 h.join and h.join.interior, door, { avoid = avoid, bad = bad, method = moveMethod,
                                     nexus = room.kind == "nexus" or room.kind == "final_nexus", link = lastLink,
                                     visited = visited, base = base, passed = passed, behind = behind, seconds = moveSeconds,
-                                    group = ensureGroup() })
+                                    group = ensureGroup(), visitedPos = visitedPos, roomSeq = room.seq })
+                            if not moved and type(how) == "string" and string.find(how, "backtrack blocked", 1, true) then
+                                say(how)
+                                chainGroup, chainBroken = nil, true -- a wrong chain: look for the room forward next time
+                            end
                             if moved then
                                 circles = used
                                 picks += 1
@@ -13194,6 +13222,13 @@ __moduleSources["Game/EventTasks"] = function(...)
                                         base = Interaction_center(used) -- room 1: the start of the line
                                     end
                                     visited[used] = true -- a room I picked in: never again (no going back)
+                                    local key = Interaction.hauntletPosKey and Interaction.hauntletPosKey(used)
+                                    if key then
+                                        visitedPos[key] = room.seq
+                                    end
+                                    if room.doors[door] and room.doors[door].kind == "electric" then
+                                        moveLockUntil = Util.now() + 0.8
+                                    end
                                     local pickedDoor = (h.room == room and h.myDoor)
                                         or (h.lastOpened and h.lastOpened.seq == room.seq and h.lastOpened.myDoor) or door
                                     lastLink = { from = used, exit = (room.kind == "nexus" or room.kind == "final_nexus")
@@ -14311,6 +14346,12 @@ __moduleSources["Game/TaskManager"] = function(...)
                 self._logger:info("Hauntlet", "Priority interrupt: stopping " .. self._running.label .. " for the Hauntlet run")
                 self:_finish("INTERRUPTED", "Hauntlet run")
                 self:_finish("INTERRUPTED", "Hauntlet run", "_side")
+                self._petHoldUntil = Util.now() + 10
+                -- the run takes the free slot in this same tick (no "equip pet" in between)
+                local key, label, taskDef, group = self:_selectEventJob()
+                if key == "hauntlet" then
+                    self:_start(key, label, taskDef, group, true)
+                end
             elseif not NEVER_INTERRUPT[self._running.key] and self:_ghostRoundDue(GHOST_INTERRUPT_SECONDS)
                 and not (self:_hauntletFirst() and self:_hauntletRoundDue(GHOST_INTERRUPT_SECONDS + GHOST_ROUND_BUSY_SECONDS)) then
                 self._logger:info("Ghost", "Priority interrupt: stopping " .. self._running.label .. " for the Ghost Gallery round")
@@ -14377,7 +14418,18 @@ __moduleSources["Game/TaskManager"] = function(...)
             self:_start("recover", "recover: go home", Tasks.recover, nil)
             return
         end
-        if self._gameData and self._farmConfig.KeepPetEquipped then
+        -- v2.1.4 BUG A (user log: "Priority interrupt: stopping equip pet for the Hauntlet run" every ~0.5 s, the run
+        -- never started): the pet upkeep below ran before the event jobs, started "equip pet" again, the next tick
+        -- interrupted it again. Hauntlet due / pending -> it starts in THIS tick, nothing else is queued before it.
+        if self:_hauntletFirst() and (self:_hauntletRoundDue(HAUNTLET_INTERRUPT_SECONDS) or self:_hauntletPending()) then
+            local key, label, taskDef, group = self:_selectEventJob()
+            if key == "hauntlet" then
+                self:_start(key, label, taskDef, group, true)
+                return
+            end
+        end
+        local petHold = Util.now() < (self._petHoldUntil or 0) -- 10 s after a Hauntlet interrupt: no equip in between
+        if self._gameData and self._farmConfig.KeepPetEquipped and not petHold then
             local current = self._gameData:firstEquippedPet()
             local count, known = self._gameData:equippedPetCount()
             local skipGrown = self._farmConfig.SkipFullGrown
@@ -14574,6 +14626,13 @@ __moduleSources["Game/TaskManager"] = function(...)
         end
         return nil
     end
+    -- a join the game already accepted (the run is about to begin): nothing else may take the slot
+    function TaskManager:_hauntletPending()
+        local h = self._hauntlet
+        local event = self._farmConfig.Event
+        return type(event) == "table" and event.Hauntlet == true and h ~= nil and h.join ~= nil and not h.leave
+            and not h.kicked and Util.now() - (h.join.at or 0) < 90
+    end
     function TaskManager:_hauntletFirst()
         local event = self._farmConfig.Event
         return type(event) == "table" and event.Enabled == true and event.Hauntlet == true and event.HauntletFirst ~= false
@@ -14629,6 +14688,14 @@ __moduleSources["Game/TaskManager"] = function(...)
         local character = game:GetService("Players").LocalPlayer.Character
         if team ~= "Parents" and team ~= GameConstants.BabiesTeam or not (character and character:FindFirstChild("HumanoidRootPart")) then
             return nil
+        end
+        -- v2.1.4 BUG A: the quick jobs below (age potion, gift, neon fusion) came first and took the slot the Hauntlet
+        -- interrupt had just freed -> interrupt -> again. With HauntletFirst a due / pending run is picked first.
+        if self:_hauntletFirst() and self._hauntlet and self._hauntlet.available and not self:_isBlocked("hauntlet") then
+            local start = self:_hauntletRoundDue(HAUNTLET_LEAD_SECONDS)
+            if start or self:_hauntletPending() then
+                return "hauntlet", "Hauntlet run", EventTasks.hauntlet, start and { start = start } or nil
+            end
         end
         if self._penWanted then
             if data:get(GameConstants.DataKeys.PetPen) == nil then
