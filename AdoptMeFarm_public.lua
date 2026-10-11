@@ -434,8 +434,9 @@ __moduleSources["Core/Config"] = function(...)
             MaxBuysPerSession = 0,
             AutoPotions = {
                 Enabled = false,
-                Potions = { "pet_age_potion", "tiny_pet_age_potion", "pet_bonus_aging_potion", "pet_bonus_bucks_potion" },
-                BuffMinutes = 10, -- Bonus Aging / Bonus Bucks potions are timed buffs: one of each kind per this many minutes
+                Potions = { "pet_age_potion", "tiny_pet_age_potion", "pet_bonus_aging_potion", "pet_bonus_bucks_potion",
+        "pet_random_ailment_potion" },
+                BuffMinutes = 15, -- Bonus Aging / Bonus Bucks last 15 min (user 2026-10-11): one of each kind per 15 min
                 Skip = {},
                 PetKinds = {},
             },
@@ -3130,7 +3131,8 @@ __moduleSources["Services/Interface"] = function(...)
         { "sick", "Sick" }, { "camping", "Camping" }, { "beach_party", "Beach party" }, { "bored", "Bored" },
     }
     Interface.POTION_NAMES = { pet_age_potion = "Age-Up Potion", tiny_pet_age_potion = "Tiny Age-Up Potion",
-        pet_bonus_aging_potion = "Bonus Aging Potion", pet_bonus_bucks_potion = "Bonus Bucks Potion" }
+        pet_bonus_aging_potion = "Bonus Aging Potion", pet_bonus_bucks_potion = "Bonus Bucks Potion",
+        pet_random_ailment_potion = "Busy Body Potion" }
     Interface.CRYPT_NAMES = { { "ladder", "Next floor (Mummy Spider)" }, { "lever", "Lightning Lever (Skelicorn)" }, { "twig", "Twig" },
         { "candy_corn_pile_ginormous", "Mega candy pile (3000)" }, { "candy_corn_pile_big", "Big candy pile (2000)" },
         { "candy_corn_pile_small", "Small candy pile (1000)" } }
@@ -3147,7 +3149,7 @@ __moduleSources["Services/Interface"] = function(...)
         "Hauntlet: squad play, potions before risky doors, no going back",
         "Hauntlet: ghost potions saved for the late rooms, 2-lock doors get both keys",
         "White screen: a stuck stream no longer freezes the Hauntlet task",
-        "Auto Potions: Age-Up, Bonus Aging (1.2x) and Bonus Bucks potions, says why it waits",
+        "Auto Potions: every Age-Up (Tiny too), Bonus Aging 1.2x / 15 min, Bonus Bucks, Busy Body",
         "Mystery: tries every need until one is taken",
         "Stray Cat found at its new place; white screen recovery",
         "Support > Copy problem report",
@@ -6369,7 +6371,8 @@ __moduleSources["Game/GameConstants"] = function(...)
         -- NOT fired in that install, so it is not recorded and never sent.
         SkelicornArgs = { deliver = {} },
     }
-    GameConstants.FarmPotions = { "pet_age_potion", "tiny_pet_age_potion", "pet_bonus_aging_potion", "pet_bonus_bucks_potion" }
+    GameConstants.FarmPotions = { "pet_age_potion", "tiny_pet_age_potion", "pet_bonus_aging_potion", "pet_bonus_bucks_potion",
+        "pet_random_ailment_potion" }
     function GameConstants.needOn(farm, kind)
         if type(farm) ~= "table" then
             return false
@@ -14049,13 +14052,19 @@ __moduleSources["Game/EventTasks"] = function(...)
     -- v2.1.5 (user: "auto potion never seems to work; every potion that speeds up the mega neon, bucks too"): the ids
     -- in the player's own Food bag that are age / bonus-bucks potions are taken as well (event versions of the Age-Up
     -- Potion carry other ids). Never a fly / ride potion: those match neither pattern.
+    function GameConstants.isAgeUpPotion(id) -- every Age-Up form: normal, Tiny, event versions
+        id = string.lower(tostring(id or ""))
+        return string.find(id, "potion", 1, true) ~= nil and (string.find(id, "^age_potion") ~= nil
+            or string.find(id, "_age_potion", 1, true) ~= nil or string.find(id, "age_up", 1, true) ~= nil
+            or string.find(id, "ageup", 1, true) ~= nil)
+    end
     function GameConstants.isFarmPotion(id)
         id = tostring(id or "")
-        return (string.find(id, "age_potion", 1, true) ~= nil or string.find(id, "aging_potion", 1, true) ~= nil
-            or string.find(id, "bonus_bucks_potion", 1, true) ~= nil)
+        return (GameConstants.isAgeUpPotion(id) or string.find(id, "aging_potion", 1, true) ~= nil
+            or string.find(id, "bonus_bucks_potion", 1, true) ~= nil or id == "pet_random_ailment_potion")
             and string.find(id, "fly", 1, true) == nil and string.find(id, "ride", 1, true) == nil
     end
-    function EventTasks.potionList(farm, gameData)
+    function EventTasks.potionList(farm, gameData, petIdle)
         local settings = type(farm.AutoPotions) == "table" and farm.AutoPotions or {}
         local skip = {}
         for _, id in ipairs(type(settings.Skip) == "table" and settings.Skip or {}) do
@@ -14078,7 +14087,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                 end
             end
             table.sort(found, function(a, b)
-                local aAge, bAge = string.find(a, "age_potion", 1, true) ~= nil, string.find(b, "age_potion", 1, true) ~= nil
+                local aAge, bAge = GameConstants.isAgeUpPotion(a), GameConstants.isAgeUpPotion(b)
                 if aAge ~= bAge then
                     return aAge
                 end
@@ -14090,14 +14099,15 @@ __moduleSources["Game/EventTasks"] = function(...)
         end
         -- Age-Up potions first (instant growth), then the Bonus Aging buff (pet ages 1.2x for a while), the Bonus
         -- Bucks buff last. A timed buff waits BuffMinutes after its last use (no stacking the same buff away).
-        local function class(id)
-            return string.find(id, "age_potion", 1, true) and 1 or (string.find(id, "aging_potion", 1, true) and 2 or 3)
-        end
-        local buffWait = math.max(0, tonumber(settings.BuffMinutes) or 10) * 60
+        -- class 4: pet_random_ailment_potion (Busy Body: a new need at once = more XP), only while the pet has no need
+        local class = EventTasks.potionClass
+        local buffWait = math.max(0, tonumber(settings.BuffMinutes) or 15) * 60
         local ordered = {}
-        for pass = 1, 3 do
+        for pass = 1, 4 do
             for _, id in ipairs(list) do
-                if class(id) == pass and (pass == 1 or Util.now() - (EventTasks._buffUsedAt[pass] or -1e9) >= buffWait) then
+                local ok = pass == 1 or (pass == 4 and petIdle == true)
+                    or ((pass == 2 or pass == 3) and Util.now() - (EventTasks._buffUsedAt[pass] or -1e9) >= buffWait)
+                if class(id) == pass and ok then
                     table.insert(ordered, id)
                 end
             end
@@ -14107,7 +14117,22 @@ __moduleSources["Game/EventTasks"] = function(...)
     EventTasks._buffUsedAt = {}
     function EventTasks.potionClass(id)
         id = tostring(id)
-        return string.find(id, "age_potion", 1, true) and 1 or (string.find(id, "aging_potion", 1, true) and 2 or 3)
+        if id == "pet_random_ailment_potion" then
+            return 4
+        end
+        return GameConstants.isAgeUpPotion(id) and 1 or (string.find(id, "aging_potion", 1, true) and 2 or 3)
+    end
+    -- the pet has no need right now (the ailment list knows it): a Busy Body potion gives it one to do
+    function EventTasks.petIdle(state, petUnique)
+        if not (state and petUnique) or state:get("ailments.known") ~= true then
+            return false
+        end
+        for _, entry in ipairs(state:get("ailments.active") or {}) do
+            if type(entry) == "table" and tostring(entry.petUnique) == tostring(petUnique) then
+                return false
+            end
+        end
+        return true
     end
     -- what Auto Potions waits for, in words (written to the log when it changes: it was silent)
     function EventTasks.potionWhy(gameData, farm)
@@ -14161,7 +14186,7 @@ __moduleSources["Game/EventTasks"] = function(...)
         timeoutSeconds = 40,
         run = function(ctx)
             local petUnique = EventTasks.potionTarget(ctx.gameData, ctx.farmConfig)
-            local potions = EventTasks.potionList(ctx.farmConfig, ctx.gameData)
+            local potions = EventTasks.potionList(ctx.farmConfig, ctx.gameData, EventTasks.petIdle(ctx.state, petUnique))
             local item = #potions > 0 and ctx.gameData:findItems(GameConstants.ItemCategory, potions)[1] or nil
             if not petUnique or not item then
                 return true
@@ -14176,7 +14201,10 @@ __moduleSources["Game/EventTasks"] = function(...)
                 return false, why
             end
             local class = EventTasks.potionClass(item.id)
-            if class > 1 then
+            if class == 4 then
+                ctx.logger:success("Event", "Busy Body potion on " .. kind .. ": a new need to farm")
+                return true
+            elseif class > 1 then
                 EventTasks._buffUsedAt[class] = Util.now()
             else
                 ctx.waitUntil(function()
@@ -15317,9 +15345,9 @@ __moduleSources["Game/TaskManager"] = function(...)
                     self._logger:info("Tasks", "Auto Potions: " .. why)
                 end
             end
-            if type(potions) == "table" and potions.Enabled and dueExtra("age_potion")
-                and EventTasks.potionTarget(data, self._farmConfig)
-                and data:findItems(GameConstants.ItemCategory, EventTasks.potionList(self._farmConfig, data))[1] then
+            local potionPet = type(potions) == "table" and potions.Enabled and EventTasks.potionTarget(data, self._farmConfig)
+            if potionPet and dueExtra("age_potion") and data:findItems(GameConstants.ItemCategory,
+                EventTasks.potionList(self._farmConfig, data, EventTasks.petIdle(self._state, potionPet)))[1] then
                 return "age_potion", "age potion", EventTasks.agePotion, nil
             end
             local open = self._farmConfig.AutoOpen
