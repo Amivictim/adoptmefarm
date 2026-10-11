@@ -11744,6 +11744,27 @@ __moduleSources["Game/EventTasks"] = function(...)
     function EventTasks.reachableTwigGrave(crypt)
         return EventTasks.reachableGrave(crypt, "twig")
     end
+    -- user 2026-10-11: "the lever comes from a Crypt grave". Its reward may be the item id or a table naming it: any
+    -- text in it with "lever" / "lightning" counts (the exact id first)
+    function EventTasks.isLeverReward(rewardHere)
+        if rewardHere == E.LightningLever then
+            return true
+        end
+        local parts = {}
+        local function collect(v, depth)
+            if type(v) == "table" and depth < 3 then
+                for k, x in pairs(v) do
+                    table.insert(parts, tostring(k))
+                    collect(x, depth + 1)
+                end
+            elseif v ~= nil then
+                table.insert(parts, tostring(v))
+            end
+        end
+        collect(rewardHere, 0)
+        local text = string.lower(table.concat(parts, " "))
+        return string.find(text, "lever", 1, true) ~= nil or string.find(text, "lightning", 1, true) ~= nil
+    end
     function EventTasks.reachableGrave(crypt, reward)
         if type(crypt) ~= "table" or type(crypt.floors) ~= "table" then
             return nil
@@ -11766,8 +11787,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                     local rewardHere = lookup(graves, index)
                     local isOpen = opened[floor * E.OpenedIdPerFloor + index] == true
                     local wanted = rewardHere == reward or (reward == "twig" and rewardHere == E.Twig)
-                        or (reward == "lever" and type(rewardHere) == "string" and (string.find(string.lower(rewardHere), "lever", 1, true)
-                            or string.find(string.lower(rewardHere), "lightning", 1, true)) ~= nil)
+                        or (reward == "lever" and EventTasks.isLeverReward(rewardHere))
                     if wanted and rewardHere ~= E.Ladder then
                         if not isOpen then
                             return { floor = floor, grave = index, reward = reward }
@@ -12347,6 +12367,14 @@ __moduleSources["Game/EventTasks"] = function(...)
             if EventTasks.findLever(gameData) then
                 return "install"
             end
+            -- skelicorn.log 2026-10-11: 3.3M candy, 0 Rusty Keys, no lever -> "crypt" forever and nothing bought. The
+            -- shop may sell it without this account's own lever: try the buy (the Candy Shop's own call; refused = no
+            -- cost), and only after a refusal go for the lever (a new try every 30 min)
+            local candyNow = tonumber(gameData:get(KEYS.Candy)) or 0
+            -- user: "no point waiting 30 min": a new try at every Skelicorn check (120 s), the Crypt runs in between
+            if candyNow >= EventTasks.skelicornPrice() and Util.now() - (state.buyRefusedAt or -1e9) > 110 then
+                return "buy"
+            end
             return "crypt"
         end
         if not activated and type(E.SkelicornArgs) == "table" and type(E.SkelicornArgs.activate) == "table" then
@@ -12436,10 +12464,12 @@ __moduleSources["Game/EventTasks"] = function(...)
                     return false
                 end, 8)
                 if not got then
-                    return false, string.format("no Skelicorn arrived (price %d, candy %d, answer %s %s)", price, candyBefore,
-                        tostring(sent), Util.truncate(tostring(answer), 60))
+                    state.buyRefusedAt = Util.now() -- maybe the lever is needed first: the Crypt for it, a new try in 2 min
+                    return false, string.format("no Skelicorn arrived (price %d, candy %d, answer %s %s): the lever is"
+                        .. " probably needed first", price, candyBefore, tostring(sent), Util.truncate(tostring(answer), 60))
                 end
                 state.bought = true
+                state.delivered = true -- it sells: whatever the lever manager says, the machine is open for me
                 local focused = GameConstants.focusKind(ctx.farmConfig) == E.Skelicorn
                 ctx.logger:success("Skelicorn", string.format("Skelicorn bought for %d candy: %s",
                     candyBefore - (tonumber(ctx.gameData:get(KEYS.Candy)) or candyBefore),
