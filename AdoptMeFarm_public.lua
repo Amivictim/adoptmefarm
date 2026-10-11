@@ -3145,6 +3145,7 @@ __moduleSources["Services/Interface"] = function(...)
         "Mega Skelicorn farms candy at full speed (biggest Crypt piles first)",
         "Hauntlet: squad play, potions before risky doors, no going back",
         "Hauntlet: ghost potions saved for the late rooms, 2-lock doors get both keys",
+        "White screen: a stuck stream no longer freezes the Hauntlet task",
         "Mystery: tries every need until one is taken",
         "Stray Cat found at its new place; white screen recovery",
         "Support > Copy problem report",
@@ -7455,9 +7456,19 @@ __moduleSources["Game/Interaction"] = function(...)
             canCheck = ok
             return y
         end
-        local streamed = pcall(function()
-            player:RequestStreamAroundAsync(Vector3.new(spot.x, spot.y, spot.z), 15)
+        -- v2.1.5: at most 3 s for the stream (a stuck stream = white screen never answered and held the task)
+        local streamDone = false
+        local streamed = true
+        task.spawn(function()
+            streamed = pcall(function()
+                player:RequestStreamAroundAsync(Vector3.new(spot.x, spot.y, spot.z), 15)
+            end)
+            streamDone = true
         end)
+        local streamUntil = os.clock() + 3
+        while not streamDone and os.clock() < streamUntil do
+            task.wait(0.1)
+        end
         self._logger:debug("Action", "Stream around " .. spotName .. ": " .. (streamed and "requested" or "not available"))
         local ground = groundY()
         for attempt = 1, 3 do
@@ -7983,7 +7994,9 @@ __moduleSources["Game/Interaction"] = function(...)
                     break
                 end
             end
-            pcall(function()
+            -- v2.1.5 (user report "white screen", 2026-10-11): with streaming stuck this call never returned and the
+            -- Hauntlet task hung in room 1 for 15+ minutes: never waited for any more
+            task.spawn(pcall, function()
                 player:RequestStreamAroundAsync(root.Position, 2)
             end)
             task.wait(options.base and 0.4 or 1) -- the next room loads in 1-2 s: look again soon
@@ -10342,7 +10355,7 @@ __moduleSources["Game/Hauntlet"] = function(...)
         self.inventory = {}
         self.health, self.maxHealth, self.tempHealth = nil, nil, 0
         self.ghostShield = false
-        self.kicked = nil
+        self.kicked, self.kickedAt = nil, nil
         self.leave = nil
         self.counters = { 0, 0, 0, 0 }
         self.myDoor, self.myDoorAt = nil, nil
@@ -10834,6 +10847,7 @@ __moduleSources["Game/Hauntlet"] = function(...)
             end
         elseif message == "kicked_from_game" then
             self.kicked = tostring(a)
+            self.kickedAt = now
             if self._userId and self.runners[self._userId] then
                 self.runners[self._userId].health = 0
             end
@@ -14823,8 +14837,17 @@ __moduleSources["Game/TaskManager"] = function(...)
             return
         end
         if self._running then
+            local hRun = self._hauntlet
+            local runEndedAt = hRun and ((hRun.leave and hRun.leave.at) or hRun.kickedAt)
             if Util.now() > self._running.deadline then
                 self:_finish("TIMEOUT", "no result within " .. math.floor(self._running.deadline - self._running.startedAt) .. " s")
+            elseif self._running.key == "hauntlet" and runEndedAt and runEndedAt >= self._running.startedAt
+                and Util.now() - runEndedAt > 90 then
+                -- v2.1.5 (user report: run over in room 1, then "task: hauntlet" for 15+ min on a white screen): the
+                -- run is over but the task never came back: end it and let the farm (and the white screen check) go on
+                self._logger:warn("Hauntlet", "The run ended " .. math.floor(Util.now() - runEndedAt)
+                    .. " s ago but the run task is stuck: stopping it")
+                self:_finish("TIMEOUT", "stuck after the run ended")
             elseif not NEVER_INTERRUPT[self._running.key] and self:_hauntletFirst()
                 and self:_hauntletRoundDue(HAUNTLET_INTERRUPT_SECONDS) then
                 self._logger:info("Hauntlet", "Priority interrupt: stopping " .. self._running.label .. " for the Hauntlet run")
