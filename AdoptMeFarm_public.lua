@@ -12443,6 +12443,28 @@ __moduleSources["Game/EventTasks"] = function(...)
         return price
     end
     -- the next step, or nil (nothing to do now). "crypt" = find the lever in the Crypt first.
+    -- user 2026-10-11: "the preset buys 5 Skelicorns, 7 when the account walks 2 pets or has the Pet Pen pass: the
+    -- fastest way to a mega neon". How many copies grow at once = my pet slots + the Pet Pen's slots. The pen's size is
+    -- read from its data when a field tells it (slots / capacity / max), else Farm.Event.PetPenSlots (4).
+    function EventTasks.copiesWanted(gameData, farm)
+        local event = type(farm) == "table" and type(farm.Event) == "table" and farm.Event or {}
+        local penSlots = tonumber(event.PetPenSlots) or E.PetPenSlots or 4
+        local pen = gameData:get(KEYS.PetPen)
+        if type(pen) == "table" then
+            for key, value in pairs(pen) do
+                local name = string.lower(tostring(key))
+                if type(value) == "number" and value >= 1 and value <= 12 and (string.find(name, "slot", 1, true)
+                    or string.find(name, "capacity", 1, true) or string.find(name, "max_pets", 1, true)) then
+                    penSlots = math.max(penSlots, value)
+                end
+            end
+        end
+        local walking = 1
+        pcall(function()
+            walking = math.max(1, #gameData:equippedPetList())
+        end)
+        return penSlots + walking
+    end
     -- on with the toggle, or with "Mega Skelicorn" / Mega a Pet = Skelicorn
     function EventTasks.skelicornOn(farm)
         local focus = GameConstants.focusOf(farm)
@@ -12454,8 +12476,7 @@ __moduleSources["Game/EventTasks"] = function(...)
         local focus = GameConstants.focusOf(farm)
         if focus and focus.kind == "skelicorn" then
             -- Mega Skelicorn: keep buying while fewer than Pet Pen slots + 1 Skelicorns still grow
-            local event = type(farm.Event) == "table" and farm.Event or {}
-            local wanted = (tonumber(event.PetPenSlots) or E.PetPenSlots or 4) + 1
+            local wanted = EventTasks.copiesWanted(gameData, farm)
             local growing = gameData:growingCopies(E.Skelicorn)
             if growing >= wanted then
                 return nil, string.format("%d Skelicorns still grow (%d wanted): idle", growing, wanted)
@@ -12542,12 +12563,31 @@ __moduleSources["Game/EventTasks"] = function(...)
             end)
             return found
         end
+        -- user 2026-10-11: "the others could not pull, the pop-ups on the screen". Only while the Use button is
+        -- pressed every other game screen is switched off (put back right after), so nothing covers the button
+        local hidden = {}
+        pcall(function()
+            for _, screen in ipairs(gui and gui:GetChildren() or {}) do
+                if screen:IsA("ScreenGui") and screen.Enabled and screen.Name ~= "InteractionsApp" then
+                    screen.Enabled = false
+                    table.insert(hidden, screen)
+                end
+            end
+        end)
+        local function restore()
+            for _, screen in ipairs(hidden) do
+                pcall(function()
+                    screen.Enabled = true
+                end)
+            end
+        end
         local button
         ctx.waitUntil(function()
             button = findButton()
             return button ~= nil
         end, 4)
         if not button then
+            restore()
             return "no Use button on screen"
         end
         local path = button:GetFullName()
@@ -12558,9 +12598,11 @@ __moduleSources["Game/EventTasks"] = function(...)
             if ran and ctx.waitUntil(function()
                 return button.Parent == nil or findButton() ~= button
             end, 2) then
+                restore()
                 return "pressed (" .. method .. ", " .. path .. ")"
             end
         end
+        restore()
         return "clicked, the button stayed (" .. path .. ")"
     end
     function EventTasks.findLeverMachine()
@@ -12659,7 +12701,7 @@ __moduleSources["Game/EventTasks"] = function(...)
     end
     EventTasks.skelicorn = {
         id = "skelicorn",
-        timeoutSeconds = 120,
+        timeoutSeconds = 200,
         run = function(ctx)
             local state = EventTasks._skelicorn
             local manager = ctx.gameData:get(KEYS.LightningLever)
@@ -12711,7 +12753,26 @@ __moduleSources["Game/EventTasks"] = function(...)
                 return true
             end
             if step == "buy" then
-                return buyOne()
+                -- (user: "3M candy and it buys one now and then"): every copy the slots take, in one go
+                local focused = GameConstants.focusKind(ctx.farmConfig) == E.Skelicorn
+                local ok = buyOne()
+                local count = state.bought and 1 or 0
+                while focused and ok and state.bought and count < 12
+                    and ctx.gameData:growingCopies(E.Skelicorn) < EventTasks.copiesWanted(ctx.gameData, ctx.farmConfig)
+                    and (tonumber(ctx.gameData:get(KEYS.Candy)) or 0) >= EventTasks.skelicornPrice() do
+                    task.wait(0.5)
+                    local before = ctx.gameData:growingCopies(E.Skelicorn)
+                    ok = buyOne()
+                    if ctx.gameData:growingCopies(E.Skelicorn) <= before then
+                        break
+                    end
+                    count += 1
+                end
+                if count > 1 then
+                    EventTasks.skelicornNote(string.format("bought %d Skelicorns in a row (%d grow, %d wanted)", count,
+                        ctx.gameData:growingCopies(E.Skelicorn), EventTasks.copiesWanted(ctx.gameData, ctx.farmConfig)))
+                end
+                return ok
             end
             -- install / activate: at the machine by the Manor
             local arrived, travelWhy = ctx.travel:goTo("MainMap")
@@ -12780,6 +12841,12 @@ __moduleSources["Game/EventTasks"] = function(...)
                 end
                 state.leverRequired = false
                 state.delivered = true
+                if (tonumber(ctx.gameData:get(KEYS.Candy)) or 0) >= EventTasks.skelicornPrice() then
+                    -- (user: "one of them pulled but did not buy"): the buy right away, not at the next check
+                    task.wait(1)
+                    ctx.logger:success("Skelicorn", "Lightning Lever pulled: buying the Skelicorn now")
+                    return buyOne()
+                end
                 state.activated = true -- the recorded install: Deliver alone unlocked the Skelicorn
                 ctx.logger:success("Skelicorn", "Lightning Lever installed: the Skelicorn is unlocked")
             else
@@ -15026,7 +15093,7 @@ __moduleSources["Game/TaskManager"] = function(...)
         end
         -- Mega a Pet with a candy pet: Pet Pen slots + 1 copies growing (1 raised, the rest in the pen)
         if focus and focus.kind == "candy" and due("candy_pet") and data:petInventoryKnown() then
-            local wanted = (tonumber(event.PetPenSlots) or E.PetPenSlots or 4) + 1
+            local wanted = EventTasks.copiesWanted(data, self._farmConfig)
             local growing = data:growingCopies(focus.id)
             local candy = tonumber(data:get(KEYS.Candy)) or 0
             local affordable = math.floor((candy - focus.keepCandy) / focus.price)
