@@ -673,11 +673,25 @@ __moduleSources["Core/Config"] = function(...)
             { { "Farm", "Event", "PetPenStock" }, true },
             { { "Farm", "Event", "CandyPets", "Enabled" }, false },
             { { "Farm", "Event", "PigeonNest" }, false },
-            { { "Farm", "Event", "StrayCat" }, false },
+            { { "Farm", "Event", "StrayCat" }, true }, -- candy every day
         }
     end
+    -- user 2026-10-11: "with Mega Skelicorn the candy farm at its highest": every candy source on, Rusty Keys on the
+    -- biggest candy pile in reach (after the lever), the ladder only when no pile is left on the floors in reach
+    Config.CANDY_MAX = {
+        { { "Farm", "Event", "Hauntlet" }, true },
+        { { "Farm", "Event", "HauntletFirst" }, true },
+        { { "Farm", "Event", "GhostGallery" }, true },
+        { { "Farm", "Event", "Crypt" }, true },
+        { { "Farm", "Event", "CryptOpen" }, { "lever", "candy_corn_pile_ginormous", "candy_corn_pile_big",
+            "candy_corn_pile_small", "ladder" } },
+        { { "Farm", "Event", "Quests" }, true },
+        { { "Farm", "Event", "HouseVisits" }, true },
+        { { "Farm", "Event", "StrayCat" }, true },
+        { { "Farm", "Event", "CandyPets", "Enabled" }, false },
+    }
     Config.focusChanges = focusChanges
-    Config.SKELICORN_CHANGES = join(focusChanges(SKELICORN), {
+    Config.SKELICORN_CHANGES = join(focusChanges(SKELICORN), Config.CANDY_MAX, {
         { { "Farm", "BuyEgg" }, false },
         { { "Farm", "FarmPetKinds" }, { SKELICORN } },
         { { "Farm", "AutoPotions", "PetKinds" }, { SKELICORN } },
@@ -778,6 +792,15 @@ __moduleSources["Core/Config"] = function(...)
             end
             if id == SKELICORN then
                 table.insert(values, { { "Farm", "Event", "AutoSkelicorn" }, true })
+            end
+            local candyPet = id == SKELICORN
+            for _, entry in ipairs(Config.Defaults.Farm.Event.CandyPets.Buy or {}) do
+                candyPet = candyPet or entry.id == id
+            end
+            if candyPet then -- bought with candy: every candy source on (Config.CANDY_MAX)
+                for _, entry in ipairs(Config.CANDY_MAX) do
+                    table.insert(values, { entry[1], deepCopy(entry[2]) })
+                end
             end
         end
         return values, preset
@@ -3108,7 +3131,8 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.POTION_NAMES = { pet_age_potion = "Age-Up Potion", tiny_pet_age_potion = "Tiny Age-Up Potion",
         pet_bonus_bucks_potion = "Bucks Potion" }
     Interface.CRYPT_NAMES = { { "ladder", "Next floor (Mummy Spider)" }, { "lever", "Lightning Lever (Skelicorn)" }, { "twig", "Twig" },
-        { "candy_corn_pile_ginormous", "Big candy pile" }, { "candy_corn_pile_small", "Small candy pile" } }
+        { "candy_corn_pile_ginormous", "Mega candy pile (3000)" }, { "candy_corn_pile_big", "Big candy pile (2000)" },
+        { "candy_corn_pile_small", "Small candy pile (1000)" } }
     Interface.SHOP_NAMES = { halloween_2026_jump_scare = "Jump Scare", halloween_2026_jacobean_pigeon = "Jacobean Pigeon" }
     Interface.EGG_NAMES = { { "cracked_egg", "Cracked Egg (350 Bucks)" }, { "pet_egg", "Pet Egg (600 Bucks)" },
         { "fairytale_egg_2026_fairytale_egg", "Fairytale Egg (event)" } }
@@ -6282,7 +6306,8 @@ __moduleSources["Game/GameConstants"] = function(...)
         NestTwigs = 8,
         CatFood = { "water", "chocolate_milk" },
         Ladder = "ladder",
-        GraveValue = { candy_corn_pile_ginormous = 3, candy_corn_pile_small = 2, twig = 1 },
+        -- skelicorn.log 2026-10-11: the graves are candy_corn_pile_small (1000), _big (2000), _ginormous (3000)
+        GraveValue = { candy_corn_pile_ginormous = 4, candy_corn_pile_big = 3, candy_corn_pile_small = 2, twig = 1 },
         OpenedIdPerFloor = 16,
         PetPenSlots = 4,
         MinigameId = "ghost_clusters",
@@ -6321,6 +6346,8 @@ __moduleSources["Game/GameConstants"] = function(...)
         MummySpiderKind = "halloween_2026_tomb_spider",
         SkelicornPrice = 120000, -- the game's InventoryDB price wins when it can be read
         LeverMachinePatterns = { "lightning", "lever" }, -- a model by the Manor whose name has both words
+        -- user 2026-10-11 (Dex): MainMap!Halloween > Event > Halloween > ScienceShack > LightningLeverInteract ("Use")
+        LeverInteractPath = { "Event", "Halloween", "ScienceShack", "LightningLeverInteract" },
         -- The arguments of LightningLeverDeliver / LightningLeverActivate, copied from ONE recorded manual install (a
         -- remote spy line). nil = not recorded yet: the task goes as far as the machine and stops there (nothing is
         -- guessed). Fill as { deliver = { ...args }, activate = { ...args } } ({} = verified "no arguments").
@@ -9707,7 +9734,7 @@ __moduleSources["Game/Tasks"] = function(...)
         handles = function(kind)
             return kind == "mystery"
         end,
-        timeoutSeconds = 90,
+        timeoutSeconds = 300,
         run = function(ctx, group)
             local entry = group.petEntry
             if not entry then
@@ -9745,25 +9772,37 @@ __moduleSources["Game/Tasks"] = function(...)
             local function gone()
                 return ctx.findEntry("mystery", "pet", entry.petUnique) == nil
             end
-            for index, kind in ipairs(choices) do
-                if gone() then
-                    break
+            -- v2.1.4 (user: "mystery still fails: no time limit, send every need in turn until it is accepted"; a
+            -- report: the same first kind was refused twice, then taken at once on the 3rd try): round after round
+            -- over every kind until the card is gone (task limit 300 s), never "failed" after one round
+            local round = 0
+            local deadline = Util.now() + 280
+            while Util.now() < deadline do
+                round += 1
+                for index, kind in ipairs(choices) do
+                    if gone() then
+                        ctx.logger:info("Tasks", "Mystery: the card is gone")
+                        return true
+                    end
+                    for slot = 1, 3 do
+                        pcall(function()
+                            ctx.interaction:send("ChooseMystery", entry.petUnique, "mystery", slot, kind)
+                        end)
+                    end
+                    if ctx.waitUntil(gone, 0.8) then
+                        ctx.logger:info("Tasks", string.format("Mystery accepted: %s (kind %d of %d, round %d, seed %s)", kind,
+                            index, #choices, round, tostring(entry.mysterySeed)))
+                        return true
+                    end
                 end
-                for slot = 1, 3 do
-                    pcall(function()
-                        ctx.interaction:send("ChooseMystery", entry.petUnique, "mystery", slot, kind)
-                    end)
-                end
-                if ctx.waitUntil(gone, 0.8) then
-                    ctx.logger:info("Tasks", string.format("Mystery accepted: %s (kind %d of %d, seed %s)", kind, index,
-                        #choices, tostring(entry.mysterySeed)))
+                if ctx.waitUntil(gone, 2) then
                     return true
                 end
+                if round == 1 or round % 5 == 0 then
+                    ctx.logger:info("Tasks", string.format("Mystery: round %d, not taken yet: again", round))
+                end
             end
-            if ctx.waitUntil(gone, 2) then
-                return true
-            end
-            return false, "mystery did not change into a chosen need"
+            return false, "mystery did not change into a chosen need in " .. round .. " rounds"
         end,
     }
     local function movingNeed(kind)
@@ -12312,7 +12351,13 @@ __moduleSources["Game/EventTasks"] = function(...)
         for category, items in pairs(type(inventory) == "table" and inventory or {}) do
             if type(items) == "table" then
                 for unique, item in pairs(items) do
-                    if type(item) == "table" and item.id == E.LightningLever then
+                    -- the exact id, or any item whose id names a lever (the id was never seen in a backpack yet)
+                    local id = type(item) == "table" and string.lower(tostring(item.id or item.kind or "")) or ""
+                    if id == E.LightningLever or (id ~= "" and string.find(id, "lever", 1, true)) then
+                        if id ~= E.LightningLever and EventTasks._leverIdNoted ~= id then
+                            EventTasks._leverIdNoted = id
+                            EventTasks.skelicornNote("lever-like item in " .. tostring(category) .. ": " .. id)
+                        end
                         return tostring(item.unique or unique), category
                     end
                 end
@@ -12394,7 +12439,7 @@ __moduleSources["Game/EventTasks"] = function(...)
         installed = installed or state.delivered or next(gameData:petUniquesOfKind(E.Skelicorn)) ~= nil
         activated = activated or state.activated
         if not installed then
-            if EventTasks.findLever(gameData) then
+            if EventTasks.findLever(gameData) or EventTasks.leverWaiting(gameData) then
                 return "install"
             end
             -- skelicorn.log 2026-10-11: 3.3M candy, 0 Rusty Keys, no lever -> "crypt" forever and nothing bought. The
@@ -12418,13 +12463,43 @@ __moduleSources["Game/EventTasks"] = function(...)
         return nil, string.format("waiting for candy (%d / %d)", candy, EventTasks.skelicornPrice())
     end
     -- the lever still has to be found and put in (whatever step a buy probe shows)
+    -- user 2026-10-11: every account showed lever_state "deactivated", and "Use" at the machine worked: the lever was
+    -- already this account's (found in the Crypt), only not put in. "deactivated" = go and Use it (a new try every 10 min
+    -- when a Use changed nothing)
+    function EventTasks.leverWaiting(gameData)
+        local manager = gameData:get(KEYS.LightningLever)
+        local leverState = type(manager) == "table" and manager.lever_state
+        return type(leverState) == "string" and string.lower(leverState) == "deactivated"
+            and Util.now() - (EventTasks._skelicorn.useTriedAt or -1e9) > 600
+    end
     function EventTasks.skelicornNeedsLever(gameData)
         local state = EventTasks._skelicorn
         local installed = EventTasks.leverState(gameData:get(KEYS.LightningLever))
         return not (installed or state.delivered) and EventTasks.findLever(gameData) == nil
+            and not EventTasks.leverWaiting(gameData)
     end
     function EventTasks.findLeverMachine()
         local best
+        pcall(function() -- the part the user found in Dex first
+            for _, interior in ipairs(workspace:FindFirstChild("Interiors") and workspace.Interiors:GetChildren() or {}) do
+                if string.sub(interior.Name, 1, 7) == "MainMap" then
+                    local node = interior
+                    for _, name in ipairs(E.LeverInteractPath) do
+                        node = node and node:FindFirstChild(name)
+                    end
+                    if node then
+                        local part = node:IsA("BasePart") and node or node:FindFirstChildWhichIsA("BasePart", true)
+                        if part then
+                            best = { node = node, part = part, prompt = node:FindFirstChildWhichIsA("ProximityPrompt", true) }
+                            return
+                        end
+                    end
+                end
+            end
+        end)
+        if best then
+            return best
+        end
         pcall(function()
             for _, node in ipairs(workspace:GetDescendants()) do
                 if node:IsA("Model") or node:IsA("BasePart") then
@@ -12443,7 +12518,34 @@ __moduleSources["Game/EventTasks"] = function(...)
                     end
                 end
             end
+            if best then
+                return
+            end
+            -- user 2026-10-11: "went to the machine and pressed Use": the machine has a prompt. Its name is not known,
+            -- so the prompt whose text / name / parent's name speaks of the lever or the Skelicorn is the machine
+            for _, node in ipairs(workspace:GetDescendants()) do
+                if node:IsA("ProximityPrompt") then
+                    local text = string.lower(table.concat({ tostring(node.ActionText), tostring(node.ObjectText), node.Name,
+                        node.Parent and node.Parent.Name or "", node.Parent and node.Parent.Parent and node.Parent.Parent.Name or "" }, " "))
+                    if string.find(text, "lever", 1, true) or string.find(text, "lightning", 1, true)
+                        or string.find(text, "skelicorn", 1, true) then
+                        local holder = node.Parent
+                        local part = holder and (holder:IsA("BasePart") and holder or holder:FindFirstChildWhichIsA("BasePart", true))
+                        if not part and holder and holder:IsA("Attachment") then
+                            part = holder.Parent
+                        end
+                        if part and part:IsA("BasePart") then
+                            best = { node = holder, part = part, prompt = node }
+                            return
+                        end
+                    end
+                end
+            end
         end)
+        if best then
+            EventTasks.skelicornNote("lever machine: " .. best.node:GetFullName() .. (best.prompt and (" (prompt '"
+                .. tostring(best.prompt.ActionText) .. "')") or ""))
+        end
         return best
     end
     local function leverArgs(kind, leverUnique)
@@ -12547,6 +12649,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                 return false, "the " .. (step == "install" and "LightningLeverDeliver" or "LightningLeverActivate")
                     .. " arguments are not recorded yet (one manual install with a remote spy, then SkelicornArgs)"
             end
+            ctx.logger:info("Skelicorn", "At the lever machine (" .. machine.node.Name .. "): Use")
             local signature = function()
                 return (Util.jsonEncode(ctx.gameData:get(KEYS.LightningLever)) or "") .. "|" .. tostring(EventTasks.findLever(ctx.gameData))
             end
@@ -12556,11 +12659,21 @@ __moduleSources["Game/EventTasks"] = function(...)
             local changed = ctx.waitUntil(function()
                 return signature() ~= before
             end, 6)
+            if not changed and machine.prompt and type(fireproximityprompt) == "function" then
+                -- the machine's own "Use" prompt, as the user pressed it
+                pcall(fireproximityprompt, machine.prompt)
+                changed = ctx.waitUntil(function()
+                    return signature() ~= before
+                end, 6)
+            end
             if step == "install" then
                 if not changed then
-                    return false, "the lever install showed no change in my data (answer: " .. tostring(sent) .. " "
-                        .. Util.truncate(tostring(answer), 60) .. ")"
+                    state.useTriedAt = Util.now() -- no lever of mine yet: the Crypt for it, Use again in 10 min
+                    EventTasks.skelicornNote("Use at the lever machine changed nothing (answer " .. tostring(sent) .. " "
+                        .. Util.truncate(tostring(answer), 60) .. "): no lever yet, the Crypt keeps looking")
+                    return true
                 end
+                state.leverRequired = false
                 state.delivered = true
                 state.activated = true -- the recorded install: Deliver alone unlocked the Skelicorn
                 ctx.logger:success("Skelicorn", "Lightning Lever installed: the Skelicorn is unlocked")
