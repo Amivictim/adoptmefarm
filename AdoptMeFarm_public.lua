@@ -12605,6 +12605,134 @@ __moduleSources["Game/EventTasks"] = function(...)
         restore()
         return "clicked, the button stayed (" .. path .. ")"
     end
+    -- user 2026-10-11 (screenshots: at the machine the game shows a hand icon over it, "Use" only once it is picked;
+    -- "try every kind of click, the prompt, everything"): every way in, one after the other, all reported
+    function EventTasks.useMachine(ctx, machine)
+        local done = {}
+        local player = game:GetService("Players").LocalPlayer
+        local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+        local part, node = machine.part, machine.node
+        local scope = { node }
+        if node.Parent then
+            table.insert(scope, node.Parent)
+        end
+        -- 1) prompts and click detectors on / around the machine
+        for _, holder in ipairs(scope) do
+            for _, item in ipairs(holder:GetDescendants()) do
+                if item:IsA("ProximityPrompt") then
+                    if type(fireproximityprompt) == "function" then
+                        pcall(fireproximityprompt, item)
+                        table.insert(done, "prompt " .. item.Name)
+                    end
+                    pcall(function()
+                        item:InputHoldBegin()
+                        task.wait(math.max(0.1, tonumber(item.HoldDuration) or 0) + 0.1)
+                        item:InputHoldEnd()
+                    end)
+                elseif item:IsA("ClickDetector") and type(fireclickdetector) == "function" then
+                    pcall(fireclickdetector, item)
+                    table.insert(done, "clickdetector " .. item.Name)
+                end
+            end
+        end
+        -- 2) touch the machine's part
+        if root and type(firetouchinterest) == "function" then
+            pcall(function()
+                firetouchinterest(root, part, 0)
+                task.wait(0.1)
+                firetouchinterest(root, part, 1)
+            end)
+            table.insert(done, "touch")
+        end
+        -- 3) the game's hand icon over the machine: the on-screen button nearest to where the machine is drawn
+        local camera = workspace.CurrentCamera
+        pcall(function() -- the camera looks at the machine so its icon is on the screen
+            if root and camera then
+                camera.CFrame = CFrame.lookAt(root.Position + Vector3.new(0, 6, 0) - (part.Position - root.Position).Unit * 8,
+                    part.Position)
+            end
+        end)
+        task.wait(0.4)
+        local gui = player:FindFirstChildOfClass("PlayerGui")
+        local function nearestHand()
+            local best, bestDist
+            pcall(function()
+                local point, onScreen = camera:WorldToViewportPoint(part.Position)
+                if not onScreen then
+                    return
+                end
+                local inset = game:GetService("GuiService"):GetGuiInset()
+                for _, app in ipairs({ gui:FindFirstChild("InteractionsApp") }) do
+                    for _, button in ipairs(app:GetDescendants()) do
+                        if button:IsA("GuiButton") and button.Visible and button.AbsoluteSize.X > 4 then
+                            local cx = button.AbsolutePosition.X + button.AbsoluteSize.X / 2
+                            local cy = button.AbsolutePosition.Y + button.AbsoluteSize.Y / 2 + inset.Y
+                            local d = math.sqrt((cx - point.X) ^ 2 + (cy - point.Y) ^ 2)
+                            if d < 160 and (not bestDist or d < bestDist) then
+                                best, bestDist = button, d
+                            end
+                        end
+                    end
+                end
+            end)
+            return best, bestDist
+        end
+        local hand, dist = nearestHand()
+        if hand then
+            for _, method in ipairs(ctx.interaction.CLICK_METHODS or {}) do
+                pcall(function()
+                    ctx.interaction.clickButton(hand, method)
+                end)
+                task.wait(0.3)
+            end
+            table.insert(done, string.format("hand icon %s (%d px)", hand:GetFullName(), math.floor(dist or 0)))
+        else
+            table.insert(done, "no hand icon near the machine")
+        end
+        -- 3b) icons drawn in the world (BillboardGui) on or next to the machine
+        pcall(function()
+            local count = 0
+            for _, container in ipairs({ gui, node, node.Parent }) do
+                for _, board in ipairs(container and container:GetDescendants() or {}) do
+                    if board:IsA("BillboardGui") then
+                        local adornee = board.Adornee or board.Parent
+                        local ok, pos = pcall(function()
+                            return adornee:IsA("BasePart") and adornee.Position or adornee:GetPivot().Position
+                        end)
+                        if ok and pos and (pos - part.Position).Magnitude < 12 then
+                            for _, button in ipairs(board:GetDescendants()) do
+                                if button:IsA("GuiButton") then
+                                    for _, method in ipairs({ "firesignal", "connections" }) do
+                                        pcall(function()
+                                            ctx.interaction.clickButton(button, method)
+                                        end)
+                                    end
+                                    count += 1
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            if count > 0 then
+                table.insert(done, count .. " world icon button(s)")
+            end
+        end)
+        -- 4) the "Use" label that shows once the machine is picked
+        table.insert(done, "use label: " .. tostring(EventTasks.pressUseButton(ctx)))
+        -- 5) the interact key
+        pcall(function()
+            local vim = game:GetService("VirtualInputManager")
+            vim:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+            task.wait(0.15)
+            vim:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+            table.insert(done, "key E")
+        end)
+        pcall(function()
+            camera.CameraType = Enum.CameraType.Custom
+        end)
+        return table.concat(done, ", ")
+    end
     function EventTasks.findLeverMachine()
         local best
         pcall(function() -- the part the user found in Dex first
@@ -12807,8 +12935,8 @@ __moduleSources["Game/EventTasks"] = function(...)
             -- user 2026-10-11 (screenshot): the bot stood at the machine, the game showed its "Use" button, nothing was
             -- pressed; the user pressed it and it worked (without a lever in the backpack). So the game's own Use button
             -- is pressed first (the same click as the main menu's Play), the recorded Deliver after it
-            local pressed = EventTasks.pressUseButton(ctx)
-            EventTasks.skelicornNote("Use button at the machine: " .. tostring(pressed))
+            local pressed = EventTasks.useMachine(ctx, machine)
+            EventTasks.skelicornNote("Use at the machine: " .. tostring(pressed))
             local sent, answer = ctx.interaction:send(step == "install" and "LightningLeverDeliver" or "LightningLeverActivate",
                 table.unpack(args))
             local changed = ctx.waitUntil(function()
