@@ -12508,6 +12508,61 @@ __moduleSources["Game/EventTasks"] = function(...)
         return not (installed or state.delivered) and EventTasks.findLever(gameData) == nil
             and not EventTasks.leverWaiting(gameData)
     end
+    -- the "Use" button the game shows next to an interactable (InteractionsApp): found by its text, clicked with the
+    -- script's click methods until it goes away. Returns a short description of what happened.
+    function EventTasks.pressUseButton(ctx)
+        local gui = game:GetService("Players").LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        local function findButton()
+            local found
+            pcall(function()
+                for _, node in ipairs(gui and gui:GetDescendants() or {}) do
+                    if (node:IsA("TextLabel") or node:IsA("TextButton")) and string.lower(tostring(node.Text)) == "use" then
+                        local visible = true
+                        local walk = node
+                        while walk and walk ~= gui do
+                            if walk:IsA("GuiObject") and walk.Visible == false then
+                                visible = false
+                            elseif walk:IsA("ScreenGui") and walk.Enabled == false then
+                                visible = false
+                            end
+                            walk = walk.Parent
+                        end
+                        if visible then
+                            local button = node:IsA("GuiButton") and node or node:FindFirstAncestorWhichIsA("GuiButton")
+                            if not button and node.Parent then
+                                button = node.Parent:FindFirstChildWhichIsA("GuiButton", true)
+                            end
+                            if button then
+                                found = button
+                                return
+                            end
+                        end
+                    end
+                end
+            end)
+            return found
+        end
+        local button
+        ctx.waitUntil(function()
+            button = findButton()
+            return button ~= nil
+        end, 4)
+        if not button then
+            return "no Use button on screen"
+        end
+        local path = button:GetFullName()
+        for _, method in ipairs(ctx.interaction.CLICK_METHODS or {}) do
+            local ran = pcall(function()
+                ctx.interaction.clickButton(button, method)
+            end)
+            if ran and ctx.waitUntil(function()
+                return button.Parent == nil or findButton() ~= button
+            end, 2) then
+                return "pressed (" .. method .. ", " .. path .. ")"
+            end
+        end
+        return "clicked, the button stayed (" .. path .. ")"
+    end
     function EventTasks.findLeverMachine()
         local best
         pcall(function() -- the part the user found in Dex first
@@ -12688,6 +12743,11 @@ __moduleSources["Game/EventTasks"] = function(...)
                 return (Util.jsonEncode(ctx.gameData:get(KEYS.LightningLever)) or "") .. "|" .. tostring(EventTasks.findLever(ctx.gameData))
             end
             local before = signature()
+            -- user 2026-10-11 (screenshot): the bot stood at the machine, the game showed its "Use" button, nothing was
+            -- pressed; the user pressed it and it worked (without a lever in the backpack). So the game's own Use button
+            -- is pressed first (the same click as the main menu's Play), the recorded Deliver after it
+            local pressed = EventTasks.pressUseButton(ctx)
+            EventTasks.skelicornNote("Use button at the machine: " .. tostring(pressed))
             local sent, answer = ctx.interaction:send(step == "install" and "LightningLeverDeliver" or "LightningLeverActivate",
                 table.unpack(args))
             local changed = ctx.waitUntil(function()
