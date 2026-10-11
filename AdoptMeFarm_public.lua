@@ -1306,7 +1306,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.4 (Adopt Victims - UI Remastered Edition, Hauntlet squad)"
+    Disclosure.VERSION = "2.1.5 (Adopt Victims - UI Remastered Edition, Mega presets)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -3139,6 +3139,15 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     Interface.CHANGELOG = {
+        "v2.1.5 (11 Oct 2026)",
+        "Mega a Pet presets: Mega Mummy Spider's, Mega Skelicorn, any pet or egg",
+        "Auto Skelicorn: pulls the lever, buys every Skelicorn your slots take",
+        "Mega Skelicorn farms candy at full speed (biggest Crypt piles first)",
+        "Hauntlet: squad play, potions before risky doors, no going back",
+        "Hauntlet: ghost potions saved for the late rooms, 2-lock doors get both keys",
+        "Mystery: tries every need until one is taken",
+        "Stray Cat found at its new place; white screen recovery",
+        "Support > Copy problem report",
         "Adopt Victims v2 - UI Remastered Edition (07 Oct 2026, 16:28 TR)",
         "The window in your language: English, Türkçe, Español, Português",
         "Your country's flag on the Dashboard",
@@ -3151,9 +3160,9 @@ __moduleSources["Services/Interface"] = function(...)
         "Autoclose GUI on execute (Config > Settings)",
     }
     Interface.CHANGELOG_LATEST = {
-        Title = "v2 - UI Remastered Edition",
-        Date = "07 Oct 2026, 16:28 (TR)",
-        Description = "New window: game icons, your language, live Farm card, presets.",
+        Title = "v2.1.5 - Mega presets",
+        Date = "11 Oct 2026 (TR)",
+        Description = "Mega Skelicorn / Mummy Spider / any pet, Auto Skelicorn, Hauntlet squad, candy farm at full speed.",
     }
     Interface.DEVELOPER = {
         name = "Victim",
@@ -10300,6 +10309,12 @@ __moduleSources["Game/Hauntlet"] = function(...)
         tempHearts = 1, -- ghost potions: this many temp hearts before a risky door ...
         tempHeartsLate = 2, -- ... and this many from multiGhostFromRoom on, or when 2 red hearts or less are left
         multiGhostFromRoom = 8, -- from here: 2 ghosts in a room, ghosts that take 2 hearts (live runs 3 + 6)
+        -- v2.1.5 (debug run 2026-10-11: 4 ghost potions spent in rooms 3, 4 and 9 at 3/3 hearts, then rooms 21-26
+        -- had no potion left and the run died; ghost potions stopped dropping after room 9): before saveUntilRoom
+        -- the stack keeps saveReserve potions, and a door under saveLowRisk gets none while a hit cannot kill
+        saveUntilRoom = 16,
+        saveReserve = 2,
+        saveLowRisk = 0.1,
         safeFirstRoom = true, -- room 1 never had a ghost in any recorded run
         kindPenalty = {}, -- door kind -> extra score
     }
@@ -10651,7 +10666,10 @@ __moduleSources["Game/Hauntlet"] = function(...)
                 local interior = self.join and self.join.interior
                 -- the heart display, for the room-1 baseline and whenever my counted hearts changed (8 dumps a run)
                 local sign = tostring(self.health) .. "/" .. tostring(self.maxHealth)
-                local dumpHearts = (self._heartDumps or 0) < 8 and (self.roomSeq <= 1 or sign ~= self._heartSign)
+                -- v2.1.5: the heart display dump only with Event.HauntletDebug (hearts are counted right now; it scanned
+                -- every screen and lagged phones running many accounts)
+                local dumpHearts = GameConstants.Event.HauntletDebug == true and (self._heartDumps or 0) < 8
+                    and (self.roomSeq <= 1 or sign ~= self._heartSign)
                 self._heartSign = sign
                 task.delay(1.5, function()
                     self:_debugNote(Hauntlet.describeRooms(interior))
@@ -11160,8 +11178,12 @@ __moduleSources["Game/Hauntlet"] = function(...)
         return (seq % 10 == 1) and 0.2 or 0.6
     end
     -- the worst hit (same data): 1 heart before room 16 (2 hearts in 2 of 34 hits in rooms 8-9), 2 hearts from 16 on
+    -- v2.1.5, 7 debug logs (~150 rooms): a ghost always takes exactly 1 heart; "2 hearts" was 2 ghosts behind the same
+    -- door. Ghosts share a door in rooms 8-15 too (2 of 10 two-ghost rooms), in 47% from 16 and 68% from 30 (3 ghosts
+    -- there): the worst hit is the number of ghosts that can stand behind one door
     function Hauntlet.worstHit(seq)
-        return (tonumber(seq) or 0) >= 16 and 2 or 1
+        seq = tonumber(seq) or 0
+        return seq >= 30 and 3 or (seq >= 8 and 2 or 1)
     end
     -- Nexus: the next area's cost (its doors: copycat = ghost magnets (the other doors are then rather safe) and many
     -- locks, webbed 5 but an item each, wooden 90, bouncy 80 + a random launch, security 20 but 2 keys each, electric a
@@ -11448,7 +11470,18 @@ __moduleSources["Game/Hauntlet"] = function(...)
         -- that would leave 1 heart or less
         local mustProtect = (health + temp - worstHit <= 1 and bestRisk >= 0.05)
             or bestRisk >= (tonumber(opt("reserveBreakRisk")) or 0)
-        local spareOk = potions > (tonumber(opt("potionReserve")) or 0) or mustProtect
+        local reserve = tonumber(opt("potionReserve")) or 0
+        if (view.seq or 0) < (tonumber(opt("saveUntilRoom")) or 0) then
+            -- early: save potions for the late rooms; only a hit that could END the run (or a coin-flip door that
+            -- would leave 1 heart) breaks into the stack, and an almost-safe door never gets one
+            local canDie = health + temp - worstHit <= 0
+            mustProtect = (canDie and bestRisk >= 0.05) or (health + temp - worstHit <= 1 and bestRisk >= 0.5)
+            reserve = math.max(reserve, tonumber(opt("saveReserve")) or 0)
+            if bestRisk < (tonumber(opt("saveLowRisk")) or 0) and not canDie then
+                tempTarget = 0
+            end
+        end
+        local spareOk = potions > reserve or mustProtect
         if bestRisk > 0 and bestRisk >= opt("potionAtRisk") and temp < tempTarget and can("ghost_potion") and spareOk then
             return { use = "ghost_potion", door = best, reason = string.format("%s; temp heart %d of %d for door %d", why,
                 temp + 1, tempTarget, best), notes = notes }
@@ -12446,6 +12479,22 @@ __moduleSources["Game/EventTasks"] = function(...)
     -- user 2026-10-11: "the preset buys 5 Skelicorns, 7 when the account walks 2 pets or has the Pet Pen pass: the
     -- fastest way to a mega neon". How many copies grow at once = my pet slots + the Pet Pen's slots. The pen's size is
     -- read from its data when a field tells it (slots / capacity / max), else Farm.Event.PetPenSlots (4).
+    -- the way to a mega neon of one kind, counted: growing / full grown (waiting for 4) / neon / mega neon
+    function EventTasks.kindProgress(gameData, kind)
+        local grow, grown, neon, mega = 0, 0, 0, 0
+        for unique in pairs(gameData:petUniquesOfKind(kind)) do
+            if gameData:isPetMega(unique) then
+                mega += 1
+            elseif gameData:isPetNeon(unique) then
+                neon += 1
+            elseif (gameData:petAge(unique) or 0) >= GameConstants.FullGrownAge then
+                grown += 1
+            else
+                grow += 1
+            end
+        end
+        return string.format("growing %d, full grown %d, neon %d, mega %d", grow, grown, neon, mega)
+    end
     function EventTasks.copiesWanted(gameData, farm)
         local event = type(farm) == "table" and type(farm.Event) == "table" and farm.Event or {}
         local penSlots = tonumber(event.PetPenSlots) or E.PetPenSlots or 4
@@ -13350,7 +13399,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                 local moveSeconds = type(ctx.farmConfig) == "table" and type(ctx.farmConfig.Event) == "table"
                     and tonumber(ctx.farmConfig.Event.HauntletMoveSeconds) or nil
                 local avoid = {} -- circle groups that took no pick in this room
-                local planned, potionsHere = false, 0
+                local planned, potionsHere, keysHere = false, 0, 0
                 -- v2.1.3: one compact line per room for the developer report (HauntletDigest: kept in the report's lines)
                 local digest = { items = {}, hearts = string.format("%d/%d%s", h.health or 3, h.maxHealth or 3,
                     (h.tempHealth or 0) > 0 and ("+" .. h.tempHealth) or "") }
@@ -13469,7 +13518,20 @@ __moduleSources["Game/EventTasks"] = function(...)
                         continue
                     end
                     if plan.use then
-                        if plan.use ~= "ghost_potion" then
+                        local isKey = plan.use == "key" or plan.use == "gold_key"
+                        -- v2.1.5: keys may be needed twice for one door (security: 2 grey locks); debug run room 21: the
+                        -- first key answered "false" yet removed the lock, and the second key was never tried
+                        local function lockCount()
+                            local d = plan.door and room.doors[plan.door]
+                            return d and ((d.grey or 0) + (d.gold or 0)) or 0
+                        end
+                        local locksBefore = lockCount()
+                        if isKey then
+                            keysHere += 1
+                            if keysHere >= 4 then
+                                tried[plan.use] = true
+                            end
+                        elseif plan.use ~= "ghost_potion" then
                             tried[plan.use] = true -- ghost potions: as many as the plan wants (user: "no limit")
                         end
                         local tempBefore = h.tempHealth or 0
@@ -13503,6 +13565,15 @@ __moduleSources["Game/EventTasks"] = function(...)
                             end, 5)
                         end
                         local answer = h.usedItems[seq + 1]
+                        if isKey and not (answer and answer.ok) and h.room == room and not over() then
+                            ctx.waitUntil(function()
+                                return lockCount() < locksBefore or over() or h.room ~= room
+                            end, 1.5)
+                            if lockCount() < locksBefore then
+                                answer = { ok = true }
+                                say(plan.use .. ": the game answered no, but the lock came off")
+                            end
+                        end
                         if answer and answer.ok then
                             itemsUsed += 1
                             say(string.format("Used %s | Reason: %s", plan.use, plan.reason))
@@ -15199,14 +15270,18 @@ __moduleSources["Game/TaskManager"] = function(...)
         local focus = GameConstants.focusOf(self._farmConfig)
         if EventTasks.skelicornOn(self._farmConfig) and data:petInventoryKnown() then
             local step, idleWhy = EventTasks.skelicornStep(data, self._farmConfig)
-            do -- what Auto Skelicorn waits for, once per change (it was silent: no keys / no candy looked like nothing)
+            if Util.now() - (self._skelicornLineAt or -1e9) >= 20 then -- what Auto Skelicorn waits for (v2.1.5: every 20 s at most)
                 local keys = #data:itemsOfId(GameConstants.ToyCategory, E.RustyKey)
                 local candy = tonumber(data:get(KEYS.Candy)) or 0
-                local line = string.format("Skelicorn: %s | lever in bag %s | Rusty Keys %d | candy %d / %d | Crypt %s",
-                    step or ("idle: " .. tostring(idleWhy)), EventTasks.findLever(data) and "yes" or "no", keys,
-                    math.floor(candy / 1000) * 1000, EventTasks.skelicornPrice(), data:get(KEYS.Crypt) ~= nil and "known" or "NOT known")
-                if line ~= self._skelicornLine then
-                    self._skelicornLine = line
+                local line = string.format("Skelicorn: %s | Rusty Keys %d | candy %dk / %dk | Skelicorns: %s",
+                    step or ("idle: " .. tostring(idleWhy)), keys, math.floor(candy / 1000), math.floor(EventTasks.skelicornPrice() / 1000),
+                    EventTasks.kindProgress(data, E.Skelicorn))
+                -- v2.1.5: the Rusty Key 0/1 flicker (key found -> grave opened) no longer writes a line each time: a new
+                -- line when the step or the pet counts change, else at most every 15 minutes
+                local key = tostring(step or idleWhy) .. "|" .. EventTasks.kindProgress(data, E.Skelicorn)
+                self._skelicornLineAt = Util.now()
+                if key ~= self._skelicornLine or Util.now() - (self._skelicornNoteAt or -1e9) >= 900 then
+                    self._skelicornLine, self._skelicornNoteAt = key, Util.now()
                     self._logger:info("Skelicorn", line)
                     EventTasks.skelicornNote(line)
                 end
