@@ -3149,6 +3149,7 @@ __moduleSources["Services/Interface"] = function(...)
         "Hauntlet: squad play, potions before risky doors, no going back",
         "Hauntlet: ghost potions saved for the late rooms, 2-lock doors get both keys",
         "White screen: a stuck stream no longer freezes the Hauntlet task",
+        "Hauntlet: pushed out of a ??? door that turned locked -> picks another door",
         "Auto Potions: every Age-Up (Tiny too), Bonus Aging 1.2x / 15 min, Bonus Bucks, Busy Body",
         "Mystery: tries every need until one is taken",
         "Stray Cat found at its new place; white screen recovery",
@@ -8009,8 +8010,11 @@ __moduleSources["Game/Interaction"] = function(...)
         -- v2.1.4 BUG B: never into the circles of a room already picked in (same object or same place)
         if part and circles then
             local key = Interaction.hauntletPosKey(circles)
-            local seenAt = (options.visited and options.visited[circles]) and "this group"
-                or (key and options.visitedPos and options.visitedPos[key] and ("room " .. tostring(options.visitedPos[key])))
+            -- v2.1.5: a room I picked in THIS room (pushed out of a ??? door, plan changed) is not "going back"
+            local thisRoom = key and options.visitedPos and options.roomSeq ~= nil
+                and options.visitedPos[key] == options.roomSeq
+            local seenAt = (not thisRoom) and ((options.visited and options.visited[circles]) and "this group"
+                or (key and options.visitedPos and options.visitedPos[key] and ("room " .. tostring(options.visitedPos[key]))))
             if seenAt then
                 return false, string.format("backtrack blocked roomSeq=%s (door %d: the circles of %s, already passed)",
                     tostring(options.roomSeq), doorIndex, seenAt)
@@ -10631,6 +10635,7 @@ __moduleSources["Game/Hauntlet"] = function(...)
                 addItems(self.inventory, me.inventory)
             end
         elseif message == "started_room" and type(a) == "table" then
+            self.ejected = nil -- pushed-out doors count per room
             local doors = {}
             for i = 1, 4 do
                 local d = type(a.doors) == "table" and a.doors[i] or nil
@@ -10773,6 +10778,18 @@ __moduleSources["Game/Hauntlet"] = function(...)
                 and not (self.myDoorAt and self.myDoorAt >= self.expectAt) then
                 self.myDoor, self.myDoorAt = self.expectDoor, now -- my door went up after my move
             end
+            -- v2.1.5 (user report: "several bots on a mystery door, it turns out to be a key door, the bot never picks
+            -- another door and gets kicked"): my door's counter fell to 0 while the doors are still shut = I was pushed
+            -- out of that circle. Forget the pick so the room loop moves again (and scores that door down).
+            local mine = self.myDoor
+            if mine and self.room and self.myDoorAt and now - self.myDoorAt > 0.3 and (self.counters[mine] or 0) > 0
+                and (new[mine] or 0) == 0 and not (self.lastOpened and self.lastOpened.seq == self.roomSeq) then
+                self.ejected = self.ejected or {}
+                self.ejected[mine] = (self.ejected[mine] or 0) + 1
+                self.myDoor, self.myDoorAt = nil, nil
+                self._logger:info("Hauntlet", string.format("Pushed out of door %d (its counter fell to 0, the doors are "
+                    .. "still shut): picking again", mine))
+            end
             if self._awaitPick then
                 -- unambiguous only when exactly one player moved (one +1, at most my own -1 elsewhere)
                 if #up == 1 and gained == 1 and lost <= 1 and self.expectDoor and up[1] ~= self.expectDoor then
@@ -10839,6 +10856,11 @@ __moduleSources["Game/Hauntlet"] = function(...)
         elseif message == "door_effect_triggered" and self.room then
             self.room.effects = self.room.effects or {}
             self.room.effects[tonumber(b) or 0] = tostring(c)
+            if tostring(c) == "transform" then
+                self.room.transformed = self.room.transformed or {}
+                self.room.transformed[tonumber(b) or 0] = now
+                self._logger:info("Hauntlet", "The ??? door " .. tostring(b) .. " transformed (someone stepped in)")
+            end
             if tostring(c) == "player_take_damage" then -- the electric door: 1 heart on entering (was not counted)
                 if self._userId and tostring(a) == self._userId then
                     self:_damage(1)
@@ -11423,6 +11445,12 @@ __moduleSources["Game/Hauntlet"] = function(...)
                     table.insert(parts, "bounces me to a random door")
                 elseif info.effect == "transform" then
                     score += 3
+                end
+                local pushed = type(view.ejected) == "table" and tonumber(view.ejected[i]) or 0
+                if pushed > 0 then
+                    -- v2.1.5: I stood in this door's circle and was pushed out (a ??? door became a locked one, ...)
+                    score += pushed >= 2 and 1000 or 400
+                    table.insert(parts, string.format("pushed out of this door %d time%s", pushed, pushed == 1 and "" or "s"))
                 end
                 if needs and (itemCount(inv, needs) < locks or tried[needs]) then
                     score += 1000
@@ -13489,6 +13517,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                         break
                     end
                     local view = h:view()
+                    view.ejected = h.ejected
                     view.tried = tried
                     local plan = Hauntlet.decide(view, strategy)
                     if not planned then
