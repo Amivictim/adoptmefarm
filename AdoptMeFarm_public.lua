@@ -12095,6 +12095,35 @@ __moduleSources["Game/EventTasks"] = function(...)
             if not arrived then
                 return false, "travel to the Halloween map failed: " .. tostring(why)
             end
+            if spotName == "stray_cat" then
+                -- user 2026-10-11: "the Stray Cat was moved next to the Hotel": its spot is read from the map
+                -- (MainMap > Event > Halloween > StrayCat) when it is there; the saved spot stays the fallback
+                pcall(function()
+                    for _, interior in ipairs(workspace:FindFirstChild("Interiors") and workspace.Interiors:GetChildren() or {}) do
+                        if string.sub(interior.Name, 1, 7) == "MainMap" then
+                            local event = interior:FindFirstChild("Event")
+                            local halloween = event and event:FindFirstChild("Halloween")
+                            local catNode = halloween and halloween:FindFirstChild("StrayCat")
+                            if catNode then
+                                local position = catNode:IsA("BasePart") and catNode.Position
+                                if not position then
+                                    local part = catNode:FindFirstChildWhichIsA("BasePart", true)
+                                    position = part and part.Position
+                                end
+                                if position then
+                                    local spot = GameConstants.Spots.stray_cat
+                                    if math.abs(spot.x - position.X) + math.abs(spot.z - position.Z) > 15 then
+                                        ctx.logger:info("Event", string.format("Stray Cat is at (%.0f, %.0f) now (was %.0f, %.0f)",
+                                            position.X, position.Z, spot.x, spot.z))
+                                    end
+                                    spot.x, spot.y, spot.z = position.X + 4, position.Y + 3, position.Z + 4
+                                end
+                                return
+                            end
+                        end
+                    end
+                end)
+            end
             local moved, notMoved = ctx.interaction:teleportTo(spotName)
             task.wait(1.5)
             if moved and nearSpot(spotName, 20) and ctx.travel:isAt("MainMap") then
