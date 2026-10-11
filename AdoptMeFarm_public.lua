@@ -10855,6 +10855,37 @@ __moduleSources["Game/Hauntlet"] = function(...)
     -- v2.1.4 (user: "read the hearts straight from the game"): the game's own heart display is not known yet. This
     -- dumps what could show it (the Hauntlet UI in PlayerGui, the player's / character's attributes, Hauntlet modules),
     -- into the debug file only, so the heart reader can be written from a real run. Read-only.
+    -- v2.1.4 (debug log 2026-10-11): the game's own item bar, MinigameHotbarApp.Hotbar.<item> (Frame hidden at 0) with
+    -- Button.StackCount.TextLabel "x<n>". The truth about my run items (a webbed door takes one without a message I
+    -- read). Returns { [item] = n } or nil when the bar is not there. Read-only.
+    function Hauntlet.readHotbar()
+        local counts
+        pcall(function()
+            local gui = game:GetService("Players").LocalPlayer:FindFirstChildOfClass("PlayerGui")
+            local app = gui and gui:FindFirstChild("MinigameHotbarApp")
+            local bar = app and app.Enabled ~= false and app:FindFirstChild("Hotbar")
+            if not bar then
+                return
+            end
+            local found = {}
+            for item in pairs(GameConstants.Event.HauntletItems or {}) do
+                local frame = bar:FindFirstChild(item)
+                if frame then
+                    local label = frame:FindFirstChild("Button") and frame.Button:FindFirstChild("StackCount")
+                        and frame.Button.StackCount:FindFirstChild("TextLabel")
+                    local n = label and tonumber(string.match(tostring(label.Text), "(%d+)"))
+                    if n == nil then
+                        return -- an unknown layout: trust nothing from it
+                    end
+                    found[item] = frame.Visible == false and 0 or n
+                end
+            end
+            if next(found) then
+                counts = found
+            end
+        end)
+        return counts
+    end
     function Hauntlet.describeHeartUi()
         local lines, budget = {}, 260
         local function add(text)
@@ -10881,6 +10912,20 @@ __moduleSources["Game/Hauntlet"] = function(...)
             attrs("player", player)
             if player.Character then
                 attrs("character", player.Character)
+            end
+            for _, node in ipairs(player.Character and player.Character:GetDescendants() or {}) do
+                if node:IsA("BillboardGui") or node:IsA("SurfaceGui") or (node:IsA("TextLabel") and node:FindFirstAncestorWhichIsA("BillboardGui"))
+                    or (node:IsA("ImageLabel") and node:FindFirstAncestorWhichIsA("BillboardGui")) then
+                    local extra = ""
+                    pcall(function()
+                        if node:IsA("TextLabel") then
+                            extra = " text=" .. Util.truncate(tostring(node.Text), 30)
+                        elseif node:IsA("ImageLabel") then
+                            extra = " vis=" .. tostring(node.Visible) .. " img=" .. tostring(node.Image)
+                        end
+                    end)
+                    add("CHAR " .. string.gsub(node:GetFullName(), "^.-Workspace%.", "") .. " [" .. node.ClassName .. "]" .. extra)
+                end
             end
             local gui = player:FindFirstChildOfClass("PlayerGui")
             -- every screen first (log 2026-10-11: the journal used the whole budget, the heart display was not reached)
@@ -12063,9 +12108,15 @@ __moduleSources["Game/EventTasks"] = function(...)
                 if text ~= EventTasks._leverFloorsLogged then -- the graves' rewards, once per change: the lever's name
                     EventTasks._leverFloorsLogged = text
                     ctx.logger:info("Skelicorn", "Crypt floors: " .. text)
+                    EventTasks.skelicornNote("Crypt floors: " .. Util.truncate(Util.jsonEncode(type(crypt) == "table"
+                        and crypt.floors or crypt) or "?", 3000))
                 end
-                ctx.logger:info("Skelicorn", lever and string.format("Lever grave: floor %s grave %s", tostring(lever.floor),
-                    tostring(lever.grave)) or "No lever grave on the floors I can reach: next floor down")
+                local leverLine = lever and string.format("Lever grave: floor %s grave %s", tostring(lever.floor),
+                    tostring(lever.grave)) or ("No lever grave on the floors I can reach: " .. (plan and plan.spider
+                    and "the Mummy Spider (the Crypt starts again)" or (plan and string.format("floor %s grave %s (%s)",
+                    tostring(plan.floor), tostring(plan.grave), tostring(plan.reward))) or "nothing to open"))
+                ctx.logger:info("Skelicorn", leverLine)
+                EventTasks.skelicornNote(leverLine .. " | Rusty Keys " .. #ctx.gameData:itemsOfId(TOYS, E.RustyKey))
             end
             if not plan then
                 ctx.logger:info("Event", "Crypt: " .. tostring(why))
@@ -12198,6 +12249,24 @@ __moduleSources["Game/EventTasks"] = function(...)
         fields named like install / deliver / placed (plus what this session saw: a delivered lever leaves the backpack).
     ]]
     EventTasks._skelicorn = { delivered = false, activated = false, bought = false, logged = nil }
+    -- v2.1.4 (user: "Mega Skelicorn on every account, no Skelicorn anywhere"): every Skelicorn step and what it saw goes
+    -- to its own small file, AdoptMeFarm/skelicorn.log (kept even when the normal logs are off), to send as it is
+    EventTasks._skelicornNotes = {}
+    function EventTasks.skelicornNote(text)
+        local notes = EventTasks._skelicornNotes
+        table.insert(notes, os.date("%m-%d %H:%M:%S ") .. tostring(text))
+        while #notes > 80 do
+            table.remove(notes, 1)
+        end
+        if type(writefile) == "function" then
+            pcall(function()
+                if type(makefolder) == "function" and type(isfolder) == "function" and not isfolder("AdoptMeFarm") then
+                    makefolder("AdoptMeFarm")
+                end
+                writefile("AdoptMeFarm/skelicorn.log", table.concat(notes, "\n") .. "\n")
+            end)
+        end
+    end
     function EventTasks.findLever(gameData)
         local inventory = gameData:get(KEYS.Inventory)
         for category, items in pairs(type(inventory) == "table" and inventory or {}) do
@@ -12346,6 +12415,7 @@ __moduleSources["Game/EventTasks"] = function(...)
             if text ~= state.logged then -- the manager's fields, once per change: so "installed" can be read for sure
                 state.logged = text
                 ctx.logger:info("Skelicorn", "Lever data: " .. text)
+                EventTasks.skelicornNote("Lever data: " .. text)
             end
             local step, why = EventTasks.skelicornStep(ctx.gameData, ctx.farmConfig)
             if not step or step == "crypt" then
@@ -12425,6 +12495,14 @@ __moduleSources["Game/EventTasks"] = function(...)
             return true
         end,
     }
+    do -- every Auto Skelicorn result into AdoptMeFarm/skelicorn.log too
+        local inner = EventTasks.skelicorn.run
+        EventTasks.skelicorn.run = function(ctx, ...)
+            local ok, why = inner(ctx, ...)
+            EventTasks.skelicornNote(ok and "task done" or ("task FAILED: " .. tostring(why)))
+            return ok, why
+        end
+    end
     EventTasks.ghostGallery = {
         id = "ghost_gallery",
         timeoutSeconds = 330,
@@ -12829,6 +12907,22 @@ __moduleSources["Game/EventTasks"] = function(...)
                 ctx.waitUntil(function() -- the next room streams in within 1-2 s
                     return over() or h.room ~= room or ensureGroup() ~= nil or prevGroup == nil
                 end, 3)
+                do -- v2.1.4: my items as the game's hotbar shows them (webbed doors took potions the bot still counted)
+                    local bar = Hauntlet.readHotbar()
+                    if bar and h.room == room then
+                        local changed = {}
+                        for item, n in pairs(bar) do
+                            if (h.inventory[item] or 0) ~= n then
+                                table.insert(changed, string.format("%s %d -> %d", item, h.inventory[item] or 0, n))
+                                h.inventory[item] = n
+                            end
+                        end
+                        if #changed > 0 then
+                            table.sort(changed)
+                            say("Items from the game's hotbar: " .. table.concat(changed, ", "))
+                        end
+                    end
+                end
                 -- one fixed tie-break per room: equal doors no longer swap places between two looks (room 11 of the
                 -- debug log: picked door 3, then "door 1", moved into the next room's circle)
                 strategy = setmetatable({ tie = { math.random(), math.random(), math.random(), math.random() } },
@@ -12904,7 +12998,9 @@ __moduleSources["Game/EventTasks"] = function(...)
                                 lockedDoors += 1
                             end
                         end
-                        if (plan.use == "key" or plan.use == "gold_key") and plan.door and lockedDoors > 1 then
+                        -- v2.1.4: no move to "the key's door" first (journal: "Removes 1 Grey Lock from EACH door"; problem
+                        -- report room 26: standing in the circle first and the key was refused)
+                        if false and (plan.use == "key" or plan.use == "gold_key") and plan.door and lockedDoors > 1 then
                             -- more than one locked door: stand at the one the key is for first
                             h.expectDoor, h.expectAt, h.mappingSuspect = plan.door, Util.now(), nil
                             local moved, how, _, used = ctx.interaction:teleportToHauntletDoor(h.join and h.join.interior,
@@ -14105,7 +14201,8 @@ __moduleSources["Game/TaskManager"] = function(...)
         local ready = self._state:get("game.ready") == true
         local team = self._state:get("player.team")
         local place = self._state:get("player.interior")
-        if root and place ~= nil and ready and team ~= "Choosing" then
+        if (root and place ~= nil and ready and team ~= "Choosing")
+            or (team == "Choosing" and self._farmConfig.AutoAcceptMenu == false) then -- the user keeps the menu open
             self._blankSince, self._blankStep = nil, nil
             return false
         end
@@ -14566,7 +14663,19 @@ __moduleSources["Game/TaskManager"] = function(...)
         -- v2.1.4 Auto Skelicorn (right under Auto Nest): lever from the Crypt -> machine -> 1 Skelicorn
         local focus = GameConstants.focusOf(self._farmConfig)
         if EventTasks.skelicornOn(self._farmConfig) and data:petInventoryKnown() then
-            local step = EventTasks.skelicornStep(data, self._farmConfig)
+            local step, idleWhy = EventTasks.skelicornStep(data, self._farmConfig)
+            do -- what Auto Skelicorn waits for, once per change (it was silent: no keys / no candy looked like nothing)
+                local keys = #data:itemsOfId(GameConstants.ToyCategory, E.RustyKey)
+                local candy = tonumber(data:get(KEYS.Candy)) or 0
+                local line = string.format("Skelicorn: %s | lever in bag %s | Rusty Keys %d | candy %d / %d | Crypt %s",
+                    step or ("idle: " .. tostring(idleWhy)), EventTasks.findLever(data) and "yes" or "no", keys,
+                    math.floor(candy / 1000) * 1000, EventTasks.skelicornPrice(), data:get(KEYS.Crypt) ~= nil and "known" or "NOT known")
+                if line ~= self._skelicornLine then
+                    self._skelicornLine = line
+                    self._logger:info("Skelicorn", line)
+                    EventTasks.skelicornNote(line)
+                end
+            end
             if step == "crypt" then
                 if due("crypt") and data:get(KEYS.Crypt) ~= nil and #data:itemsOfId(GameConstants.ToyCategory, E.RustyKey) > 0 then
                     return "crypt", "look for the Lightning Lever in the Crypt (Auto Skelicorn)", EventTasks.crypt, nil
