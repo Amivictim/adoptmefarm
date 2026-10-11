@@ -434,7 +434,8 @@ __moduleSources["Core/Config"] = function(...)
             MaxBuysPerSession = 0,
             AutoPotions = {
                 Enabled = false,
-                Potions = { "pet_age_potion", "tiny_pet_age_potion", "pet_bonus_bucks_potion" },
+                Potions = { "pet_age_potion", "tiny_pet_age_potion", "pet_bonus_aging_potion", "pet_bonus_bucks_potion" },
+                BuffMinutes = 10, -- Bonus Aging / Bonus Bucks potions are timed buffs: one of each kind per this many minutes
                 Skip = {},
                 PetKinds = {},
             },
@@ -3129,7 +3130,7 @@ __moduleSources["Services/Interface"] = function(...)
         { "sick", "Sick" }, { "camping", "Camping" }, { "beach_party", "Beach party" }, { "bored", "Bored" },
     }
     Interface.POTION_NAMES = { pet_age_potion = "Age-Up Potion", tiny_pet_age_potion = "Tiny Age-Up Potion",
-        pet_bonus_bucks_potion = "Bucks Potion" }
+        pet_bonus_aging_potion = "Bonus Aging Potion", pet_bonus_bucks_potion = "Bonus Bucks Potion" }
     Interface.CRYPT_NAMES = { { "ladder", "Next floor (Mummy Spider)" }, { "lever", "Lightning Lever (Skelicorn)" }, { "twig", "Twig" },
         { "candy_corn_pile_ginormous", "Mega candy pile (3000)" }, { "candy_corn_pile_big", "Big candy pile (2000)" },
         { "candy_corn_pile_small", "Small candy pile (1000)" } }
@@ -3146,7 +3147,7 @@ __moduleSources["Services/Interface"] = function(...)
         "Hauntlet: squad play, potions before risky doors, no going back",
         "Hauntlet: ghost potions saved for the late rooms, 2-lock doors get both keys",
         "White screen: a stuck stream no longer freezes the Hauntlet task",
-        "Auto Potions: every age / bucks potion in your bag, says why it waits",
+        "Auto Potions: Age-Up, Bonus Aging (1.2x) and Bonus Bucks potions, says why it waits",
         "Mystery: tries every need until one is taken",
         "Stray Cat found at its new place; white screen recovery",
         "Support > Copy problem report",
@@ -6368,7 +6369,7 @@ __moduleSources["Game/GameConstants"] = function(...)
         -- NOT fired in that install, so it is not recorded and never sent.
         SkelicornArgs = { deliver = {} },
     }
-    GameConstants.FarmPotions = { "pet_age_potion", "tiny_pet_age_potion", "pet_bonus_bucks_potion" }
+    GameConstants.FarmPotions = { "pet_age_potion", "tiny_pet_age_potion", "pet_bonus_aging_potion", "pet_bonus_bucks_potion" }
     function GameConstants.needOn(farm, kind)
         if type(farm) ~= "table" then
             return false
@@ -14050,7 +14051,8 @@ __moduleSources["Game/EventTasks"] = function(...)
     -- Potion carry other ids). Never a fly / ride potion: those match neither pattern.
     function GameConstants.isFarmPotion(id)
         id = tostring(id or "")
-        return (string.find(id, "age_potion", 1, true) ~= nil or string.find(id, "bonus_bucks_potion", 1, true) ~= nil)
+        return (string.find(id, "age_potion", 1, true) ~= nil or string.find(id, "aging_potion", 1, true) ~= nil
+            or string.find(id, "bonus_bucks_potion", 1, true) ~= nil)
             and string.find(id, "fly", 1, true) == nil and string.find(id, "ride", 1, true) == nil
     end
     function EventTasks.potionList(farm, gameData)
@@ -14086,16 +14088,26 @@ __moduleSources["Game/EventTasks"] = function(...)
                 table.insert(list, id)
             end
         end
-        -- every age potion before any bucks potion (the growth is what makes the mega neon faster)
+        -- Age-Up potions first (instant growth), then the Bonus Aging buff (pet ages 1.2x for a while), the Bonus
+        -- Bucks buff last. A timed buff waits BuffMinutes after its last use (no stacking the same buff away).
+        local function class(id)
+            return string.find(id, "age_potion", 1, true) and 1 or (string.find(id, "aging_potion", 1, true) and 2 or 3)
+        end
+        local buffWait = math.max(0, tonumber(settings.BuffMinutes) or 10) * 60
         local ordered = {}
-        for pass = 1, 2 do
+        for pass = 1, 3 do
             for _, id in ipairs(list) do
-                if (string.find(id, "age_potion", 1, true) ~= nil) == (pass == 1) then
+                if class(id) == pass and (pass == 1 or Util.now() - (EventTasks._buffUsedAt[pass] or -1e9) >= buffWait) then
                     table.insert(ordered, id)
                 end
             end
         end
         return ordered
+    end
+    EventTasks._buffUsedAt = {}
+    function EventTasks.potionClass(id)
+        id = tostring(id)
+        return string.find(id, "age_potion", 1, true) and 1 or (string.find(id, "aging_potion", 1, true) and 2 or 3)
     end
     -- what Auto Potions waits for, in words (written to the log when it changes: it was silent)
     function EventTasks.potionWhy(gameData, farm)
@@ -14114,9 +14126,13 @@ __moduleSources["Game/EventTasks"] = function(...)
             table.insert(bag, id .. " x" .. count)
         end
         table.sort(bag)
+        if type(writefile) == "function" then
+            pcall(writefile, "AdoptMeFarm/potions.txt", "Food bag potions (" .. os.date("%Y-%m-%d %H:%M") .. "):\n"
+                .. table.concat(bag, "\n") .. "\n")
+        end
         local usable = gameData:findItems(GameConstants.ItemCategory, EventTasks.potionList(farm, gameData))[1]
         local target = EventTasks.potionTarget(gameData, farm)
-        local why = (not usable and "no usable potion in the Food bag")
+        local why = (not usable and "no usable potion now (Age-Up none; Bonus Aging / Bucks used less than BuffMinutes ago or none)")
             or (not target and "no equipped pet that still grows" .. (GameConstants.focusKind(farm)
                 and (" of the focus kind " .. tostring(GameConstants.focusKind(farm))) or ""))
             or "ready"
@@ -14159,9 +14175,14 @@ __moduleSources["Game/EventTasks"] = function(...)
             if not ok then
                 return false, why
             end
-            ctx.waitUntil(function()
-                return (ctx.gameData:petAge(petUnique) or 0) > (ageBefore or 0)
-            end, 3)
+            local class = EventTasks.potionClass(item.id)
+            if class > 1 then
+                EventTasks._buffUsedAt[class] = Util.now()
+            else
+                ctx.waitUntil(function()
+                    return (ctx.gameData:petAge(petUnique) or 0) > (ageBefore or 0)
+                end, 3)
+            end
             ctx.logger:success("Event", string.format("Potion %s on %s (age %s -> %s)", item.id, kind, tostring(ageBefore),
                 tostring(ctx.gameData:petAge(petUnique))))
             return true
