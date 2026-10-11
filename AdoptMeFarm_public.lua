@@ -12118,7 +12118,8 @@ __moduleSources["Game/EventTasks"] = function(...)
                 #ctx.gameData:itemsOfId(TOYS, E.Twig), key and 1 or 0)
             local preferTwig = ctx.farmConfig.Event.AutoNest ~= false and nestState == "COLLECT_TWIGS"
             local plan, why = EventTasks.cryptPick(ctx.gameData:get(KEYS.Crypt), ctx.farmConfig.Event.CryptOpen, preferTwig)
-            if EventTasks.skelicornOn(ctx.farmConfig) and EventTasks.skelicornStep(ctx.gameData, ctx.farmConfig) == "crypt" then
+            local skeliStep = EventTasks.skelicornOn(ctx.farmConfig) and EventTasks.skelicornStep(ctx.gameData, ctx.farmConfig)
+            if skeliStep and (skeliStep == "crypt" or EventTasks.skelicornNeedsLever(ctx.gameData)) then
                 -- v2.1.4 Auto Skelicorn: the lever's grave first; none on the floors I can reach: the ladder down
                 local crypt = ctx.gameData:get(KEYS.Crypt)
                 local lever = EventTasks.reachableGrave(crypt, "lever")
@@ -12321,6 +12322,16 @@ __moduleSources["Game/EventTasks"] = function(...)
             end
         end
         if type(manager) == "table" then
+            -- skelicorn.log 2026-10-11: the manager is { lever_state = "deactivated" } before the lever goes in.
+            -- Any other state (installed / activated / ...) = the machine has my lever
+            local leverState = manager.lever_state
+            if type(leverState) == "string" then
+                local lower = string.lower(leverState)
+                if lower ~= "deactivated" and lower ~= "" and lower ~= "none" and lower ~= "missing" then
+                    return true, true
+                end
+                return false, false
+            end
             scan(manager, 0)
         end
         return installed, activated
@@ -12372,7 +12383,8 @@ __moduleSources["Game/EventTasks"] = function(...)
             -- cost), and only after a refusal go for the lever (a new try every 30 min)
             local candyNow = tonumber(gameData:get(KEYS.Candy)) or 0
             -- user: "no point waiting 30 min": a new try at every Skelicorn check (120 s), the Crypt runs in between
-            if candyNow >= EventTasks.skelicornPrice() and Util.now() - (state.buyRefusedAt or -1e9) > 110 then
+            if candyNow >= EventTasks.skelicornPrice() and not state.leverRequired
+                and Util.now() - (state.buyRefusedAt or -1e9) > 110 then
                 return "buy"
             end
             return "crypt"
@@ -12385,6 +12397,12 @@ __moduleSources["Game/EventTasks"] = function(...)
             return "buy"
         end
         return nil, string.format("waiting for candy (%d / %d)", candy, EventTasks.skelicornPrice())
+    end
+    -- the lever still has to be found and put in (whatever step a buy probe shows)
+    function EventTasks.skelicornNeedsLever(gameData)
+        local state = EventTasks._skelicorn
+        local installed = EventTasks.leverState(gameData:get(KEYS.LightningLever))
+        return not (installed or state.delivered) and EventTasks.findLever(gameData) == nil
     end
     function EventTasks.findLeverMachine()
         local best
@@ -12464,9 +12482,16 @@ __moduleSources["Game/EventTasks"] = function(...)
                     return false
                 end, 8)
                 if not got then
-                    state.buyRefusedAt = Util.now() -- maybe the lever is needed first: the Crypt for it, a new try in 2 min
-                    return false, string.format("no Skelicorn arrived (price %d, candy %d, answer %s %s): the lever is"
-                        .. " probably needed first", price, candyBefore, tostring(sent), Util.truncate(tostring(answer), 60))
+                    state.buyRefusedAt = Util.now()
+                    if string.find(string.lower(tostring(answer)), "not for sale", 1, true) then
+                        -- skelicorn.log 2026-10-11: "not for sale" until MY lever is in the machine: no more tries
+                        -- (they counted as failures and paused the lever install too); the Crypt for the lever
+                        state.leverRequired = true
+                        EventTasks.skelicornNote("shop: not for sale until this account's lever is in the machine")
+                        return true
+                    end
+                    return false, string.format("no Skelicorn arrived (price %d, candy %d, answer %s %s)", price, candyBefore,
+                        tostring(sent), Util.truncate(tostring(answer), 60))
                 end
                 state.bought = true
                 state.delivered = true -- it sells: whatever the lever manager says, the machine is open for me
@@ -14706,11 +14731,11 @@ __moduleSources["Game/TaskManager"] = function(...)
                     EventTasks.skelicornNote(line)
                 end
             end
-            if step == "crypt" then
-                if due("crypt") and data:get(KEYS.Crypt) ~= nil and #data:itemsOfId(GameConstants.ToyCategory, E.RustyKey) > 0 then
-                    return "crypt", "look for the Lightning Lever in the Crypt (Auto Skelicorn)", EventTasks.crypt, nil
-                end
-            elseif step and due("skelicorn") then
+            local leverHunt = step == "crypt" or (step == "buy" and EventTasks.skelicornNeedsLever(data))
+            if leverHunt and due("crypt") and data:get(KEYS.Crypt) ~= nil
+                and #data:itemsOfId(GameConstants.ToyCategory, E.RustyKey) > 0 then
+                return "crypt", "look for the Lightning Lever in the Crypt (Auto Skelicorn)", EventTasks.crypt, nil
+            elseif step and step ~= "crypt" and due("skelicorn") then
                 return "skelicorn", "Auto Skelicorn: " .. step, EventTasks.skelicorn, nil
             end
         end
@@ -14745,8 +14770,9 @@ __moduleSources["Game/TaskManager"] = function(...)
         local cryptOn = event.Crypt or (focus ~= nil and focus.kind == "spider")
         -- user 2026-10-11: "with Auto Skelicorn on, the lever comes first, 100%": while the lever is still needed the
         -- Crypt picks (Farm.Event.CryptOpen) do not run; the Auto Skelicorn block above opens the Crypt for the lever
+        -- (log 2026-10-11: while the step showed "buy" the normal Crypt picks spent the Rusty Key on a ladder)
         local leverFirst = EventTasks.skelicornOn(self._farmConfig) and data:petInventoryKnown()
-            and EventTasks.skelicornStep(data, self._farmConfig) == "crypt"
+            and EventTasks.skelicornStep(data, self._farmConfig) ~= nil and EventTasks.skelicornNeedsLever(data)
         if cryptOn and not leverFirst and due("crypt") and data:get(KEYS.Crypt) ~= nil then
             local plan = EventTasks.cryptPick(data:get(KEYS.Crypt), event.CryptOpen)
             if plan and plan.spider and event.MummySpider ~= false then
