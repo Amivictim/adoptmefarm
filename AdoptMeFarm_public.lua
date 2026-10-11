@@ -12496,10 +12496,11 @@ __moduleSources["Game/EventTasks"] = function(...)
     -- already this account's (found in the Crypt), only not put in. "deactivated" = go and Use it (a new try every 10 min
     -- when a Use changed nothing)
     function EventTasks.leverWaiting(gameData)
-        local manager = gameData:get(KEYS.LightningLever)
-        local leverState = type(manager) == "table" and manager.lever_state
-        return type(leverState) == "string" and string.lower(leverState) == "deactivated"
-            and Util.now() - (EventTasks._skelicorn.useTriedAt or -1e9) > 600
+        -- user 2026-10-11 (the lever was not in my backpack, Use worked anyway): Pull first, whatever the data says;
+        -- again every 10 min while the shop says "not for sale"
+        -- (with candy for one: only the buy right after it tells whether the pull worked)
+        return Util.now() - (EventTasks._skelicorn.useTriedAt or -1e9) > 600
+            and (tonumber(gameData:get(KEYS.Candy)) or 0) >= EventTasks.skelicornPrice()
     end
     function EventTasks.skelicornNeedsLever(gameData)
         local state = EventTasks._skelicorn
@@ -12618,7 +12619,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                 ctx.logger:info("Skelicorn", tostring(why or "no lever yet: the Crypt looks for it"))
                 return true
             end
-            if step == "buy" then
+            local function buyOne()
                 local price = EventTasks.skelicornPrice()
                 local before = ctx.gameData:petUniquesOfKind(E.Skelicorn)
                 local candyBefore = tonumber(ctx.gameData:get(KEYS.Candy)) or 0
@@ -12651,7 +12652,11 @@ __moduleSources["Game/EventTasks"] = function(...)
                 ctx.logger:success("Skelicorn", string.format("Skelicorn bought for %d candy: %s",
                     candyBefore - (tonumber(ctx.gameData:get(KEYS.Candy)) or candyBefore),
                     focused and "Mega Skelicorn buys the next one at 120k candy" or "Auto Skelicorn is done"))
+                EventTasks.skelicornNote("Skelicorn bought for " .. price .. " candy")
                 return true
+            end
+            if step == "buy" then
+                return buyOne()
             end
             -- install / activate: at the machine by the Manor
             local arrived, travelWhy = ctx.travel:goTo("MainMap")
@@ -12696,10 +12701,21 @@ __moduleSources["Game/EventTasks"] = function(...)
                 end, 6)
             end
             if step == "install" then
+                state.useTriedAt = Util.now()
+                EventTasks.skelicornNote("Pull (Use) at the lever machine: " .. (changed and "my data changed" or "no data change")
+                    .. " (answer " .. tostring(sent) .. " " .. Util.truncate(tostring(answer), 60) .. ")")
                 if not changed then
-                    state.useTriedAt = Util.now() -- no lever of mine yet: the Crypt for it, Use again in 10 min
-                    EventTasks.skelicornNote("Use at the lever machine changed nothing (answer " .. tostring(sent) .. " "
-                        .. Util.truncate(tostring(answer), 60) .. "): no lever yet, the Crypt keeps looking")
+                    -- user 2026-10-11: "Pull -> Buy -> failed -> the Crypt for the lever -> 120k candy -> again": the game
+                    -- confirms a working pull with its own events, not always in my data, so the buy decides
+                    state.leverRequired = false
+                    if (tonumber(ctx.gameData:get(KEYS.Candy)) or 0) >= EventTasks.skelicornPrice() then
+                        task.wait(1)
+                        local bought = buyOne()
+                        if EventTasks._skelicorn.bought then
+                            state.delivered = true
+                        end
+                        return bought
+                    end
                     return true
                 end
                 state.leverRequired = false
