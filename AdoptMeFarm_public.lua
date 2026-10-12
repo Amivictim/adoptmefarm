@@ -3170,6 +3170,7 @@ __moduleSources["Services/Interface"] = function(...)
         "Ride / walk: never flung into the void (a white screen cause)",
         "2 pets at once for accounts with the 2-pet perk / Pet Certificate",
         "Game dialogs answered by themselves (teleport -> No, Okay, Nice, Done, Cash out)",
+        "Mystery: the 3 cards read from the game, then one call on the right card (fast calls were dropped)",
         "Auto Potions: every Age-Up (Tiny too), Bonus Aging / Bucks one at a time per pet, Busy Body",
         "Mystery: tries every need until one is taken",
         "Stray Cat found at its new place; white screen recovery",
@@ -9883,37 +9884,87 @@ __moduleSources["Game/Tasks"] = function(...)
         end,
     }
     --[[
-        v2.1.5 mystery cards (spy log 2026-10-12): the game sends AilmentsAPI/ChooseMysteryAilment(pet, "mystery", card 1-3,
-        kind) - the same call the bot sent - and the card was taken at once, because the kind WAS on that card. The 3
-        cards come from the pool + random_seed of the mystery entry; the game's own MysteryHelper module works them
-        out. Asked here with the entry in the shapes it may take; an answer counts only when it is 2-4 kinds of the pool.
+        v2.1.6 mystery cards (spy v3, 2026-10-12): the game shows the 3 cards with
+        MysteryAilmentClient._get_ailment_slots(self, petInfo) -> { "pizza_party", "ride", "camping" }, where self.options is
+        the mystery component (components + random_seed) plus a get_ailment_slots function. The same spy showed the
+        server ignoring even the RIGHT card while calls came in fast (a player's own tap was dropped in the middle of
+        the bot's burst), so: read the 3 cards, then ONE call on the right card.
+        The get_ailment_slots function is looked up once: the game's loaded Ailments modules first, then the running
+        functions by name. An answer counts only when it is 2-4 kinds of the pet's pool.
     ]]
-    GameConstants.MysteryHelperPath = { "new", "modules", "Ailments", "Helpers", "MysteryHelper" }
-    local mysteryHelper, mysteryHelperTried, mysteryHow
-    function Tasks.mysteryCards(ctx, entry)
-        if not mysteryHelperTried then
-            mysteryHelperTried = true
-            local node = game:GetService("ReplicatedStorage")
-            for _, name in ipairs(GameConstants.MysteryHelperPath) do
-                node = node and node:FindFirstChild(name)
+    GameConstants.MysteryClientPath = { "new", "modules", "Ailments", "ClientActions", "MysteryAilmentClient" }
+    GameConstants.AilmentsModulesPath = { "new", "modules", "Ailments" }
+    local mysteryClient, mysterySlotsFn, mysteryLookupDone, mysteryHow
+    local function findMysterySlotsFn(ctx)
+        local RS = game:GetService("ReplicatedStorage")
+        local node = RS
+        for _, name in ipairs(GameConstants.MysteryClientPath) do
+            node = node and node:FindFirstChild(name)
+        end
+        if node and node:IsA("ModuleScript") then
+            local ok, module = pcall(require, node)
+            mysteryClient = ok and type(module) == "table" and type(module._get_ailment_slots) == "function" and module or nil
+        end
+        local found, where = {}, {}
+        local function take(fn, label)
+            if type(fn) == "function" and not table.find(found, fn) then
+                table.insert(found, fn)
+                table.insert(where, label)
             end
-            local ok, module = false, nil
-            if node and node:IsA("ModuleScript") then
-                ok, module = pcall(require, node)
-            end
-            mysteryHelper = ok and type(module) == "table" and module or nil
-            local names = {}
-            for key, value in pairs(mysteryHelper or {}) do
-                if type(value) == "function" then
-                    table.insert(names, tostring(key))
+        end
+        -- 1) a module table (or one level down) holding get_ailment_slots
+        local folder = RS
+        for _, name in ipairs(GameConstants.AilmentsModulesPath) do
+            folder = folder and folder:FindFirstChild(name)
+        end
+        -- only modules the game already loaded (a fresh require could wait forever or run server code)
+        local loaded = nil
+        if type(getloadedmodules) == "function" then
+            pcall(function()
+                local set = {}
+                for _, m in ipairs(getloadedmodules()) do
+                    set[m] = true
+                end
+                loaded = set
+            end)
+        end
+        for _, module in ipairs(folder and folder:GetDescendants() or {}) do
+            if module:IsA("ModuleScript") and (loaded == nil or loaded[module]) then
+                local ok, value = pcall(require, module)
+                if ok and type(value) == "table" then
+                    take(rawget(value, "get_ailment_slots"), module.Name)
+                    for key, inner in pairs(value) do
+                        if type(inner) == "table" then
+                            take(rawget(inner, "get_ailment_slots"), module.Name .. "." .. tostring(key))
+                        end
+                    end
                 end
             end
-            table.sort(names)
-            ctx.logger:info("Tasks", "Mystery: the game's MysteryHelper " .. (mysteryHelper and ("functions: "
-                .. table.concat(names, ", ")) or "was not found"))
         end
-        if not mysteryHelper then
-            return nil
+        -- 2) the running functions by their name
+        if #found == 0 and type(getgc) == "function" then
+            pcall(function()
+                for _, fn in ipairs(getgc(false)) do
+                    if type(fn) == "function" and debug.info(fn, "n") == "get_ailment_slots" then
+                        take(fn, "running function")
+                    end
+                    if #found >= 6 then
+                        break
+                    end
+                end
+            end)
+        end
+        mysterySlotsFn = { fns = found, where = where }
+        ctx.logger:info("Tasks", string.format("Mystery: card reader %s, get_ailment_slots found %d (%s)",
+            mysteryClient and "ok" or "NOT found", #found, table.concat(where, ", ")))
+    end
+    function Tasks.mysteryCards(ctx, entry)
+        if not mysteryLookupDone then
+            mysteryLookupDone = true
+            findMysterySlotsFn(ctx)
+        end
+        if not mysteryClient then
+            return nil, "no MysteryAilmentClient"
         end
         local manager = ctx.gameData:get(GameConstants.DataKeys.Ailments)
         local ailments = type(manager) == "table" and manager.ailments
@@ -9921,7 +9972,7 @@ __moduleSources["Game/Tasks"] = function(...)
         local raw = type(mine) == "table" and mine.mystery
         local component = type(raw) == "table" and type(raw.components) == "table" and raw.components.mystery
         if type(component) ~= "table" then
-            return nil
+            return nil, "no mystery data"
         end
         local pool = {}
         for kind in pairs(type(component.components) == "table" and component.components or {}) do
@@ -9946,49 +9997,46 @@ __moduleSources["Game/Tasks"] = function(...)
             end
             return (#list >= 2 and #list <= 4) and list or nil
         end
-        local tries = {
-            { component }, { raw }, { mine, "mystery" }, { component.random_seed, component.components },
-            { component.components, component.random_seed }, { entry.petUnique, "mystery" }, { raw, entry.petUnique },
-        }
-        local names = {}
-        for key, value in pairs(mysteryHelper) do
-            local lower = string.lower(tostring(key))
-            -- read-only helpers only: nothing that sends, chooses, shows or changes anything
-            local risky = false
-            for _, word in ipairs({ "fire", "send", "choose", "select", "set", "remove", "show", "open", "play", "start",
-                "connect", "destroy", "clear", "update", "request", "invoke" }) do
-                if string.find(lower, word, 1, true) then
-                    risky = true
-                end
-            end
-            if type(value) == "function" and not risky then
-                table.insert(names, key)
-            end
-        end
-        table.sort(names, function(a, b)
-            return tostring(a) < tostring(b)
+        local Players = game:GetService("Players")
+        local player = Players.LocalPlayer
+        local model = nil
+        pcall(function()
+            model = ctx.petLocator:findModel(entry.petUnique)
         end)
-        -- the function that answered last time first
+        local petInfo = {
+            pet_unique = entry.petUnique, unique = entry.petUnique, pet_id = entry.petKind, is_pet = true,
+            char = model, player = player, controller = player, entity_controller = player, index = 1,
+        }
+        local fns = mysterySlotsFn and mysterySlotsFn.fns or {}
+        local order = {}
         if mysteryHow then
-            table.insert(names, 1, mysteryHow.name)
+            table.insert(order, mysteryHow)
         end
-        for _, name in ipairs(names) do
-            local fn = mysteryHelper[name]
-            for index, args in ipairs(tries) do
-                if not mysteryHow or mysteryHow.name ~= name or mysteryHow.args == index then
-                    local ok, result = pcall(fn, table.unpack(args))
-                    local cards = ok and asCards(result)
-                    if not cards and ok and type(result) == "table" then
-                        cards = asCards(result.options or result.choices or result.cards or result.ailments)
-                    end
-                    if cards then
-                        mysteryHow = { name = name, args = index }
-                        return cards, string.format("MysteryHelper.%s (shape %d)", tostring(name), index)
-                    end
-                end
+        for i = 1, #fns do
+            if i ~= mysteryHow then
+                table.insert(order, i)
             end
         end
-        return nil
+        if #order == 0 then
+            order = { 0 } -- no helper found: the reader may still work without one
+        end
+        local lastError = nil
+        for _, i in ipairs(order) do
+            local options = {}
+            for key, value in pairs(component) do
+                options[key] = value
+            end
+            options.get_ailment_slots = fns[i]
+            local self = setmetatable({ options = options }, { __index = mysteryClient })
+            local ok, result = pcall(mysteryClient._get_ailment_slots, self, petInfo)
+            local cards = ok and asCards(result)
+            if cards then
+                mysteryHow = i ~= 0 and i or nil
+                return cards, "card reader" .. (i ~= 0 and (" + " .. tostring(mysterySlotsFn.where[i])) or "")
+            end
+            lastError = ok and ("answer " .. type(result)) or tostring(result)
+        end
+        return nil, "card reader: " .. tostring(lastError)
     end
     Tasks.mystery = {
         id = "mystery",
@@ -10035,6 +10083,11 @@ __moduleSources["Game/Tasks"] = function(...)
             end
             -- v2.1.5: the 3 real cards from the game's MysteryHelper -> one call on the right card
             local okCards, cards, how = pcall(Tasks.mysteryCards, ctx, entry)
+            -- the server drops calls that come in quick succession: a quiet moment first
+            local quiet = 3 - (Util.now() - (Tasks._lastMysterySend or 0))
+            if quiet > 0 then
+                task.wait(quiet)
+            end
             if okCards and type(cards) == "table" then
                 local pick, slot
                 for _, kind in ipairs(choices) do
@@ -10051,15 +10104,21 @@ __moduleSources["Game/Tasks"] = function(...)
                 ctx.logger:info("Tasks", string.format("Mystery: cards %s (%s) -> card %s: %s", table.concat(cards, ", "),
                     tostring(how), tostring(slot), tostring(pick)))
                 if pick then
-                    pcall(function()
-                        ctx.interaction:send("ChooseMystery", entry.petUnique, "mystery", slot, pick)
-                    end)
-                    if ctx.waitUntil(gone, 4) then
-                        ctx.logger:info("Tasks", "Mystery accepted: " .. pick .. " (card " .. slot .. ")")
-                        return true
+                    for attempt = 1, 2 do
+                        Tasks._lastMysterySend = Util.now()
+                        pcall(function()
+                            ctx.interaction:send("ChooseMystery", entry.petUnique, "mystery", slot, pick)
+                        end)
+                        if ctx.waitUntil(gone, 5) then
+                            ctx.logger:info("Tasks", "Mystery accepted: " .. pick .. " (card " .. slot .. ")")
+                            return true
+                        end
                     end
                     ctx.logger:info("Tasks", "Mystery: the card was not taken: trying every kind")
                 end
+            else
+                ctx.logger:info("Tasks", "Mystery: the 3 cards could not be read (" .. tostring(okCards and how or cards)
+                    .. "): trying every kind, slowly")
             end
             -- v2.1.4 (user: "mystery still fails: no time limit, send every need in turn until it is accepted"; a
             -- report: the same first kind was refused twice, then taken at once on the 3rd try): round after round
@@ -10073,12 +10132,20 @@ __moduleSources["Game/Tasks"] = function(...)
                         ctx.logger:info("Tasks", "Mystery: the card is gone")
                         return true
                     end
+                    -- v2.1.6 (spy v3: calls in quick succession are dropped, even the right card): one call every 2.5 s
+                    local gap = 2.5
                     for slot = 1, 3 do
+                        Tasks._lastMysterySend = Util.now()
                         pcall(function()
                             ctx.interaction:send("ChooseMystery", entry.petUnique, "mystery", slot, kind)
                         end)
+                        if ctx.waitUntil(gone, gap) then
+                            ctx.logger:info("Tasks", string.format("Mystery accepted: %s (card %d, kind %d of %d, round %d)",
+                                kind, slot, index, #choices, round))
+                            return true
+                        end
                     end
-                    if ctx.waitUntil(gone, 0.8) then
+                    if ctx.waitUntil(gone, 0.5) then
                         ctx.logger:info("Tasks", string.format("Mystery accepted: %s (kind %d of %d, round %d, seed %s)", kind,
                             index, #choices, round, tostring(entry.mysterySeed)))
                         return true
