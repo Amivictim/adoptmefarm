@@ -2299,6 +2299,16 @@ __moduleSources["Services/Lang"] = function(...)
     add("Config", "Ayarlar", "Config", "Config")
     add("Dashboard", "Panel", "Panel", "Painel")
     add("Farm status", "Çiftlik durumu", "Estado de la granja", "Status da fazenda")
+    add("Ghost Gallery: playing now", "Ghost Gallery: şu an oynanıyor", "Ghost Gallery: jugando ahora", "Ghost Gallery: jogando agora")
+    add(" (skipped: Hauntlet)", " (atlanır: Hauntlet)", " (se salta: Hauntlet)", " (pulado: Hauntlet)")
+    add(" (resting)", " (dinleniyor)", " (en pausa)", " (em pausa)")
+    add("Hauntlet: off", "Hauntlet: kapalı", "Hauntlet: apagado", "Hauntlet: desligado")
+    add("Hauntlet: in the run (room %d)", "Hauntlet: oyunda (oda %d)", "Hauntlet: en la partida (sala %d)", "Hauntlet: na partida (sala %d)")
+    add("Hauntlet: joined, starting", "Hauntlet: katıldı, başlıyor", "Hauntlet: unido, empieza", "Hauntlet: entrou, começando")
+    add("Hauntlet: going to the join circle", "Hauntlet: katılma dairesine gidiyor", "Hauntlet: yendo al círculo", "Hauntlet: indo ao círculo")
+    add("Hauntlet: in %s", "Hauntlet: %s sonra", "Hauntlet: en %s", "Hauntlet: em %s")
+    add(" (one round after the last run)", " (son run'dan bir tur sonra)", " (una ronda tras la última)", " (uma rodada após a última)")
+    add("Hauntlet: waiting for the game's timer", "Hauntlet: oyunun sayacı bekleniyor", "Hauntlet: esperando el temporizador", "Hauntlet: aguardando o timer")
     add("Quick actions", "Hızlı işlemler", "Acciones rápidas", "Ações rápidas")
     add("Auto tasks", "Otomatik görevler", "Tareas automáticas", "Tarefas automáticas")
     add("Pet Pen", "Pet Ağılı", "Corral", "Cercadinho")
@@ -3153,6 +3163,8 @@ __moduleSources["Services/Interface"] = function(...)
         "Travel: no more 15 s waits when the game's travel keeps failing",
         "Hauntlet: finds a late-loading join circle / run interior",
         "Mystery: reads the 3 real cards from the game, one pick",
+        "Farm status: live Ghost Gallery + Hauntlet timers from the game",
+        "Ride / walk: never flung into the void (a white screen cause)",
         "Auto Potions: every Age-Up (Tiny too), Bonus Aging / Bucks one at a time per pet, Busy Body",
         "Mystery: tries every need until one is taken",
         "Stray Cat found at its new place; white screen recovery",
@@ -3776,7 +3788,7 @@ __moduleSources["Services/Interface"] = function(...)
         return parts
     end
     Interface.ROW_COLORS = { last = "pumpkin", pet = "candy", session = "teal", bucks = "slime", candy = "candy",
-        tasks = "moon", doing = "pumpkin", needs = "slime", ghost = "ghost", pen = "green", off = "blood" }
+        tasks = "moon", doing = "pumpkin", needs = "slime", ghost = "ghost", hauntlet = "pumpkin", pen = "green", off = "blood" }
     local function escapeRich(text)
         return (string.gsub(tostring(text), "[&<>]", { ["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;" }))
     end
@@ -4246,12 +4258,41 @@ __moduleSources["Services/Interface"] = function(...)
         end
         local needsText = #needs > 0 and needsLine(count) or T("Needs: none")
         local ghost, ghostState
-        if s.ghostEnabled == false then
+        local tm = type(s.timers) == "table" and s.timers or {}
+        if s.ghostEnabled == false or tm.ghost == "off" then
             ghost, ghostState = T("Ghost Gallery: off"), "off"
-        elseif s.nextRoundIn then
-            ghost, ghostState = T("Ghost Gallery: in %s", clock(s.nextRoundIn)), "on"
+        elseif tm.ghost == "run" then
+            ghost, ghostState = T("Ghost Gallery: playing now"), "on"
+        elseif tm.ghostIn or s.nextRoundIn then
+            ghost = T("Ghost Gallery: in %s", clock(tm.ghostIn or s.nextRoundIn))
+            ghostState = "on"
+            if tm.ghostSkipped then
+                ghost, ghostState = ghost .. T(" (skipped: Hauntlet)"), "wait"
+            elseif tm.ghostResting then
+                ghost, ghostState = ghost .. T(" (resting)"), "bad"
+            end
         else
             ghost, ghostState = T("Ghost Gallery: waiting"), "wait"
+        end
+        local haunt, hauntState
+        if tm.haunt == nil or tm.haunt == "off" then
+            haunt, hauntState = T("Hauntlet: off"), "off"
+        elseif tm.haunt == "run" then
+            haunt, hauntState = T("Hauntlet: in the run (room %d)", tm.hauntRoom or 0), "on"
+        elseif tm.haunt == "joined" then
+            haunt, hauntState = T("Hauntlet: joined, starting"), "on"
+        elseif tm.haunt == "joining" then
+            haunt, hauntState = T("Hauntlet: going to the join circle"), "on"
+        elseif tm.hauntIn then
+            haunt, hauntState = T("Hauntlet: in %s", clock(tm.hauntIn)), "on"
+            if tm.hauntSkipped then
+                haunt = haunt .. T(" (one round after the last run)")
+            end
+            if tm.hauntResting then
+                haunt, hauntState = haunt .. T(" (resting)"), "bad"
+            end
+        else
+            haunt, hauntState = T("Hauntlet: waiting for the game's timer"), "wait"
         end
         local penText, penState
         local pen = type(s.pen) == "table" and s.pen or nil
@@ -4286,6 +4327,7 @@ __moduleSources["Services/Interface"] = function(...)
             { key = "doing", icon = "zap", text = doing, dot = true, state = doingState },
             { key = "needs", icon = "list-checks", text = needsText, dot = true, state = #needs > 0 and "wait" or "on" },
             { key = "ghost", icon = "ghost", text = ghost, dot = true, state = ghostState },
+            { key = "hauntlet", icon = "door-open", text = haunt, dot = true, state = hauntState },
             { key = "pen", icon = "fence", text = penText, dot = true, state = penState },
             { key = "off", icon = "circle-pause", dot = true, state = #off > 0 and "bad" or "on",
                 text = #off > 0 and T("Resting: %s", table.concat(off, ", ")) or T("Resting: none") },
@@ -6003,9 +6045,7 @@ __moduleSources["Services/Interface"] = function(...)
         local descriptionsShown = showDescriptions
         task.spawn(function()
             while alive do
-                if tick % 2 == 0 then
-                    refreshStatus()
-                end
+                refreshStatus() -- v2.1.5: every second (the event timers count down live)
                 if (settings.Descriptions ~= false) ~= descriptionsShown then
                     descriptionsShown = settings.Descriptions ~= false
                     rebuild()
@@ -8680,7 +8720,7 @@ __moduleSources["Game/Travel"] = function(...)
         if self:_waitPlacedOnMainMap(8) then
             return true
         end
-        local p = rootPosition()
+        local p = rootPosition() or Vector3.zero -- v2.1.5: the character can be gone here (report: "index nil with 'X'")
         self._logger:warn("Travel", string.format("Data says MainMap but my character is still at (%.0f, %.0f) (an interior's"
             .. " area): asking for MainMap once more", p.X, p.Z))
         self._interaction:send("SetLocation", "MainMap", nil, recipe.spawn)
@@ -8689,6 +8729,9 @@ __moduleSources["Game/Travel"] = function(...)
             return true
         end
         p = rootPosition()
+        if not p then
+            return true -- no character right now (respawning): the next step looks again
+        end
         return false, string.format("not placed on MainMap (character at %.0f, %.0f)", p.X, p.Z)
     end
     local INTERIORS_PATH = { "ClientModules", "Core", "InteriorsM", "InteriorsM" }
@@ -10157,8 +10200,35 @@ __moduleSources["Game/Tasks"] = function(...)
                 end
                 local stalled = false
                 local tickCount = 0
+                -- v2.1.5 (reports 2026-10-12: ride "moved 1500 studs" every 7 s, at (17505, -15021) NOT ON MAINMAP:
+                -- the stroller flings the character into the void - a white / empty screen for the user): the walk
+                -- stays near where it began; a jump of more than FLING studs = back to the start, still; 3 = stop
+                local FLING = 120
+                local anchorPos, flings, flungOut = nil, 0, false
+                local function guardFling()
+                    if not (root and anchorPos) then
+                        return
+                    end
+                    local p = root.Position
+                    local far = math.sqrt((p.X - anchorPos.X) ^ 2 + (p.Z - anchorPos.Z) ^ 2)
+                    if far > FLING or not isOnMainMapArea(p) then
+                        flings += 1
+                        ctx.logger:warn("Tasks", string.format("%s: flung %d studs away (at %.0f, %.0f): back to the start (%d)",
+                            kind, math.floor(far), p.X, p.Z, flings))
+                        pcall(function()
+                            root.AssemblyLinearVelocity = Vector3.zero
+                            root.AssemblyAngularVelocity = Vector3.zero
+                            character:PivotTo(CFrame.new(anchorPos + Vector3.new(0, 3, 0)))
+                        end)
+                        lastPos = root.Position
+                        if flings >= 3 then
+                            flungOut, stalled = true, true
+                        end
+                    end
+                end
                 local function tick()
                     tickCount += 1
+                    guardFling()
                     if stroller and os.clock() - lastUse > 2 then
                         lastUse = os.clock()
                         ctx.interaction:send("UseTool", stroller, "START")
@@ -10196,6 +10266,7 @@ __moduleSources["Game/Tasks"] = function(...)
                     character = Players.LocalPlayer.Character
                     root = character and character:FindFirstChild("HumanoidRootPart")
                     lastPos = root and root.Position
+                    anchorPos = root and isOnMainMapArea(root.Position) and root.Position or anchorPos
                     return ctx.interaction:walkAround(seconds, function()
                         return gone() or stalled
                     end, tick)
@@ -10203,6 +10274,9 @@ __moduleSources["Game/Tasks"] = function(...)
                 walkPhase(75)
                 if gone() then
                     return true
+                end
+                if flungOut then
+                    return false, kind .. ": the character was flung off the map 3 times (stopped, back at the start)"
                 end
                 if stalled and GameConstants.Spots.beach_party then
                     ctx.logger:info("Tasks", kind .. " is not progressing here: moving to the open beach spot and walking there")
@@ -10216,6 +10290,9 @@ __moduleSources["Game/Tasks"] = function(...)
                     walkPhase(60)
                     if gone() then
                         return true
+                    end
+                    if flungOut then
+                        return false, kind .. ": the character was flung off the map 3 times (stopped, back at the start)"
                     end
                 elseif not stalled then
                     walkPhase(45)
@@ -15901,6 +15978,60 @@ __moduleSources["Game/TaskManager"] = function(...)
         self._logger:info("Tasks", string.format("Retry: %d resting task%s may run again (you asked)", count, count == 1 and "" or "s"))
         return count
     end
+    -- v2.1.5 (user: "Farm status: the next Ghost Gallery and Hauntlet from the game, live; joins tracked here so
+    -- they never overlap"): the game's cycle data + the same rules _selectEventJob uses (Hauntlet first, the round
+    -- right after a run skipped, a Ghost Gallery round that would still run when a Hauntlet starts skipped)
+    function TaskManager:eventTimers()
+        local event = self._farmConfig.Event
+        local data = self._gameData
+        local out = {}
+        if type(event) ~= "table" or not data then
+            return out
+        end
+        local now = Minigame.serverNow()
+        local current = self._state:get("farm.currentTask", "none")
+        local h = self._hauntlet
+        local hauntStart
+        if event.Enabled ~= true or event.Hauntlet ~= true then
+            out.haunt = "off"
+        elseif h and h.enter and not h.leave and not h.kicked then
+            out.haunt, out.hauntRoom = "run", tonumber(h.roomSeq) or 0
+        elseif h and h.join and not h.leave and not h.kicked and Util.now() - (h.join.at or 0) < 90 then
+            out.haunt = "joined"
+        elseif current == "hauntlet" then
+            out.haunt = "joining"
+        else
+            hauntStart = EventTasks.nextRoundStart(data:get(GameConstants.DataKeys.HauntletCycle), now)
+            if hauntStart and h and h.lastRunStart and hauntStart - h.lastRunStart < 900 then
+                hauntStart += GameConstants.Event.RoundSeconds
+                out.hauntSkipped = true
+            end
+            out.haunt = hauntStart and "next" or "unknown"
+            out.hauntIn = hauntStart and math.max(0, math.floor(hauntStart - now)) or nil
+            if self:_isBlocked("hauntlet") then
+                out.hauntResting = true
+            end
+        end
+        if event.Enabled ~= true or event.GhostGallery ~= true then
+            out.ghost = "off"
+        elseif current == "ghost_gallery" then
+            out.ghost = "run"
+        else
+            local ghostStart = EventTasks.nextRoundStart(data:get(GameConstants.DataKeys.GhostCycle), now)
+            out.ghost = ghostStart and "next" or "unknown"
+            out.ghostIn = ghostStart and math.max(0, math.floor(ghostStart - now)) or nil
+            local hauntFirst = out.haunt ~= "off" and event.HauntletFirst ~= false
+            if ghostStart and hauntFirst and (out.haunt == "run" or out.haunt == "joined" or out.haunt == "joining"
+                or (hauntStart and hauntStart >= ghostStart - HAUNTLET_LEAD_SECONDS
+                    and hauntStart - ghostStart < GHOST_ROUND_BUSY_SECONDS)) then
+                out.ghostSkipped = true -- that round would still run when the Hauntlet starts: the Hauntlet gets it
+            end
+            if self:_isBlocked("ghost_gallery") then
+                out.ghostResting = true
+            end
+        end
+        return out
+    end
     function TaskManager:getPenInfo()
         local data = self._gameData
         local event = self._farmConfig.Event
@@ -16623,6 +16754,10 @@ __moduleSources["main"] = function(...)
                 pets = pets,
                 needs = needs,
                 nextRoundIn = nextRoundIn,
+                timers = taskManager and (function()
+                    local ok, t = pcall(taskManager.eventTimers, taskManager)
+                    return ok and t or nil
+                end)() or nil,
                 tasksSucceeded = state:get("farm.tasksSucceeded", 0),
                 tasksFailed = state:get("farm.tasksFailed", 0),
                 disabled = diagnostics.disabled,
