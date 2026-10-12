@@ -3164,6 +3164,7 @@ __moduleSources["Services/Interface"] = function(...)
         "Travel: a place that does not open from the house is reached via the main map (the Crypt)",
         "An egg the shop does not sell is left alone for 2 h after 6 misses",
         "Hauntlet: a key that opens another door of the same room no longer reads as going back",
+        "Characters wedged in a railing or a model (stuck Jumping) are moved to the nearest free spot",
         "Game dialogs answered by themselves (teleport -> No, Okay, Nice, Done, Cash out)",
         "v2.1.5 (11 Oct 2026)",
         "Mega a Pet presets: Mega Mummy Spider's, Mega Skelicorn, any pet or egg",
@@ -8081,6 +8082,68 @@ __moduleSources["Game/Interaction"] = function(...)
         return nil
     end
     Interaction.floorUnder = floorUnder
+    --[[
+        v2.1.6 (user screenshots: characters wedged in a railing / inside other models for the whole game, the
+        Humanoid stuck "Jumping"): unstick() looks for the nearest free standing spot around me (rings of 4 / 8 / 12
+        studs, 8 directions): a floor under it, and no solid part where my body would stand. Moves me there.
+        Returns the distance moved, or nil when no free spot was found.
+    ]]
+    function Interaction.unstick()
+        local player = game:GetService("Players").LocalPlayer
+        local character = player and player.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        if not (root and humanoid) then
+            return nil
+        end
+        local ignore = { character }
+        local pets = workspace:FindFirstChild(GameConstants.PetsFolderName or "Pets")
+        if pets then
+            table.insert(ignore, pets)
+        end
+        local rayParams = RaycastParams.new()
+        rayParams.FilterType = Enum.RaycastFilterType.Exclude
+        rayParams.FilterDescendantsInstances = ignore
+        local boxParams = OverlapParams.new()
+        boxParams.FilterType = Enum.RaycastFilterType.Exclude
+        boxParams.FilterDescendantsInstances = ignore
+        local hip = (humanoid.HipHeight or 2) + root.Size.Y * 0.5
+        local origin = root.Position
+        local function freeAt(x, z)
+            local hit = workspace:Raycast(Vector3.new(x, origin.Y + 6, z), Vector3.new(0, -30, 0), rayParams)
+            if not (hit and hit.Instance and hit.Instance.CanCollide) then
+                return nil
+            end
+            local stand = Vector3.new(x, hit.Position.Y + hip + 0.3, z)
+            -- the body: from just above the floor to the head
+            local parts = workspace:GetPartBoundsInBox(CFrame.new(stand + Vector3.new(0, 0.5, 0)), Vector3.new(2.5, 4.5, 2.5),
+                boxParams)
+            for _, part in ipairs(parts) do
+                if part.CanCollide then
+                    return nil
+                end
+            end
+            return stand
+        end
+        for _, radius in ipairs({ 4, 8, 12 }) do
+            for step = 0, 7 do
+                local angle = step * math.pi / 4
+                local spot = freeAt(origin.X + math.cos(angle) * radius, origin.Z + math.sin(angle) * radius)
+                if spot then
+                    local moved = pcall(function()
+                        root.AssemblyLinearVelocity = Vector3.zero
+                        root.AssemblyAngularVelocity = Vector3.zero
+                        character:PivotTo(CFrame.new(spot))
+                        humanoid:ChangeState(Enum.HumanoidStateType.Landed)
+                    end)
+                    if moved then
+                        return radius
+                    end
+                end
+            end
+        end
+        return nil
+    end
     function Interaction.settle(maxWait)
         local player = game:GetService("Players").LocalPlayer
         local character = player and player.Character
@@ -16981,7 +17044,7 @@ __moduleSources["main"] = function(...)
             -- that stands on nothing (FloorMaterial Air) yet does not fall, or lies (FallingDown / Ragdoll / Physics),
             -- for 3 s in a row is stuck in the map: put back on top of the floor and stood up
             maid:Give(task.spawn(function()
-                local stuckFor, lastLift = 0, 0
+                local stuckFor, lastLift, wedgedFor, lastPos = 0, 0, 0, nil
                 while true do
                     task.wait(1)
                     pcall(function()
@@ -17000,6 +17063,12 @@ __moduleSources["main"] = function(...)
                         local hanging = humanoid.FloorMaterial == Enum.Material.Air
                             and math.abs(root.AssemblyLinearVelocity.Y) < 2 and state ~= Enum.HumanoidStateType.Climbing
                             and state ~= Enum.HumanoidStateType.Swimming
+                        -- v2.1.6 (user: "the stuck ones stay in Jumping"): Jumping / Freefall that goes nowhere = wedged
+                        local airborne = state == Enum.HumanoidStateType.Jumping or state == Enum.HumanoidStateType.Freefall
+                        local here = root.Position
+                        local still = lastPos ~= nil and (here - lastPos).Magnitude < 1.5
+                        lastPos = here
+                        wedgedFor = (airborne and still) and wedgedFor + 1 or 0
                         stuckFor = (lying or hanging) and stuckFor + 1 or 0
                         if stuckFor >= 3 and Util.now() - lastLift > 5 then
                             stuckFor = 0
@@ -17007,7 +17076,16 @@ __moduleSources["main"] = function(...)
                             if result == "lifted" then
                                 lastLift = Util.now()
                                 logger:info("Game", "Character was stuck in the floor: put back on top of it")
+                            elseif lying or wedgedFor >= 3 then
+                                wedgedFor = 3 -- a lying character that stands right: try a free spot as well
                             end
+                        end
+                        if wedgedFor >= 3 and Util.now() - lastLift > 5 then
+                            wedgedFor = 0
+                            lastLift = Util.now()
+                            local moved = Interaction.unstick()
+                            logger:info("Game", string.format("Character was wedged (%s, not moving): %s", tostring(state.Name),
+                                moved and ("moved to a free spot " .. moved .. " studs away") or "no free spot found nearby"))
                         end
                     end)
                 end
