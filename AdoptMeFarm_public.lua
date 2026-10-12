@@ -3171,6 +3171,8 @@ __moduleSources["Services/Interface"] = function(...)
         "2 pets at once for accounts with the 2-pet perk / Pet Certificate",
         "Game dialogs answered by themselves (teleport -> No, Okay, Nice, Done, Cash out)",
         "Mystery: the 3 cards read from the game, then one call on the right card (fast calls were dropped)",
+        "Characters stuck in the floor after a teleport are put back on top of it",
+        "Hauntlet: a pick counts only when the game confirms it (alts no longer wait at the last room's door)",
         "Auto Potions: every Age-Up (Tiny too), Bonus Aging / Bucks one at a time per pet, Busy Body",
         "Mystery: tries every need until one is taken",
         "Stray Cat found at its new place; white screen recovery",
@@ -7713,6 +7715,7 @@ __moduleSources["Game/Interaction"] = function(...)
         end
         self._sent += 1
         self._state:set("farm.actionsSent", self._sent, "Interaction")
+        pcall(Interaction.settle, 2) -- v2.1.6: never left inside the lobby floor
         task.wait(0.6)
         local now = root.Position
         local dx, dz = now.X - target.Position.X, now.Z - target.Position.Z
@@ -7939,7 +7942,9 @@ __moduleSources["Game/Interaction"] = function(...)
         for _, node in ipairs(interior:GetDescendants()) do
             if node.Name == wanted and #node:GetChildren() > 0 then
                 local center = hauntletCenter(node)
-                if center then
+                -- v2.1.6: from room 2 on, the circles I stand in are the last room's (log: "group #3, 2 studs away")
+                local underMe = center and avoid and avoid.__skipNear and (center - root.Position).Magnitude < 8
+                if center and not underMe then
                     table.insert(found, { node = node, dist = (center - root.Position).Magnitude,
                         added = circleAddedAt[node] or 0, seen = circleSeenAt[node] })
                 end
@@ -8048,6 +8053,82 @@ __moduleSources["Game/Interaction"] = function(...)
         local character = player and player.Character
         return character and character:FindFirstChild("HumanoidRootPart"), character, player
     end
+    --[[
+        v2.1.6 (user screenshot: after a teleport the character sank into the floor of the hotel lobby and lay there):
+        settle(maxWait) finds the floor under me (a ray from above my head, my own character ignored) and, when my
+        root sits lower than a standing character would, puts me back on top of it and gets me up. When the floor is
+        not there yet (still streaming), I am held in place (anchored) up to maxWait seconds instead of falling into
+        whatever loads around me. Never anchors for longer, never moves me when I already stand right.
+        Returns "ok" | "lifted" | "no floor" | "no character".
+    ]]
+    local function floorUnder(root, character)
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances = { character }
+        for _, height in ipairs({ 6, 12, 25 }) do
+            local hit = workspace:Raycast(root.Position + Vector3.new(0, height, 0), Vector3.new(0, -(height + 30), 0), params)
+            -- a hit far above my feet is a ceiling / table over me, not my floor: look from lower first
+            if hit and hit.Position.Y < root.Position.Y + 2 then
+                return hit.Position.Y
+            end
+        end
+        return nil
+    end
+    Interaction.floorUnder = floorUnder
+    function Interaction.settle(maxWait)
+        local player = game:GetService("Players").LocalPlayer
+        local character = player and player.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        if not (root and humanoid) then
+            return "no character"
+        end
+        if humanoid.Sit or humanoid.SeatPart then
+            return "ok"
+        end
+        local floor = floorUnder(root, character)
+        if not floor and (tonumber(maxWait) or 0) > 0 then
+            local wasAnchored = root.Anchored
+            pcall(function()
+                root.Anchored = true
+            end)
+            task.spawn(pcall, function()
+                player:RequestStreamAroundAsync(root.Position, 2)
+            end)
+            local untilAt = os.clock() + maxWait
+            while not floor and os.clock() < untilAt and root.Parent do
+                task.wait(0.1)
+                floor = floorUnder(root, character)
+            end
+            if not wasAnchored then
+                pcall(function()
+                    root.Anchored = false
+                end)
+            end
+        end
+        if not floor then
+            return "no floor"
+        end
+        local stand = floor + (humanoid.HipHeight or 2) + root.Size.Y * 0.5
+        local lifted = false
+        if root.Position.Y < stand - 1.2 then
+            lifted = pcall(function()
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+                local look = root.CFrame.LookVector * Vector3.new(1, 0, 1)
+                local at = Vector3.new(root.Position.X, stand + 0.5, root.Position.Z)
+                character:PivotTo(look.Magnitude > 0.1 and CFrame.lookAt(at, at + look) or CFrame.new(at))
+            end)
+        end
+        pcall(function()
+            local state = humanoid:GetState()
+            if state == Enum.HumanoidStateType.FallingDown or state == Enum.HumanoidStateType.Ragdoll
+                or state == Enum.HumanoidStateType.Physics or lifted then
+                humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+            end
+        end)
+        return lifted and "lifted" or "ok"
+    end
     -- Moves my character into door `doorIndex`'s circle. options = { avoid = { [circles] = true } (groups that took no
     -- pick in this room), bad = { [part] = true } (parts that proved to be another door) }.
     -- Returns moved, how, part, circles, verified.
@@ -8087,6 +8168,7 @@ __moduleSources["Game/Interaction"] = function(...)
                 avoid[key] = value
             end
             avoid.__elevators = options.nexus or nil
+            avoid.__skipNear = (tonumber(options.roomSeq) or 0) > 1 or nil
             circles, dist, count, added, chained = self:hauntletCircles(interiorName, avoid, options.link, options.base,
                 options.visited, options.behind)
             if circles then
@@ -10293,6 +10375,7 @@ __moduleSources["Game/Tasks"] = function(...)
                             root.AssemblyAngularVelocity = Vector3.zero
                             character:PivotTo(CFrame.new(anchorPos + Vector3.new(0, 3, 0)))
                         end)
+                        pcall(function() ctx.interaction.settle(1) end)
                         lastPos = root.Position
                         if flings >= 3 then
                             flungOut, stalled = true, true
@@ -11194,7 +11277,12 @@ __moduleSources["Game/Hauntlet"] = function(...)
                     lost -= delta
                 end
             end
-            if self.expectDoor and self.expectAt and (new[self.expectDoor] or 0) > (self.counters[self.expectDoor] or 0)
+            -- v2.1.6 (log of an alt left at the last room's door: it moved into the OLD room's circle, the counter of
+            -- that door number went up because the other alts walked into the new room's circle, the bot took that
+            -- for its own pick and stood still until "out_of_time"): once the game is seen sending picked_door, only
+            -- picked_door says that I picked
+            if not Hauntlet.pickedDoorSeen and self.expectDoor and self.expectAt
+                and (new[self.expectDoor] or 0) > (self.counters[self.expectDoor] or 0)
                 and not (self.myDoorAt and self.myDoorAt >= self.expectAt) then
                 self.myDoor, self.myDoorAt = self.expectDoor, now -- my door went up after my move
             end
@@ -11224,6 +11312,7 @@ __moduleSources["Game/Hauntlet"] = function(...)
         elseif message == "picked_door" then
             self.picked = a == true
             if a == true then
+                Hauntlet.pickedDoorSeen = true
                 self._awaitPick = true
                 self.pickedAt = now
                 self.pickedSeq = self.room and self.room.seq
@@ -14153,7 +14242,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                                 picks += 1
                                 ctx.waitUntil(function() -- a pick shows within ~0.3 s when the circle is the right one
                                     return over() or h.room ~= room or (h.myDoorAt ~= nil and h.myDoorAt >= movedAt)
-                                end, 1.5)
+                                end, 2.5) -- v2.1.6: 2.5 s (many accounts on one device answer late)
                                 -- live run 4: alone, the doors open on my pick and the next room starts at once, so this
                                 -- must not wait for "still the same room": the pick counts if this room's doors opened
                                 -- v2.1.4: only MY pick in THIS room counts (debug log: the others opened the doors while I was
@@ -16770,6 +16859,41 @@ __moduleSources["main"] = function(...)
                     end
                 end))
             end
+            -- v2.1.6 (user screenshot: characters lying inside the hotel lobby floor after a teleport): a character
+            -- that stands on nothing (FloorMaterial Air) yet does not fall, or lies (FallingDown / Ragdoll / Physics),
+            -- for 3 s in a row is stuck in the map: put back on top of the floor and stood up
+            maid:Give(task.spawn(function()
+                local stuckFor, lastLift = 0, 0
+                while true do
+                    task.wait(1)
+                    pcall(function()
+                        local player = game:GetService("Players").LocalPlayer
+                        local character = player and player.Character
+                        local root = character and character:FindFirstChild("HumanoidRootPart")
+                        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+                        if not (root and humanoid) or root.Anchored or humanoid.Sit or humanoid.SeatPart
+                            or humanoid.Health <= 0 or config.Farm.Enabled == false then
+                            stuckFor = 0
+                            return
+                        end
+                        local state = humanoid:GetState()
+                        local lying = state == Enum.HumanoidStateType.FallingDown or state == Enum.HumanoidStateType.Ragdoll
+                            or state == Enum.HumanoidStateType.Physics
+                        local hanging = humanoid.FloorMaterial == Enum.Material.Air
+                            and math.abs(root.AssemblyLinearVelocity.Y) < 2 and state ~= Enum.HumanoidStateType.Climbing
+                            and state ~= Enum.HumanoidStateType.Swimming
+                        stuckFor = (lying or hanging) and stuckFor + 1 or 0
+                        if stuckFor >= 3 and Util.now() - lastLift > 5 then
+                            stuckFor = 0
+                            local result = Interaction.settle(1)
+                            if result == "lifted" then
+                                lastLift = Util.now()
+                                logger:info("Game", "Character was stuck in the floor: put back on top of it")
+                            end
+                        end
+                    end)
+                end
+            end))
             local gameData = GameData.new(logger)
             uiGameData = gameData
             telemetry:setGameData(gameData)
