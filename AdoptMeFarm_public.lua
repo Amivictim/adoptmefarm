@@ -1316,7 +1316,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.6 (Adopt Victims - UI Remastered Edition, Mega presets)"
+    Disclosure.VERSION = "2.1.7 (Adopt Victims - UI Remastered Edition, Mega presets)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -3221,6 +3221,13 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     Interface.CHANGELOG = {
+        "v2.1.7 (12 Oct 2026, night)",
+        "White screen fix: a place reached by the remote route that this device did not draw is entered the game's way",
+        "Developer report: the farm's log files go along (session, Hauntlet debug, GUI log, Skelicorn, potions)",
+        "gui_log.txt: every game window shown and every button the script pressed",
+        "Candy Shop: Skelicorn too; Auto buy = one every 0.5 s until the candy runs out, Max buy = all in one purchase",
+        "Characters wedged in a railing or a model (stuck Jumping) are moved to the nearest free spot",
+        "Ride / walk: only a real throw (400+ studs or off the map) stops the task",
         "v2.1.6 (12 Oct 2026)",
         "Mystery: the 3 cards read from the game, then one call on the right card (fast calls were dropped)",
         "Characters stuck in the floor after a teleport are put back on top of it",
@@ -3230,12 +3237,7 @@ __moduleSources["Services/Interface"] = function(...)
         "Travel: a place that does not open from the house is reached via the main map (the Crypt)",
         "An egg the shop does not sell is left alone for 2 h after 6 misses",
         "Hauntlet: a key that opens another door of the same room no longer reads as going back",
-        "Characters wedged in a railing or a model (stuck Jumping) are moved to the nearest free spot",
-        "Candy Shop: Skelicorn too; Auto buy = one every 0.5 s until the candy runs out, Max buy = all in one purchase",
-        "Ride / walk: only a real throw (400+ studs or off the map) stops the task",
         "Fewer warnings: click retries and map re-asks are debug / info lines",
-        "Developer report: the farm's log files go along (session, Hauntlet debug, GUI log, Skelicorn, potions)",
-        "gui_log.txt: every game window shown and every button the script pressed",
         "Game dialogs answered by themselves (teleport -> No, Okay, Nice, Done, Cash out)",
         "v2.1.5 (11 Oct 2026)",
         "Mega a Pet presets: Mega Mummy Spider's, Mega Skelicorn, any pet or egg",
@@ -3267,7 +3269,7 @@ __moduleSources["Services/Interface"] = function(...)
         "Autoclose GUI on execute (Config > Settings)",
     }
     Interface.CHANGELOG_LATEST = {
-        Title = "v2.1.6 - Fix pack",
+        Title = "v2.1.7 - White screen fix, log files",
         Date = "12 Oct 2026 (TR)",
         Description = "Mystery fixed, alts no longer stuck at the last Hauntlet door, game dialogs closed, no more flings or floor sinking, lighter on the phone.",
     }
@@ -9120,6 +9122,57 @@ __moduleSources["Game/Travel"] = function(...)
         end
         return true
     end
+    --[[
+        v2.1.6 (white screens: "interiors loaded: none" while the data says HauntedHotel; more of them since 2.1.5
+        sends more trips by the remote route): the remote route moves me on the server, but this device may never
+        draw the place. After such a trip the place must show up under workspace.Interiors; if it does not within
+        4 s, the game's own way in (InteriorsM.enter) is run once so the device builds it.
+    ]]
+    function Travel:_ensureDrawn(destination, recipe)
+        self._drawCheckOff = self._drawCheckOff or {}
+        if destination == "MainMap" or recipe.ownHouse or self._drawCheckOff[destination] then
+            return true
+        end
+        local function drawn()
+            local interiors = workspace:FindFirstChild("Interiors")
+            if not interiors then
+                return false
+            end
+            for _, child in ipairs(interiors:GetChildren()) do
+                if child.Name == destination or string.sub(child.Name, 1, #destination + 1) == destination .. "!" then
+                    return true
+                end
+            end
+            return false
+        end
+        local untilAt = Util.now() + 4
+        while Util.now() < untilAt do
+            if drawn() then
+                return true
+            end
+            task.wait(0.25)
+        end
+        local module = self:_interiorsModule()
+        if not module then
+            return false
+        end
+        self._logger:info("Travel", destination .. " is not drawn on this device after the remote route: entering it the"
+            .. " game's way so it loads (white screen fix)")
+        task.spawn(pcall, module.enter, destination, gameDoorId(recipe), {})
+        untilAt = Util.now() + 10
+        while Util.now() < untilAt do
+            if drawn() then
+                self._logger:info("Travel", destination .. " is drawn now")
+                return true
+            end
+            task.wait(0.25)
+        end
+        -- never seen under that name even after the game's way in: the name differs, no more checks for this place
+        self._drawCheckOff[destination] = true
+        self._logger:warn("Travel", destination .. " not found under workspace.Interiors (white screen, or another name):"
+            .. " not checked again this session")
+        return false
+    end
     function Travel:visitHouse(player)
         local module = self:_interiorsModule()
         if not module then
@@ -9214,6 +9267,7 @@ __moduleSources["Game/Travel"] = function(...)
                 if destination == "MainMap" then
                     return self:_checkPlacedOnMainMap(recipe, me)
                 end
+                pcall(self._ensureDrawn, self, destination, recipe)
                 return true
             end
             if recipe.ownHouse and not resubscribed and Util.now() - started > 6 then
