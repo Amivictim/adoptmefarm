@@ -10990,8 +10990,11 @@ __moduleSources["Game/Hauntlet"] = function(...)
             -- v2.1.5 (user report: "several bots on a mystery door, it turns out to be a key door, the bot never picks
             -- another door and gets kicked"): my door's counter fell to 0 while the doors are still shut = I was pushed
             -- out of that circle. Forget the pick so the room loop moves again (and scores that door down).
+            -- only after that door transformed (a ??? door): a counter update that merely reads 0 (late / reordered,
+            -- many accounts on one device) must never send me back to look for a door again
             local mine = self.myDoor
-            if mine and self.room and self.myDoorAt and now - self.myDoorAt > 0.3 and (self.counters[mine] or 0) > 0
+            local transformedAt = mine and self.room and type(self.room.transformed) == "table" and self.room.transformed[mine]
+            if mine and transformedAt and self.myDoorAt and now - self.myDoorAt > 0.3 and (self.counters[mine] or 0) > 0
                 and (new[mine] or 0) == 0 and not (self.lastOpened and self.lastOpened.seq == self.roomSeq) then
                 self.ejected = self.ejected or {}
                 self.ejected[mine] = (self.ejected[mine] or 0) + 1
