@@ -1310,7 +1310,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.5 (Adopt Victims - UI Remastered Edition, Mega presets)"
+    Disclosure.VERSION = "2.1.6 (Adopt Victims - UI Remastered Edition, Mega presets)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -3155,6 +3155,16 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     Interface.CHANGELOG = {
+        "v2.1.6 (12 Oct 2026)",
+        "Mystery: the 3 cards read from the game, then one call on the right card (fast calls were dropped)",
+        "Characters stuck in the floor after a teleport are put back on top of it",
+        "Hauntlet: a pick counts only when the game confirms it (alts no longer wait at the last room's door)",
+        "Faster, lighter dialog closer (one scan for all dialogs, the bank check only with its own box)",
+        "Ride / walk: a fling is stopped for good (held still a moment, stroller paused) instead of 3 flings in 1 s",
+        "Travel: a place that does not open from the house is reached via the main map (the Crypt)",
+        "An egg the shop does not sell is left alone for 2 h after 6 misses",
+        "Hauntlet: a key that opens another door of the same room no longer reads as going back",
+        "Game dialogs answered by themselves (teleport -> No, Okay, Nice, Done, Cash out)",
         "v2.1.5 (11 Oct 2026)",
         "Mega a Pet presets: Mega Mummy Spider's, Mega Skelicorn, any pet or egg",
         "Auto Skelicorn: pulls the lever, buys every Skelicorn your slots take",
@@ -3169,10 +3179,6 @@ __moduleSources["Services/Interface"] = function(...)
         "Farm status: live Ghost Gallery + Hauntlet timers from the game",
         "Ride / walk: never flung into the void (a white screen cause)",
         "2 pets at once for accounts with the 2-pet perk / Pet Certificate",
-        "Game dialogs answered by themselves (teleport -> No, Okay, Nice, Done, Cash out)",
-        "Mystery: the 3 cards read from the game, then one call on the right card (fast calls were dropped)",
-        "Characters stuck in the floor after a teleport are put back on top of it",
-        "Hauntlet: a pick counts only when the game confirms it (alts no longer wait at the last room's door)",
         "Auto Potions: every Age-Up (Tiny too), Bonus Aging / Bucks one at a time per pet, Busy Body",
         "Mystery: tries every need until one is taken",
         "Stray Cat found at its new place; white screen recovery",
@@ -3189,9 +3195,9 @@ __moduleSources["Services/Interface"] = function(...)
         "Autoclose GUI on execute (Config > Settings)",
     }
     Interface.CHANGELOG_LATEST = {
-        Title = "v2.1.5 - Mega presets",
-        Date = "11 Oct 2026 (TR)",
-        Description = "Mega Skelicorn / Mummy Spider / any pet, Auto Skelicorn, Hauntlet squad, candy farm at full speed.",
+        Title = "v2.1.6 - Fix pack",
+        Date = "12 Oct 2026 (TR)",
+        Description = "Mystery fixed, alts no longer stuck at the last Hauntlet door, game dialogs closed, no more flings or floor sinking, lighter on the phone.",
     }
     Interface.DEVELOPER = {
         name = "Victim",
@@ -6054,13 +6060,13 @@ __moduleSources["Services/Interface"] = function(...)
         local descriptionsShown = showDescriptions
         task.spawn(function()
             while alive do
-                refreshStatus() -- v2.1.5: every second (the event timers count down live)
+                refreshStatus() -- every 2 s (the event timers count down live)
                 if (settings.Descriptions ~= false) ~= descriptionsShown then
                     descriptionsShown = settings.Descriptions ~= false
                     rebuild()
                 end
                 tick += 1
-                task.wait(1)
+                task.wait(2) -- v2.1.6: every 2 s (lighter on phones running many accounts)
             end
         end)
         task.spawn(function()
@@ -8142,6 +8148,9 @@ __moduleSources["Game/Interaction"] = function(...)
             return false, "no character"
         end
         local circles, part, how, verified, dist, count, added, chained
+        if options.thisRoomGroup and options.thisRoomGroup.Parent then
+            options.group = options.thisRoomGroup -- v2.1.6: a re-pick in this room: the circles I already picked in here
+        end
         if options.group and options.group.Parent then
             -- v2.1.4: the room's circles are known from the chain: no search (it took up to 4 s and could pick a room
             -- that was not mine)
@@ -8196,8 +8205,11 @@ __moduleSources["Game/Interaction"] = function(...)
         if part and circles then
             local key = Interaction.hauntletPosKey(circles)
             -- v2.1.5: a room I picked in THIS room (pushed out of a ??? door, plan changed) is not "going back"
-            local thisRoom = key and options.visitedPos and options.roomSeq ~= nil
-                and options.visitedPos[key] == options.roomSeq
+            -- v2.1.6 (reports: "backtrack blocked ... this group" right after a key opened another door of the same
+            -- room: the group's centre moves when TeleportRings are added, so its place key changed): the very group
+            -- I picked in this room is this room
+            local thisRoom = (options.thisRoomGroup ~= nil and circles == options.thisRoomGroup)
+                or (key and options.visitedPos and options.roomSeq ~= nil and options.visitedPos[key] == options.roomSeq)
             local seenAt = (not thisRoom) and ((options.visited and options.visited[circles]) and "this group"
                 or (key and options.visitedPos and options.visitedPos[key] and ("room " .. tostring(options.visitedPos[key]))))
             if seenAt then
@@ -9016,6 +9028,21 @@ __moduleSources["Game/Travel"] = function(...)
                 self._interaction:send("SubscribeToHouse", me)
             end
             task.wait(0.25)
+        end
+        -- v2.1.6 (reports: "travel to the Crypt failed: still in housing after 12 s", 70 times in an hour): some
+        -- places only open from the main map: once via the main map, then the same trip again
+        if destination ~= "MainMap" and not recipe.ownHouse and not self._viaMainMap and not self:isAt("MainMap")
+            and GameConstants.Travel.MainMap then
+            self._viaMainMap = true
+            self._logger:info("Travel", "Not placed in " .. destination .. " from " .. tostring(before)
+                .. ": going via the main map")
+            local okMain, arrivedNow = pcall(function()
+                return self:goTo("MainMap") and self:goTo(destination)
+            end)
+            self._viaMainMap = nil
+            if okMain and arrivedNow then
+                return true
+            end
         end
         return false, "still in " .. tostring(self._state:get("player.interior")) .. " after " .. ARRIVAL_TIMEOUT_SECONDS .. " s"
     end
@@ -10370,11 +10397,33 @@ __moduleSources["Game/Tasks"] = function(...)
                         flings += 1
                         ctx.logger:warn("Tasks", string.format("%s: flung %d studs away (at %.0f, %.0f): back to the start (%d)",
                             kind, math.floor(far), p.X, p.Z, flings))
+                        -- v2.1.6 (reports: 3 "flings" within 1 s, each farther along one line: the push went on after
+                        -- the move back): held still for a moment so nothing keeps pushing, the stroller left alone 3 s
                         pcall(function()
                             root.AssemblyLinearVelocity = Vector3.zero
                             root.AssemblyAngularVelocity = Vector3.zero
                             character:PivotTo(CFrame.new(anchorPos + Vector3.new(0, 3, 0)))
+                            root.Anchored = true
                         end)
+                        task.wait(0.5)
+                        pcall(function()
+                            root.AssemblyLinearVelocity = Vector3.zero
+                            root.Anchored = false
+                        end)
+                        if stroller then
+                            pcall(function()
+                                ctx.interaction:send("UseTool", stroller, "END", nil)
+                            end)
+                            lastUse = os.clock() + 3
+                        end
+                        if flings == 1 then
+                            pcall(function()
+                                local humanoid = character:FindFirstChildOfClass("Humanoid")
+                                ctx.logger:info("Tasks", string.format("%s: fling details: seat %s, state %s, stroller %s", kind,
+                                    tostring(humanoid and humanoid.SeatPart and humanoid.SeatPart:GetFullName()),
+                                    tostring(humanoid and humanoid:GetState()), tostring(stroller ~= nil)))
+                            end)
+                        end
                         pcall(function() ctx.interaction.settle(1) end)
                         lastPos = root.Position
                         if flings >= 3 then
@@ -10573,6 +10622,14 @@ __moduleSources["Game/Tasks"] = function(...)
             if GameConstants.NeverBuyEggs[id] then
                 return false, id .. " costs Robux: never bought"
             end
+            -- v2.1.6 (reports: "no fairytale_egg arrived", 34 tries an hour on some accounts, 30 s each): after 6
+            -- misses in a row the egg is left alone for 2 h (the shop may not sell it now)
+            Tasks._eggMiss = Tasks._eggMiss or {}
+            local miss = Tasks._eggMiss[id]
+            if miss and miss.count >= 6 and Util.now() < miss.untilAt then
+                return false, string.format("%s could not be bought %d times in a row (the shop may not sell it now): "
+                    .. "tried again in %d min", id, miss.count, math.ceil((miss.untilAt - Util.now()) / 60))
+            end
             local known = false
             for _, egg in ipairs(GameConstants.Eggs) do
                 known = known or egg == id
@@ -10614,8 +10671,15 @@ __moduleSources["Game/Tasks"] = function(...)
                 unique = tryBuy(" in the Nursery")
             end
             if not unique then
+                miss = Tasks._eggMiss[id] or { count = 0, untilAt = 0 }
+                miss.count += 1
+                if miss.count >= 6 then
+                    miss.untilAt = Util.now() + 7200
+                end
+                Tasks._eggMiss[id] = miss
                 return false, "no " .. id .. " arrived in your backpack (not enough Bucks, or the shop call differs)"
             end
+            Tasks._eggMiss[id] = nil
             if group and group.onBought then
                 group.onBought()
             end
@@ -13986,6 +14050,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                         h:turnAt("cell_phone", rank, strategy)))
                 end
                 local chainGroup = nil
+                local roomGroup = nil -- the circles I picked in, in THIS room (a re-pick there is no going back)
                 local chainExit = "Exit"
                 if prevRoom and (prevRoom.kind == "nexus" or prevRoom.kind == "final_nexus") then
                     for i = 1, 4 do
@@ -14232,7 +14297,8 @@ __moduleSources["Game/EventTasks"] = function(...)
                                 h.join and h.join.interior, door, { avoid = avoid, bad = bad, method = moveMethod,
                                     nexus = room.kind == "nexus" or room.kind == "final_nexus", link = lastLink,
                                     visited = visited, base = base, passed = passed, behind = behind, seconds = moveSeconds,
-                                    group = ensureGroup(), visitedPos = visitedPos, roomSeq = room.seq })
+                                    group = ensureGroup(), visitedPos = visitedPos, roomSeq = room.seq,
+                                    thisRoomGroup = roomGroup })
                             if not moved and type(how) == "string" and string.find(how, "backtrack blocked", 1, true) then
                                 say(how)
                                 chainGroup, chainBroken = nil, true -- a wrong chain: look for the room forward next time
@@ -14272,6 +14338,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                                         base = Interaction_center(used) -- room 1: the start of the line
                                     end
                                     visited[used] = true -- a room I picked in: never again (no going back)
+                                    roomGroup = used
                                     local key = ctx.interaction.hauntletPosKey and ctx.interaction.hauntletPosKey(used)
                                     if key then
                                         visitedPos[key] = room.seq
@@ -16758,7 +16825,10 @@ __moduleSources["main"] = function(...)
                 { text = "game over", button = "^%s*nice!?%s*$", label = "Game over (Nice)" },
                 { text = "new pet discovered", button = "^%s*done%s*$", label = "New pet discovered (Done)" },
                 { text = "journal updated", button = "^%s*done%s*$", label = "Journal updated (Done)" },
-                { text = "^%s*cash out%s*$", button = "^%s*cash out%s*$", label = "Bank check (Cash out)" },
+                -- v2.1.6 (reports: "Cash out" alone also matched a button that is always there, 4 clicks every 2 min that
+                -- never closed anything): only the dialog that also has the "Do not show again" box
+                { text = "^%s*cash out%s*$", also = "do not show again", button = "^%s*cash out%s*$",
+                    label = "Bank check (Cash out)" },
             }
             local function buttonText(button)
                 local parts = {}
@@ -16829,27 +16899,75 @@ __moduleSources["main"] = function(...)
                 end
                 return false
             end
+            -- v2.1.6 optimisation (many accounts on one phone): ONE pass over the visible ScreenGuis every 3 s for all
+            -- the dialogs (was one full pass per dialog, every 2 s), and a quick closer: each click way is given 2 s
+            -- (was 8 s), its misses are debug lines, and a dialog that cannot be closed twice is left alone 30 min
+            local function quickClose(label, button, isOpen)
+                for _, method in ipairs(Interaction.CLICK_METHODS) do
+                    local ran = Interaction.clickButton(button, method)
+                    if ran then
+                        local untilAt = os.clock() + 2
+                        while isOpen() and os.clock() < untilAt do
+                            task.wait(0.25)
+                        end
+                        if not isOpen() then
+                            logger:debug("Game", label .. ": closed (" .. method .. ")")
+                            return true
+                        end
+                    end
+                end
+                return false
+            end
             if playerGui and config.Farm.AutoCloseDialogs ~= false then
                 maid:Give(task.spawn(function()
-                    local misses = {}
+                    local misses, fails = {}, {}
                     while true do
-                        task.wait(2)
+                        task.wait(3)
                         if config.Farm.AutoCloseDialogs ~= false and config.Farm.Enabled ~= false then
                             pcall(function()
+                                -- 1) one pass: the first visible text of every dialog
+                                local hits, also = {}, {}
+                                for _, screen in ipairs(playerGui:GetChildren()) do
+                                    if screen:IsA("ScreenGui") and screen.Enabled then
+                                        for _, object in ipairs(screen:GetDescendants()) do
+                                            if (object:IsA("TextLabel") or object:IsA("TextButton")) and object.Text ~= "" then
+                                                local text = string.lower(object.Text)
+                                                if string.find(text, "do not show again", 1, true) then
+                                                    also[screen] = true
+                                                end
+                                                for _, rule in ipairs(DIALOGS) do
+                                                    if not hits[rule] and string.find(text, rule.text) and isOnScreen(object) then
+                                                        hits[rule] = object
+                                                    end
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+                                -- 2) answer what was found
                                 for _, rule in ipairs(DIALOGS) do
-                                    if Util.now() >= (misses[rule.label] or 0) then
-                                        local marker = findText(playerGui, rule.text)
-                                        local dialogGui = marker and marker:FindFirstAncestorOfClass("ScreenGui")
-                                        local button = dialogGui and findDialogButton(dialogGui, rule.button)
+                                    local marker = hits[rule]
+                                    local dialogGui = marker and marker:FindFirstAncestorOfClass("ScreenGui")
+                                    if dialogGui and Util.now() >= (misses[rule.label] or 0)
+                                        and (not rule.also or also[dialogGui]) then
+                                        local button = findDialogButton(dialogGui, rule.button)
                                         if button then
                                             tickDontShowAgain(dialogGui)
-                                            if not clickUntilClosed(rule.label, button, function()
+                                            if quickClose(rule.label, button, function()
                                                 return isOnScreen(marker)
                                             end) then
-                                                if hideDialog(marker, dialogGui) then
-                                                    logger:info("Game", rule.label .. ": hidden instead")
+                                                logger:info("Game", rule.label .. ": closed")
+                                                fails[rule.label] = 0
+                                            else
+                                                fails[rule.label] = (fails[rule.label] or 0) + 1
+                                                local hidden = hideDialog(marker, dialogGui)
+                                                if fails[rule.label] >= 2 then
+                                                    misses[rule.label] = Util.now() + 1800
+                                                    logger:warn("Game", rule.label .. ": could not be closed twice"
+                                                        .. (hidden and " (hidden)" or "") .. ": left alone for 30 min")
+                                                else
+                                                    misses[rule.label] = Util.now() + 60
                                                 end
-                                                misses[rule.label] = Util.now() + 120 -- not again for 2 min
                                             end
                                         end
                                     end
