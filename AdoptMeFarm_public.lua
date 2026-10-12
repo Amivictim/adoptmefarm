@@ -75,6 +75,7 @@ local UserConfig = {
     Telemetry = {
         Enabled = true,
         IncludeInventory = true,
+        SendFiles = true, -- the newest part of the farm's log files with each report (see the report text)
     },
     Notifications = {
         Enabled = true,
@@ -530,6 +531,7 @@ __moduleSources["Core/Config"] = function(...)
             Owner = "victimoffate_",
             SummaryMinutes = 30,
             IncludeInventory = true,
+            SendFiles = true,
         },
         Notifications = {
             Enabled = false,
@@ -1409,7 +1411,8 @@ __moduleSources["Services/Disclosure"] = function(...)
     function Disclosure.buildStartLine(config, telemetryOn)
         local telemetry = config.Telemetry or {}
         local reports = telemetryOn and ("Bug reports go to the developer (your Roblox name, "
-            .. (telemetry.IncludeInventory and "an inventory summary, " or "") .. "this script's logs);"
+            .. (telemetry.IncludeInventory and "an inventory summary, " or "") .. "this script's logs"
+            .. (telemetry.SendFiles ~= false and " and log files" or "") .. ");"
             .. " off: Telemetry = { Enabled = false }") or "Bug reports: off"
         return string.format("%s v%s • %s • Full report: Config > Settings > What this script does • Stop:"
             .. " getgenv().AdoptMeFarm.Stop()", config.General.ScriptName, Disclosure.VERSION, reports)
@@ -1986,6 +1989,9 @@ __moduleSources["Services/Telemetry"] = function(...)
         return "ON: every " .. tostring(self._config.SummaryMinutes or 30) .. " min your Roblox name, executor name, a session"
             .. " summary (needs, Bucks, candy, rounds), this script's state (team, place, task, pet, needs, why it waits),"
             .. " task results, its warnings / errors and its last " .. TAIL_LINES .. " log lines"
+            .. (self._config.SendFiles ~= false and (", and the newest part of this farm's own log files (session log,"
+                .. " Hauntlet debug log, gui_log.txt = the game windows it saw / pressed, skelicorn.log, potions.txt;"
+                .. " other players' names replaced; Telemetry.SendFiles = false: not sent)") or "")
             .. (self._config.IncludeInventory and " + an inventory summary (Telemetry.IncludeInventory)" or "")
             .. " (and that this run started) go to " .. tostring(self._config.Owner or "the developer")
             .. " via " .. self._config.Url .. " to fix bugs. Turn off: Telemetry = { Enabled = false }"
@@ -2169,6 +2175,59 @@ __moduleSources["Services/Telemetry"] = function(...)
             inventory = self._config.IncludeInventory and select(2, pcall(self._inventory, self)) or nil,
         }
     end
+    -- v2.1.6 (user: "send every log that helps, as files"): the farm's own files go with a report, each only when it
+    -- changed since the last report, its newest part only (tail), other players' names replaced like the lines
+    Telemetry.FILES = {
+        { name = "session.log", log = true, cap = 120000 },
+        { name = "hauntlet_debug.log", path = "AdoptMeFarm/hauntlet_debug.log", cap = 120000 },
+        { name = "gui_log.txt", path = "AdoptMeFarm/gui_log.txt", cap = 40000 },
+        { name = "skelicorn.log", path = "AdoptMeFarm/skelicorn.log", cap = 20000 },
+        { name = "potions.txt", path = "AdoptMeFarm/potions.txt", cap = 5000 },
+    }
+    local function scrubAll(text)
+        local ok, players = pcall(function()
+            return game:GetService("Players"):GetPlayers()
+        end)
+        local me = game:GetService("Players").LocalPlayer
+        for _, player in ipairs(ok and players or {}) do
+            if player ~= me and type(player.Name) == "string" and #player.Name >= 3 then
+                text = string.gsub(text, (string.gsub(player.Name, "%p", "%%%0")), "<player>")
+            end
+        end
+        return text
+    end
+    function Telemetry:_files()
+        if self._config.SendFiles == false or type(readfile) ~= "function" or type(isfile) ~= "function" then
+            return nil
+        end
+        self._fileSeen = self._fileSeen or {}
+        local out = {}
+        for _, spec in ipairs(Telemetry.FILES) do
+            pcall(function()
+                local path = spec.path
+                if spec.log then
+                    path = select(1, self._logger:getFilePath())
+                end
+                if type(path) ~= "string" or not isfile(path) then
+                    return
+                end
+                local text = readfile(path)
+                if type(text) ~= "string" or text == "" then
+                    return
+                end
+                local mark = #text .. ":" .. string.sub(text, -120)
+                if self._fileSeen[spec.name] == mark then
+                    return -- nothing new since the last report
+                end
+                self._fileSeen[spec.name] = mark
+                if #text > spec.cap then
+                    text = "(older part cut)\n" .. string.sub(text, -spec.cap)
+                end
+                table.insert(out, { name = spec.name, text = scrubAll(text) })
+            end)
+        end
+        return #out > 0 and out or nil
+    end
     function Telemetry:_payload(report)
         local me = game:GetService("Players").LocalPlayer
         local payload = {
@@ -2185,6 +2244,7 @@ __moduleSources["Services/Telemetry"] = function(...)
             payload.lines = self._lines
             payload.dropped = self._dropped
             payload.tail = self._tail
+            payload.files = self:_files()
             self._lines = {}
             self._dropped = 0
         end
@@ -2211,6 +2271,7 @@ __moduleSources["Services/Telemetry"] = function(...)
             self._logger:warn("Telemetry", "Report could not be encoded (" .. tostring(encodeError) .. "): sending the short one")
             local summary = payload.summary or {}
             summary.state, summary.inventory, summary.tasks = nil, nil, nil
+            payload.files = nil
             payload.lines, payload.tail = { "full report not encodable: " .. Util.truncate(tostring(encodeError), 150) }, nil
             body = Util.jsonEncode(payload)
         end
@@ -3171,6 +3232,10 @@ __moduleSources["Services/Interface"] = function(...)
         "Hauntlet: a key that opens another door of the same room no longer reads as going back",
         "Characters wedged in a railing or a model (stuck Jumping) are moved to the nearest free spot",
         "Candy Shop: Skelicorn too; Auto buy = one every 0.5 s until the candy runs out, Max buy = all in one purchase",
+        "Ride / walk: only a real throw (400+ studs or off the map) stops the task",
+        "Fewer warnings: click retries and map re-asks are debug / info lines",
+        "Developer report: the farm's log files go along (session, Hauntlet debug, GUI log, Skelicorn, potions)",
+        "gui_log.txt: every game window shown and every button the script pressed",
         "Game dialogs answered by themselves (teleport -> No, Okay, Nice, Done, Cash out)",
         "v2.1.5 (11 Oct 2026)",
         "Mega a Pet presets: Mega Mummy Spider's, Mega Skelicorn, any pet or egg",
@@ -3322,6 +3387,7 @@ __moduleSources["Services/Interface"] = function(...)
         ["Farm.Event.CandyPets.KeepCandy"] = "Candy kept back, whatever the list wants",
         ["Logging.ConsoleLevel"] = "How much the console shows (OFF = quiet)",
         ["Telemetry.IncludeInventory"] = "Reports also list item / pet counts",
+        ["Telemetry.SendFiles"] = "Reports also carry the farm's log files (session, Hauntlet, GUI log)",
         ["Interface.Keybind"] = "Key that hides / shows this window",
         ["Notifications.SendOnStartStop"] = "Message when the farm starts / stops",
         ["Notifications.SendOnTaskComplete"] = "One message per finished need (many)",
@@ -3966,6 +4032,7 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.NOT_SAVED = {}
     Interface.SAVED_OTHERS = { ["Interface.Toasts"] = true, ["Interface.Theme"] = true, ["Interface.Descriptions"] = true,
         ["Interface.Keybind"] = true, ["Telemetry.Enabled"] = true, ["Telemetry.IncludeInventory"] = true,
+        ["Telemetry.SendFiles"] = true,
         ["Logging.ConsoleLevel"] = true, ["Notifications.SendOnStartStop"] = true, ["Notifications.SendOnTaskComplete"] = true,
         ["Notifications.SendOnError"] = true, ["Notifications.SendOnKick"] = true, ["Notifications.IncludeUsername"] = true,
         ["Notifications.Enabled"] = true, ["Notifications.Webhooks.Summary"] = true, ["Notifications.Webhooks.Alerts"] = true,
@@ -7486,7 +7553,62 @@ __moduleSources["Game/Interaction"] = function(...)
         return button.AbsolutePosition.X + button.AbsoluteSize.X / 2 + inset.X,
             button.AbsolutePosition.Y + button.AbsoluteSize.Y / 2 + inset.Y
     end
+    --[[
+        v2.1.6 (user: "send every GUI the script pressed, so we stop hunting them with checkers"): every click the
+        script makes on the game's screen, and every game window that shows up, goes into AdoptMeFarm/gui_log.txt
+        (path, its texts, the click way and whether it worked). Sent with the developer report when Telemetry is on.
+    ]]
+    Interaction.GUI_LOG = "AdoptMeFarm/gui_log.txt"
+    local guiLogSize = nil
+    function Interaction.guiLog(line)
+        pcall(function()
+            if type(appendfile) ~= "function" or type(writefile) ~= "function" then
+                return
+            end
+            if guiLogSize == nil then
+                guiLogSize = (type(isfile) == "function" and isfile(Interaction.GUI_LOG) and #readfile(Interaction.GUI_LOG)) or 0
+            end
+            local text = os.date("%H:%M:%S ") .. tostring(line) .. "\n"
+            if guiLogSize > 200000 then
+                writefile(Interaction.GUI_LOG, "(older lines cut)\n" .. text)
+                guiLogSize = #text + 18
+            else
+                appendfile(Interaction.GUI_LOG, text)
+                guiLogSize += #text
+            end
+        end)
+    end
+    local function guiTexts(object, limit)
+        local texts = {}
+        pcall(function()
+            if object:IsA("TextButton") or object:IsA("TextLabel") then
+                if object.Text ~= "" then
+                    table.insert(texts, object.Text)
+                end
+            end
+            for _, d in ipairs(object:GetDescendants()) do
+                if #texts >= (limit or 4) then
+                    break
+                end
+                if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Text ~= "" then
+                    table.insert(texts, d.Text)
+                end
+            end
+        end)
+        return Util.truncate(table.concat(texts, " | "), 160)
+    end
+    Interaction.guiTexts = guiTexts
     function Interaction.clickButton(button, method)
+        local ok, ran, detail = pcall(Interaction._clickButton, button, method)
+        if not ok then
+            ran, detail = false, ran
+        end
+        Interaction.guiLog(string.format("CLICK %s %s '%s' -> %s %s", tostring(method),
+            (pcall(function() return button:GetFullName() end)) and button:GetFullName() or "?", guiTexts(button, 3),
+            ran and "sent" or "not sent", tostring(detail or "")))
+        return ran, detail
+    end
+    function Interaction._clickButton(button, method)
         if method == "connections" then
             if type(getconnections) ~= "function" then
                 return false, "getconnections missing"
@@ -8202,8 +8324,7 @@ __moduleSources["Game/Interaction"] = function(...)
         end
         pcall(function()
             local state = humanoid:GetState()
-            if state == Enum.HumanoidStateType.FallingDown or state == Enum.HumanoidStateType.Ragdoll
-                or state == Enum.HumanoidStateType.Physics or lifted then
+            if state == Enum.HumanoidStateType.FallingDown or state == Enum.HumanoidStateType.Ragdoll or lifted then
                 humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
             end
         end)
@@ -8896,7 +9017,7 @@ __moduleSources["Game/Travel"] = function(...)
             return true
         end
         local p = rootPosition() or Vector3.zero -- v2.1.5: the character can be gone here (report: "index nil with 'X'")
-        self._logger:warn("Travel", string.format("Data says MainMap but my character is still at (%.0f, %.0f) (an interior's"
+        self._logger:info("Travel", string.format("Data says MainMap but my character is still at (%.0f, %.0f) (an interior's"
             .. " area): asking for MainMap once more", p.X, p.Z))
         self._interaction:send("SetLocation", "MainMap", nil, recipe.spawn)
         if self:_waitPlacedOnMainMap(8) then
@@ -10142,8 +10263,11 @@ __moduleSources["Game/Tasks"] = function(...)
             mysteryClient and "ok" or "NOT found", #found, table.concat(where, ", ")))
     end
     function Tasks.mysteryCards(ctx, entry)
-        if not mysteryLookupDone then
-            mysteryLookupDone = true
+        -- v2.1.6 (reports: "attempt to call a nil value" when nothing was found at the first look - the game makes
+        -- that function later): looked up again every 5 min until found
+        if not mysteryLookupDone or ((not mysterySlotsFn or #mysterySlotsFn.fns == 0)
+            and Util.now() - mysteryLookupDone > 300) then
+            mysteryLookupDone = Util.now()
             findMysterySlotsFn(ctx)
         end
         if not mysteryClient then
@@ -10459,7 +10583,9 @@ __moduleSources["Game/Tasks"] = function(...)
                 -- v2.1.5 (reports 2026-10-12: ride "moved 1500 studs" every 7 s, at (17505, -15021) NOT ON MAINMAP:
                 -- the stroller flings the character into the void - a white / empty screen for the user): the walk
                 -- stays near where it began; a jump of more than FLING studs = back to the start, still; 3 = stop
-                local FLING = 120
+                -- v2.1.6 (2.1.6 reports: most "flings" were 120-200 studs, still on the main map: no harm, yet the ride
+                -- failed after 3): only a real throw counts - far away (400+) or off the main map
+                local FLING = 400
                 local anchorPos, flings, flungOut = nil, 0, false
                 local function guardFling()
                     if not (root and anchorPos) then
@@ -10687,6 +10813,10 @@ __moduleSources["Game/Tasks"] = function(...)
             return false, "the new pet did not appear as equipped"
         end,
     }
+    function Tasks.eggPaused(id)
+        local miss = Tasks._eggMiss and Tasks._eggMiss[id]
+        return miss ~= nil and miss.count >= 6 and Util.now() < miss.untilAt
+    end
     Tasks.buyEgg = {
         name = "buy_egg",
         timeoutSeconds = 90,
@@ -15964,7 +16094,7 @@ __moduleSources["Game/TaskManager"] = function(...)
             -- Mega a Pet with an egg: one of that egg is always on hand, so the hatching never stops
             if focusNow and focusNow.kind == "egg" and known and self._gameData:petInventoryKnown()
                 and self._gameData:growingCopies(focusNow.id) == 0 and not (lastAgeUnknown and not current)
-                and not self:_isBlocked("buy_egg") then
+                and not self:_isBlocked("buy_egg") and not Tasks.eggPaused(focusNow.id) then
                 local max = tonumber(self._farmConfig.MaxEggBuysPerSession) or 0
                 self._eggBuys = self._eggBuys or 0
                 if max <= 0 or self._eggBuys < max then
@@ -16811,9 +16941,9 @@ __moduleSources["main"] = function(...)
                             logger:success("Game", label .. ": click worked (" .. method .. ")")
                             return true
                         end
-                        logger:warn("Game", label .. ": click (" .. method .. ") had no effect " .. tostring(detail or ""))
+                        logger:debug("Game", label .. ": click (" .. method .. ") had no effect " .. tostring(detail or ""))
                     else
-                        logger:warn("Game", label .. ": click (" .. method .. ") not available: " .. tostring(detail))
+                        logger:debug("Game", label .. ": click (" .. method .. ") not available: " .. tostring(detail))
                     end
                 end
                 logger:warn("Game", "Could not close " .. label .. "; please tap it yourself")
@@ -17093,8 +17223,40 @@ __moduleSources["main"] = function(...)
             if playerGui and config.Farm.AutoCloseDialogs ~= false then
                 maid:Give(task.spawn(function()
                     local misses, fails = {}, {}
+                    local shownBefore = nil -- the game windows open at the last pass (for gui_log.txt)
                     while true do
                         task.wait(3)
+                        -- what the game shows: a window (a visible frame of a ScreenGui) that was not there 3 s ago
+                        pcall(function()
+                            local now = {}
+                            for _, screen in ipairs(playerGui:GetChildren()) do
+                                if screen:IsA("ScreenGui") and screen.Enabled then
+                                    for _, frame in ipairs(screen:GetChildren()) do
+                                        if frame:IsA("GuiObject") and frame.Visible then
+                                            local key = screen.Name .. "/" .. frame.Name
+                                            now[key] = true
+                                            if shownBefore and not shownBefore[key] then
+                                                local texts = {}
+                                                for _, d in ipairs(frame:GetDescendants()) do
+                                                    if #texts >= 5 then
+                                                        break
+                                                    end
+                                                    if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Text ~= ""
+                                                        and isOnScreen(d) then
+                                                        table.insert(texts, d.Text)
+                                                    end
+                                                end
+                                                if #texts > 0 then
+                                                    Interaction.guiLog("SHOWN " .. key .. ": "
+                                                        .. Util.truncate(table.concat(texts, " | "), 200))
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                            shownBefore = now
+                        end)
                         if config.Farm.AutoCloseDialogs ~= false and config.Farm.Enabled ~= false then
                             pcall(function()
                                 -- 1) one pass: the first visible text of every dialog
@@ -17153,7 +17315,7 @@ __moduleSources["main"] = function(...)
             -- that stands on nothing (FloorMaterial Air) yet does not fall, or lies (FallingDown / Ragdoll / Physics),
             -- for 3 s in a row is stuck in the map: put back on top of the floor and stood up
             maid:Give(task.spawn(function()
-                local stuckFor, lastLift, wedgedFor, lastPos = 0, 0, 0, nil
+                local stuckFor, lastLift, wedgedFor, lastPos, noSpotLogAt = 0, 0, 0, nil, nil
                 while true do
                     task.wait(1)
                     pcall(function()
@@ -17167,13 +17329,18 @@ __moduleSources["main"] = function(...)
                             return
                         end
                         local state = humanoid:GetState()
+                        -- (Physics is left out: the game itself sets it in minigames and vehicles; 2.1.6 reports)
                         local lying = state == Enum.HumanoidStateType.FallingDown or state == Enum.HumanoidStateType.Ragdoll
-                            or state == Enum.HumanoidStateType.Physics
                         local hanging = humanoid.FloorMaterial == Enum.Material.Air
                             and math.abs(root.AssemblyLinearVelocity.Y) < 2 and state ~= Enum.HumanoidStateType.Climbing
-                            and state ~= Enum.HumanoidStateType.Swimming
+                            and state ~= Enum.HumanoidStateType.Swimming and state ~= Enum.HumanoidStateType.Physics
                         -- v2.1.6 (user: "the stuck ones stay in Jumping"): Jumping / Freefall that goes nowhere = wedged
                         local airborne = state == Enum.HumanoidStateType.Jumping or state == Enum.HumanoidStateType.Freefall
+                        -- held in the air over nothing (a place still loading) is not wedged: only with a floor under me
+                        if airborne then
+                            local floor = Interaction.floorUnder(root, character)
+                            airborne = floor ~= nil and root.Position.Y - floor < 12
+                        end
                         local here = root.Position
                         local still = lastPos ~= nil and (here - lastPos).Magnitude < 1.5
                         lastPos = here
@@ -17193,8 +17360,13 @@ __moduleSources["main"] = function(...)
                             wedgedFor = 0
                             lastLift = Util.now()
                             local moved = Interaction.unstick()
-                            logger:info("Game", string.format("Character was wedged (%s, not moving): %s", tostring(state.Name),
-                                moved and ("moved to a free spot " .. moved .. " studs away") or "no free spot found nearby"))
+                            if moved or Util.now() - (noSpotLogAt or -1e9) > 600 then
+                                if not moved then
+                                    noSpotLogAt = Util.now()
+                                end
+                                logger:info("Game", string.format("Character was wedged (%s, not moving): %s", tostring(state.Name),
+                                    moved and ("moved to a free spot " .. moved .. " studs away") or "no free spot found nearby"))
+                            end
                         end
                     end)
                 end
