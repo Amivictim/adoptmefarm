@@ -432,6 +432,7 @@ __moduleSources["Core/Config"] = function(...)
             BuyWater = true,
             BuyFood = true,
             MaxBuysPerSession = 0,
+            TwoPets = true, -- 2-pet perk / Pet Certificate: a second growing pet (tried once; 1-slot accounts stop)
             AutoPotions = {
                 Enabled = false,
                 Potions = { "pet_age_potion", "tiny_pet_age_potion", "pet_bonus_aging_potion", "pet_bonus_bucks_potion",
@@ -2299,8 +2300,9 @@ __moduleSources["Services/Lang"] = function(...)
     add("Config", "Ayarlar", "Config", "Config")
     add("Dashboard", "Panel", "Panel", "Painel")
     add("Farm status", "Çiftlik durumu", "Estado de la granja", "Status da fazenda")
+    add("2 pets at once (2-pet perk)", "Aynı anda 2 pet (2 pet özelliği)", "2 mascotas a la vez (ventaja)", "2 pets ao mesmo tempo (vantagem)")
     add("Ghost Gallery: playing now", "Ghost Gallery: şu an oynanıyor", "Ghost Gallery: jugando ahora", "Ghost Gallery: jogando agora")
-    add(" (skipped: Hauntlet)", " (atlanır: Hauntlet)", " (se salta: Hauntlet)", " (pulado: Hauntlet)")
+    add(" (after the Hauntlet)", " (Hauntlet'ten sonra)", " (tras el Hauntlet)", " (depois do Hauntlet)")
     add(" (resting)", " (dinleniyor)", " (en pausa)", " (em pausa)")
     add("Hauntlet: off", "Hauntlet: kapalı", "Hauntlet: apagado", "Hauntlet: desligado")
     add("Hauntlet: in the run (room %d)", "Hauntlet: oyunda (oda %d)", "Hauntlet: en la partida (sala %d)", "Hauntlet: na partida (sala %d)")
@@ -3165,6 +3167,7 @@ __moduleSources["Services/Interface"] = function(...)
         "Mystery: reads the 3 real cards from the game, one pick",
         "Farm status: live Ghost Gallery + Hauntlet timers from the game",
         "Ride / walk: never flung into the void (a white screen cause)",
+        "2 pets at once for accounts with the 2-pet perk / Pet Certificate",
         "Auto Potions: every Age-Up (Tiny too), Bonus Aging / Bucks one at a time per pet, Busy Body",
         "Mystery: tries every need until one is taken",
         "Stray Cat found at its new place; white screen recovery",
@@ -4264,10 +4267,10 @@ __moduleSources["Services/Interface"] = function(...)
         elseif tm.ghost == "run" then
             ghost, ghostState = T("Ghost Gallery: playing now"), "on"
         elseif tm.ghostIn or s.nextRoundIn then
-            ghost = T("Ghost Gallery: in %s", clock(tm.ghostIn or s.nextRoundIn))
+            ghost = T("Ghost Gallery: in %s", clock(tm.ghostPlayIn or tm.ghostIn or s.nextRoundIn))
             ghostState = "on"
             if tm.ghostSkipped then
-                ghost, ghostState = ghost .. T(" (skipped: Hauntlet)"), "wait"
+                ghost, ghostState = ghost .. T(" (after the Hauntlet)"), "wait"
             elseif tm.ghostResting then
                 ghost, ghostState = ghost .. T(" (resting)"), "bad"
             end
@@ -5181,6 +5184,7 @@ __moduleSources["Services/Interface"] = function(...)
         bindToggle(petsBox, "buyEgg", eggIcon, "Buy an egg if none grows", { "Farm", "BuyEgg" })
         bindPick(petsBox, "eggChoice", eggIcon, "Egg to buy", { "Farm", "EggToBuy" }, Interface.EGG_NAMES)
         local growthBox = mainTab:CreateGroupbox({ Name = "Potions & neon", Icon = I("flask-conical"), Column = col(2) }, "growth")
+        bindToggle(growthBox, "twoPets", "paw-print", "2 pets at once (2-pet perk)", { "Farm", "TwoPets" })
         bindToggle(growthBox, "potions", "item:pet_age_potion|flask-conical", "Use potions", { "Farm", "AutoPotions", "Enabled" },
             "Uses every potion that helps farming on the growing pet; pick below the ones to keep")
         local potionChoices = {}
@@ -10345,6 +10349,67 @@ __moduleSources["Game/Tasks"] = function(...)
                 group.onFail()
             end
             return ok, reason
+        end,
+    }
+    -- v2.1.5: a second pet (2-pet perk / Pet Certificate). The game's own equip, as for the first pet; when the first
+    -- pet is pushed out, the account holds one pet: the first comes back and the farm stops trying
+    Tasks.equipSecondPet = {
+        id = "second_pet",
+        handles = function()
+            return false
+        end,
+        timeoutSeconds = 25,
+        run = function(ctx, group)
+            ctx.logger:info("Tasks", "Trying a second pet next to the first (2-pet perk)")
+            local sent, reason = ctx.interaction:send("EquipItem", group.petUnique, { equip_as_last = true })
+            if not sent then
+                if group.onFail then
+                    group.onFail()
+                end
+                return false, "Equip failed: " .. tostring(reason)
+            end
+            local both = ctx.waitUntil(function()
+                return ctx.gameData:isPetEquipped(group.petUnique) and ctx.gameData:isPetEquipped(group.firstUnique)
+            end, 6)
+            if both then
+                ctx.logger:success("Tasks", "2 pets equipped: both grow now")
+                return true
+            end
+            if ctx.gameData:isPetEquipped(group.petUnique) and not ctx.gameData:isPetEquipped(group.firstUnique) then
+                ctx.logger:info("Tasks", "This account holds 1 pet (no 2-pet perk): the first pet comes back, no more tries")
+                if group.onOneSlot then
+                    group.onOneSlot()
+                end
+                equipPetAgain(ctx, group.firstUnique)
+                return true
+            end
+            if group.onFail then
+                group.onFail()
+            end
+            return false, "the second pet did not appear as equipped"
+        end,
+    }
+    Tasks.swapSecondPet = {
+        id = "second_pet",
+        handles = function()
+            return false
+        end,
+        timeoutSeconds = 25,
+        run = function(ctx, group)
+            ctx.interaction:send("UnequipItem", group.outUnique, nil)
+            ctx.waitUntil(function()
+                return not ctx.gameData:isPetEquipped(group.outUnique)
+            end, 5)
+            local sent, reason = ctx.interaction:send("EquipItem", group.petUnique, { equip_as_last = true })
+            if not sent then
+                return false, "Equip failed: " .. tostring(reason)
+            end
+            if ctx.waitUntil(function()
+                return ctx.gameData:isPetEquipped(group.petUnique)
+            end, 6) then
+                return true
+            end
+            return false, "the new pet did not appear as equipped"
         end,
     }
     Tasks.buyEgg = {
@@ -15569,6 +15634,47 @@ __moduleSources["Game/TaskManager"] = function(...)
                         .. (self._farmConfig.BuyEgg and " (buying an egg was not possible)" or " (Farm.BuyEgg = false)"))
                 end
             end
+            -- v2.1.5 (users with the 2-pet perk / Pet Certificate: "it does not equip 2 pets at once"): a second growing
+            -- pet next to the first. Found out by trying: when the second equip pushes the first pet out, this account
+            -- holds 1 pet, the first one comes back and it is not tried again this session.
+            if self._farmConfig.TwoPets ~= false and not self._oneSlotOnly and known and self._gameData:petInventoryKnown()
+                and not self:_isBlocked("second_pet") then
+                if count == 2 and skipGrown then
+                    for _, pet in ipairs(list) do
+                        if pet.unique and pet.age and pet.age >= GameConstants.FullGrownAge then
+                            local spare
+                            for _, candidate in ipairs(self._gameData:growablePets(preferNeon, kindRank, youngestFirst)) do
+                                if not self._gameData:isPetEquipped(candidate.unique) and usable(candidate.unique) then
+                                    spare = candidate.unique
+                                    break
+                                end
+                            end
+                            if spare then
+                                self._logger:info("Tasks", "One of your 2 pets is full grown: swapping it for one that still grows")
+                                self:_start("second_pet", "swap the full grown pet", Tasks.swapSecondPet,
+                                    { petUnique = spare, outUnique = pet.unique })
+                                return
+                            end
+                        end
+                    end
+                elseif count == 1 and current then
+                    local second
+                    for _, candidate in ipairs(self._gameData:growablePets(preferNeon, kindRank, youngestFirst)) do
+                        if candidate.unique ~= current and not self._gameData:isPetEquipped(candidate.unique)
+                            and usable(candidate.unique) then
+                            second = candidate.unique
+                            break
+                        end
+                    end
+                    if second then
+                        self:_start("second_pet", "equip a second pet", Tasks.equipSecondPet, { petUnique = second,
+                            firstUnique = current, onOneSlot = function()
+                                self._oneSlotOnly = true
+                            end, onFail = onEquipFail(second) })
+                        return
+                    end
+                end
+            end
         end
         if self:_needsTeamSwitch() then
             self:_start(TEAM_KEY, "switch team to " .. GameConstants.BabiesTeam, Tasks.team, nil)
@@ -16025,6 +16131,9 @@ __moduleSources["Game/TaskManager"] = function(...)
                 or (hauntStart and hauntStart >= ghostStart - HAUNTLET_LEAD_SECONDS
                     and hauntStart - ghostStart < GHOST_ROUND_BUSY_SECONDS)) then
                 out.ghostSkipped = true -- that round would still run when the Hauntlet starts: the Hauntlet gets it
+                -- both minigames run on the same 10-minute grid (logs: Hauntlet 20:23:05, Ghost Gallery 20:33:05):
+                -- the Ghost Gallery plays the round after the Hauntlet one (a run's next round is skipped for it)
+                out.ghostPlayIn = out.ghostIn + GameConstants.Event.RoundSeconds
             end
             if self:_isBlocked("ghost_gallery") then
                 out.ghostResting = true
