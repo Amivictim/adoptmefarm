@@ -433,6 +433,7 @@ __moduleSources["Core/Config"] = function(...)
             BuyFood = true,
             MaxBuysPerSession = 0,
             TwoPets = true, -- 2-pet perk / Pet Certificate: a second growing pet (tried once; 1-slot accounts stop)
+            AutoCloseDialogs = true, -- the game's dialogs (minigame teleport -> No, Okay / Nice / Done, bank -> Cash out)
             AutoPotions = {
                 Enabled = false,
                 Potions = { "pet_age_potion", "tiny_pet_age_potion", "pet_bonus_aging_potion", "pet_bonus_bucks_potion",
@@ -3168,6 +3169,7 @@ __moduleSources["Services/Interface"] = function(...)
         "Farm status: live Ghost Gallery + Hauntlet timers from the game",
         "Ride / walk: never flung into the void (a white screen cause)",
         "2 pets at once for accounts with the 2-pet perk / Pet Certificate",
+        "Game dialogs answered by themselves (teleport -> No, Okay, Nice, Done, Cash out)",
         "Auto Potions: every Age-Up (Tiny too), Bonus Aging / Bucks one at a time per pet, Busy Body",
         "Mystery: tries every need until one is taken",
         "Stray Cat found at its new place; white screen recovery",
@@ -16590,6 +16592,116 @@ __moduleSources["main"] = function(...)
                     end
                 end
                 maid:Give(task.spawn(watchMenu))
+            end
+            -- v2.1.5 (user screenshots: the game's dialogs stay on screen and users complain): the known dialogs get
+            -- their harmless answer, the whole session. "Teleport there now?" -> No (the farm travels on its own
+            -- schedule); a "Do not show again this session" box is ticked first when the dialog has one.
+            local DIALOGS = {
+                { text = "starting soon", button = "^%s*no%s*$", label = "Minigame starting soon (No)" },
+                { text = "crypt has been reset", button = "^%s*okay%s*$", label = "Crypt reset (Okay)" },
+                { text = "game over", button = "^%s*nice!?%s*$", label = "Game over (Nice)" },
+                { text = "new pet discovered", button = "^%s*done%s*$", label = "New pet discovered (Done)" },
+                { text = "journal updated", button = "^%s*done%s*$", label = "Journal updated (Done)" },
+                { text = "^%s*cash out%s*$", button = "^%s*cash out%s*$", label = "Bank check (Cash out)" },
+            }
+            local function buttonText(button)
+                local parts = {}
+                if button:IsA("TextButton") then
+                    table.insert(parts, button.Text)
+                end
+                for _, object in ipairs(button:GetDescendants()) do
+                    if (object:IsA("TextLabel") or object:IsA("TextButton")) and object.Text ~= "" then
+                        table.insert(parts, object.Text)
+                    end
+                end
+                return string.lower(table.concat(parts, " "))
+            end
+            local function findDialogButton(dialogGui, pattern)
+                for _, object in ipairs(dialogGui:GetDescendants()) do
+                    local button = nil
+                    if object:IsA("TextButton") then
+                        button = string.find(string.lower(object.Text), pattern) and object or nil
+                    elseif object:IsA("TextLabel") and string.find(string.lower(object.Text), pattern) then
+                        button = object:FindFirstAncestorWhichIsA("GuiButton")
+                    end
+                    if button and button:IsDescendantOf(dialogGui) and isOnScreen(button) and not isForbidden(button) then
+                        return button
+                    end
+                end
+                return nil
+            end
+            -- the checkbox sits next to its "Do not show again" text: the text's own button, or a text-less button
+            -- beside it. Never any button that says something else (that could be "Yes").
+            local function tickDontShowAgain(dialogGui)
+                for _, object in ipairs(dialogGui:GetDescendants()) do
+                    if (object:IsA("TextLabel") or object:IsA("TextButton")) and isOnScreen(object)
+                        and string.find(string.lower(object.Text), "do not show again") then
+                        local box = object:IsA("GuiButton") and object or nil
+                        local holder = object.Parent
+                        if not box and holder and holder:IsA("GuiButton") then
+                            box = holder
+                        end
+                        for _, near in ipairs(not box and holder and holder:GetChildren() or {}) do
+                            if not box and near:IsA("GuiButton") and isOnScreen(near) then
+                                local text = buttonText(near)
+                                if not string.find(text, "%a") or string.find(text, "do not show again") then
+                                    box = near
+                                end
+                            end
+                        end
+                        if box and not isForbidden(box) then
+                            for _, method in ipairs(Interaction.CLICK_METHODS) do
+                                if Interaction.clickButton(box, method) then
+                                    break
+                                end
+                            end
+                            task.wait(0.3)
+                        end
+                        return
+                    end
+                end
+            end
+            -- last resort when no click closes it: hide the dialog's own frame (not the whole ScreenGui)
+            local function hideDialog(marker, dialogGui)
+                local frame = marker
+                while frame.Parent and frame.Parent ~= dialogGui do
+                    frame = frame.Parent
+                end
+                if frame:IsA("GuiObject") then
+                    frame.Visible = false
+                    return true
+                end
+                return false
+            end
+            if playerGui and config.Farm.AutoCloseDialogs ~= false then
+                maid:Give(task.spawn(function()
+                    local misses = {}
+                    while true do
+                        task.wait(2)
+                        if config.Farm.AutoCloseDialogs ~= false and config.Farm.Enabled ~= false then
+                            pcall(function()
+                                for _, rule in ipairs(DIALOGS) do
+                                    if Util.now() >= (misses[rule.label] or 0) then
+                                        local marker = findText(playerGui, rule.text)
+                                        local dialogGui = marker and marker:FindFirstAncestorOfClass("ScreenGui")
+                                        local button = dialogGui and findDialogButton(dialogGui, rule.button)
+                                        if button then
+                                            tickDontShowAgain(dialogGui)
+                                            if not clickUntilClosed(rule.label, button, function()
+                                                return isOnScreen(marker)
+                                            end) then
+                                                if hideDialog(marker, dialogGui) then
+                                                    logger:info("Game", rule.label .. ": hidden instead")
+                                                end
+                                                misses[rule.label] = Util.now() + 120 -- not again for 2 min
+                                            end
+                                        end
+                                    end
+                                end
+                            end)
+                        end
+                    end
+                end))
             end
             local gameData = GameData.new(logger)
             uiGameData = gameData
