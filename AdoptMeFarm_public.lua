@@ -3150,6 +3150,8 @@ __moduleSources["Services/Interface"] = function(...)
         "Hauntlet: ghost potions saved for the late rooms, 2-lock doors get both keys",
         "White screen: a stuck stream no longer freezes the Hauntlet task",
         "Hauntlet: pushed out of a ??? door that turned locked -> picks another door",
+        "Travel: no more 15 s waits when the game's travel keeps failing",
+        "Hauntlet: finds a late-loading join circle / run interior",
         "Auto Potions: every Age-Up (Tiny too), Bonus Aging 1.2x / 15 min, Bonus Bucks, Busy Body",
         "Mystery: tries every need until one is taken",
         "Stray Cat found at its new place; white screen recovery",
@@ -7573,12 +7575,27 @@ __moduleSources["Game/Interaction"] = function(...)
         if not root then
             return false, "character root not found"
         end
-        local deadline = Util.now() + 10
+        local deadline = Util.now() + 15
         local target
+        local streamAsked = false
         repeat
             local interiors = workspace:FindFirstChild("Interiors")
             local hotel = interiors and interiors:FindFirstChild("HauntedHotel")
             local zone = hotel and hotel:FindFirstChild("HauntletMinigameJoinZone")
+            -- v2.1.5 (night reports: "Hauntlet join zone not found" on 4 accounts, 120 s in the hotel, never queued):
+            -- the zone may sit deeper or stream in late: look anywhere under Interiors / the workspace, ask the game
+            -- to stream the hotel around me once (never waited for)
+            if not zone then
+                zone = (hotel and hotel:FindFirstChild("HauntletMinigameJoinZone", true))
+                    or (interiors and interiors:FindFirstChild("HauntletMinigameJoinZone", true))
+                    or workspace:FindFirstChild("HauntletMinigameJoinZone", true)
+            end
+            if not zone and not streamAsked then
+                streamAsked = true
+                task.spawn(pcall, function()
+                    player:RequestStreamAroundAsync(root.Position, 5)
+                end)
+            end
             if zone then
                 local ring = nil
                 if not zone:IsA("BasePart") then
@@ -7607,7 +7624,12 @@ __moduleSources["Game/Interaction"] = function(...)
             end
         until target or Util.now() >= deadline
         if not target then
-            return false, "Hauntlet join zone not found"
+            local interiors = workspace:FindFirstChild("Interiors")
+            local names = {}
+            for _, child in ipairs(interiors and interiors:GetChildren() or {}) do
+                table.insert(names, child.Name)
+            end
+            return false, "Hauntlet join zone not found (interiors loaded: " .. (#names > 0 and table.concat(names, ", ") or "none") .. ")"
         end
         local destination = target.Position + Vector3.new(0, (target.Size and target.Size.Y or 2) * 0.5 + 2.5, 0)
         local ok, err = pcall(function()
@@ -7976,7 +7998,11 @@ __moduleSources["Game/Interaction"] = function(...)
                     math.floor((part.Position - root.Position).Magnitude))
             end
         end
-        for _ = 1, (part and 0 or 6) do
+        -- v2.1.5 (night reports: "door 1 circle not found (no HauntletInterior interior)" 3 x 7 s, the door picked at
+        -- 14.8 s, kicked from room 1): while the run's interior is not there yet, look again every 0.25 s (it comes
+        -- whenever the device has loaded it) instead of 1 s steps; at most 6 slow looks or 8 s, whichever comes first
+        local searchUntil, slowLooks = os.clock() + 8, 0
+        while not part and slowLooks < 6 and os.clock() < searchUntil do
             local avoid = {}
             for key, value in pairs(options.avoid or {}) do
                 avoid[key] = value
@@ -8002,10 +8028,14 @@ __moduleSources["Game/Interaction"] = function(...)
             end
             -- v2.1.5 (user report "white screen", 2026-10-11): with streaming stuck this call never returned and the
             -- Hauntlet task hung in room 1 for 15+ minutes: never waited for any more
-            task.spawn(pcall, function()
-                player:RequestStreamAroundAsync(root.Position, 2)
-            end)
-            task.wait(options.base and 0.4 or 1) -- the next room loads in 1-2 s: look again soon
+            local noInterior = type(dist) == "string" and string.find(dist, "interior", 1, true) ~= nil
+            if not noInterior then
+                slowLooks += 1
+                task.spawn(pcall, function()
+                    player:RequestStreamAroundAsync(root.Position, 2)
+                end)
+            end
+            task.wait(noInterior and 0.25 or (options.base and 0.4 or 1)) -- the next room loads in 1-2 s: look again soon
         end
         -- v2.1.4 BUG B: never into the circles of a room already picked in (same object or same place)
         if part and circles then
@@ -8679,12 +8709,20 @@ __moduleSources["Game/Travel"] = function(...)
     function Travel:_gameTravel(destination, recipe)
         local me = Players.LocalPlayer
         local before = self._state:get("player.interior")
-        if recipe.ownHouse and self._farmConfig.HomeByRespawn ~= false then
+        if recipe.ownHouse and self._farmConfig.HomeByRespawn ~= false and Util.now() >= (self._respawnSkipUntil or 0) then
             self._logger:info("Travel", "Going home by respawn (now in " .. tostring(before) .. ")")
             local sent = self._interaction:send("Respawn")
             if sent and self:_waitArrival(destination, ARRIVAL_TIMEOUT_SECONDS + 5) then
                 self._logger:info("Travel", "Arrived: " .. tostring(self._state:get("player.interior")) .. " (respawn)")
+                self._respawnFails = 0
                 return true
+            end
+            -- v2.1.5 (report 2026-10-12: every trip home waited ~17 s for a respawn that never came): 2 misses in a
+            -- row -> no respawn trips for 15 min
+            self._respawnFails = (self._respawnFails or 0) + 1
+            if self._respawnFails >= 2 then
+                self._respawnSkipUntil, self._respawnFails = Util.now() + 900, 0
+                self._logger:info("Travel", "Respawn missed twice in a row: going home by door for 15 min")
             end
             self._logger:info("Travel", "Respawn did not bring me home: using the game's door instead")
             if self:isAt(destination) then
@@ -8748,16 +8786,25 @@ __moduleSources["Game/Travel"] = function(...)
                 return true
             end
         end
-        if self._farmConfig and self._farmConfig.GameTravel ~= false then
+        -- v2.1.5 (report 2026-10-12: "Game travel ... did not work" on EVERY trip, ~15 s of waiting each, then the
+        -- remote route worked in 1 s; users saw it as a slow / white screen): 2 misses in a row -> the remote route
+        -- first for 15 min, then the game's travel is tried again
+        if self._farmConfig and self._farmConfig.GameTravel ~= false and Util.now() >= (self._gameTravelSkipUntil or 0) then
             local arrived, why = self:_gameTravel(destination, recipe)
             if arrived then
+                self._gameTravelFails = 0
                 return true
             end
-            self._logger:info("Travel", "Game travel to " .. destination .. " did not work (" .. tostring(why)
-                .. "): using the remote route")
             if self:isAt(destination) then
                 return true
             end
+            self._gameTravelFails = (self._gameTravelFails or 0) + 1
+            if self._gameTravelFails >= 2 then
+                self._gameTravelSkipUntil, self._gameTravelFails = Util.now() + 900, 0
+                self._logger:info("Travel", "Game travel missed twice in a row: the remote route first for 15 min")
+            end
+            self._logger:info("Travel", "Game travel to " .. destination .. " did not work (" .. tostring(why)
+                .. "): using the remote route")
         end
         if destination ~= "MainMap" and self:isAt("TheCrypt") then
             local module = self:_interiorsModule()
@@ -13324,6 +13371,12 @@ __moduleSources["Game/EventTasks"] = function(...)
                         zoneMoved, zoneInfo = ctx.interaction:teleportToHauntletJoinZone()
                         if zoneMoved then
                             break
+                        end
+                        if attempt == 1 then
+                            -- v2.1.5: not in the hotel (or it did not load): the trip again, then look again
+                            ctx.logger:info("Event", "Hauntlet: join circle not found (" .. tostring(zoneInfo)
+                                .. "): going to the hotel again")
+                            ctx.travel:goTo("HauntedHotel")
                         end
                         task.wait(1)
                     end
