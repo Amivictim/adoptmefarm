@@ -3152,7 +3152,8 @@ __moduleSources["Services/Interface"] = function(...)
         "Hauntlet: pushed out of a ??? door that turned locked -> picks another door",
         "Travel: no more 15 s waits when the game's travel keeps failing",
         "Hauntlet: finds a late-loading join circle / run interior",
-        "Auto Potions: every Age-Up (Tiny too), Bonus Aging 1.2x / 15 min, Bonus Bucks, Busy Body",
+        "Mystery: reads the 3 real cards from the game, one pick",
+        "Auto Potions: every Age-Up (Tiny too), Bonus Aging / Bucks one at a time per pet, Busy Body",
         "Mystery: tries every need until one is taken",
         "Stray Cat found at its new place; white screen recovery",
         "Support > Copy problem report",
@@ -6681,6 +6682,31 @@ __moduleSources["Game/GameData"] = function(...)
         local properties = type(pet) == "table" and type(pet.properties) == "table" and pet.properties
         return properties and tonumber(properties.age) or nil
     end
+    -- v2.1.5 (user screenshot: "1.2x Aging Active (57 mins)" on a FULL GROWN Skelicorn: every Bonus Aging potion went
+    -- on one pet, the buff time adds up): the pet's own data, any key with `word` (aging / bucks) holding a time
+    -- that is still ahead = the buff runs until then
+    function GameData:petBuffUntil(unique, word)
+        local inventory = self._data[GameConstants.DataKeys.Inventory]
+        local pets = type(inventory) == "table" and inventory.pets
+        local pet = type(pets) == "table" and pets[unique]
+        local now = os.time()
+        local best
+        local function walk(t, path, depth)
+            if type(t) ~= "table" or depth > 5 then
+                return
+            end
+            for k, v in pairs(t) do
+                local here = string.lower(path .. "." .. tostring(k))
+                if type(v) == "number" and string.find(here, word, 1, true) and v > now and v < now + 30 * 86400 then
+                    best = math.max(best or 0, v)
+                elseif type(v) == "table" then
+                    walk(v, here, depth + 1)
+                end
+            end
+        end
+        walk(pet, "", 0)
+        return best
+    end
     function GameData:petPenPets()
         local pen = self._data[GameConstants.DataKeys.PetPen]
         local result = {}
@@ -9807,6 +9833,114 @@ __moduleSources["Game/Tasks"] = function(...)
             return true
         end,
     }
+    --[[
+        v2.1.5 mystery cards (spy log 2026-10-12): the game sends AilmentsAPI/ChooseMysteryAilment(pet, "mystery", card 1-3,
+        kind) - the same call the bot sent - and the card was taken at once, because the kind WAS on that card. The 3
+        cards come from the pool + random_seed of the mystery entry; the game's own MysteryHelper module works them
+        out. Asked here with the entry in the shapes it may take; an answer counts only when it is 2-4 kinds of the pool.
+    ]]
+    GameConstants.MysteryHelperPath = { "new", "modules", "Ailments", "Helpers", "MysteryHelper" }
+    local mysteryHelper, mysteryHelperTried, mysteryHow
+    function Tasks.mysteryCards(ctx, entry)
+        if not mysteryHelperTried then
+            mysteryHelperTried = true
+            local node = game:GetService("ReplicatedStorage")
+            for _, name in ipairs(GameConstants.MysteryHelperPath) do
+                node = node and node:FindFirstChild(name)
+            end
+            local ok, module = false, nil
+            if node and node:IsA("ModuleScript") then
+                ok, module = pcall(require, node)
+            end
+            mysteryHelper = ok and type(module) == "table" and module or nil
+            local names = {}
+            for key, value in pairs(mysteryHelper or {}) do
+                if type(value) == "function" then
+                    table.insert(names, tostring(key))
+                end
+            end
+            table.sort(names)
+            ctx.logger:info("Tasks", "Mystery: the game's MysteryHelper " .. (mysteryHelper and ("functions: "
+                .. table.concat(names, ", ")) or "was not found"))
+        end
+        if not mysteryHelper then
+            return nil
+        end
+        local manager = ctx.gameData:get(GameConstants.DataKeys.Ailments)
+        local ailments = type(manager) == "table" and manager.ailments
+        local mine = type(ailments) == "table" and ailments[entry.petUnique]
+        local raw = type(mine) == "table" and mine.mystery
+        local component = type(raw) == "table" and type(raw.components) == "table" and raw.components.mystery
+        if type(component) ~= "table" then
+            return nil
+        end
+        local pool = {}
+        for kind in pairs(type(component.components) == "table" and component.components or {}) do
+            pool[tostring(kind)] = true
+        end
+        local function asCards(result)
+            if type(result) ~= "table" then
+                return nil
+            end
+            local list = {}
+            for i = 1, 4 do
+                local v = result[i]
+                if type(v) == "table" then
+                    v = v.kind or v.ailment_key or v.name or v.id
+                end
+                if v ~= nil then
+                    if not pool[tostring(v)] then
+                        return nil
+                    end
+                    table.insert(list, tostring(v))
+                end
+            end
+            return (#list >= 2 and #list <= 4) and list or nil
+        end
+        local tries = {
+            { component }, { raw }, { mine, "mystery" }, { component.random_seed, component.components },
+            { component.components, component.random_seed }, { entry.petUnique, "mystery" }, { raw, entry.petUnique },
+        }
+        local names = {}
+        for key, value in pairs(mysteryHelper) do
+            local lower = string.lower(tostring(key))
+            -- read-only helpers only: nothing that sends, chooses, shows or changes anything
+            local risky = false
+            for _, word in ipairs({ "fire", "send", "choose", "select", "set", "remove", "show", "open", "play", "start",
+                "connect", "destroy", "clear", "update", "request", "invoke" }) do
+                if string.find(lower, word, 1, true) then
+                    risky = true
+                end
+            end
+            if type(value) == "function" and not risky then
+                table.insert(names, key)
+            end
+        end
+        table.sort(names, function(a, b)
+            return tostring(a) < tostring(b)
+        end)
+        -- the function that answered last time first
+        if mysteryHow then
+            table.insert(names, 1, mysteryHow.name)
+        end
+        for _, name in ipairs(names) do
+            local fn = mysteryHelper[name]
+            for index, args in ipairs(tries) do
+                if not mysteryHow or mysteryHow.name ~= name or mysteryHow.args == index then
+                    local ok, result = pcall(fn, table.unpack(args))
+                    local cards = ok and asCards(result)
+                    if not cards and ok and type(result) == "table" then
+                        cards = asCards(result.options or result.choices or result.cards or result.ailments)
+                    end
+                    if cards then
+                        mysteryHow = { name = name, args = index }
+                        return cards, string.format("MysteryHelper.%s (shape %d)", tostring(name), index)
+                    end
+                end
+            end
+        end
+        return nil
+    end
     Tasks.mystery = {
         id = "mystery",
         handles = function(kind)
@@ -9849,6 +9983,34 @@ __moduleSources["Game/Tasks"] = function(...)
             -- short wait, the next kind. 14 kinds: ~11 s at most instead of ~50 s.
             local function gone()
                 return ctx.findEntry("mystery", "pet", entry.petUnique) == nil
+            end
+            -- v2.1.5: the 3 real cards from the game's MysteryHelper -> one call on the right card
+            local okCards, cards, how = pcall(Tasks.mysteryCards, ctx, entry)
+            if okCards and type(cards) == "table" then
+                local pick, slot
+                for _, kind in ipairs(choices) do
+                    for i, card in ipairs(cards) do
+                        if card == kind then
+                            pick, slot = kind, i
+                            break
+                        end
+                    end
+                    if pick then
+                        break
+                    end
+                end
+                ctx.logger:info("Tasks", string.format("Mystery: cards %s (%s) -> card %s: %s", table.concat(cards, ", "),
+                    tostring(how), tostring(slot), tostring(pick)))
+                if pick then
+                    pcall(function()
+                        ctx.interaction:send("ChooseMystery", entry.petUnique, "mystery", slot, pick)
+                    end)
+                    if ctx.waitUntil(gone, 4) then
+                        ctx.logger:info("Tasks", "Mystery accepted: " .. pick .. " (card " .. slot .. ")")
+                        return true
+                    end
+                    ctx.logger:info("Tasks", "Mystery: the card was not taken: trying every kind")
+                end
             end
             -- v2.1.4 (user: "mystery still fails: no time limit, send every need in turn until it is accepted"; a
             -- report: the same first kind was refused twice, then taken at once on the 3rd try): round after round
@@ -14146,7 +14308,7 @@ __moduleSources["Game/EventTasks"] = function(...)
             or string.find(id, "bonus_bucks_potion", 1, true) ~= nil or id == "pet_random_ailment_potion")
             and string.find(id, "fly", 1, true) == nil and string.find(id, "ride", 1, true) == nil
     end
-    function EventTasks.potionList(farm, gameData, petIdle)
+    function EventTasks.potionList(farm, gameData, petIdle, petUnique)
         local settings = type(farm.AutoPotions) == "table" and farm.AutoPotions or {}
         local skip = {}
         for _, id in ipairs(type(settings.Skip) == "table" and settings.Skip or {}) do
@@ -14188,7 +14350,7 @@ __moduleSources["Game/EventTasks"] = function(...)
         for pass = 1, 4 do
             for _, id in ipairs(list) do
                 local ok = pass == 1 or (pass == 4 and petIdle == true)
-                    or ((pass == 2 or pass == 3) and Util.now() - (EventTasks._buffUsedAt[pass] or -1e9) >= buffWait)
+                    or ((pass == 2 or pass == 3) and EventTasks.buffFree(gameData, petUnique, pass, buffWait))
                 if class(id) == pass and ok then
                     table.insert(ordered, id)
                 end
@@ -14197,6 +14359,65 @@ __moduleSources["Game/EventTasks"] = function(...)
         return ordered
     end
     EventTasks._buffUsedAt = {}
+    -- one timed buff per pet at a time: the game's own buff time on the pet when it can be read, else the last use
+    -- (kept in AdoptMeFarm/potion_buffs.json, so a rejoin does not stack another one on top)
+    local BUFF_FILE = "AdoptMeFarm/potion_buffs.json"
+    local buffLoaded = false
+    local function buffKey(petUnique, class)
+        return tostring(petUnique) .. "|" .. tostring(class)
+    end
+    function EventTasks.buffLoad()
+        if buffLoaded then
+            return
+        end
+        buffLoaded = true
+        local ok, text = pcall(function()
+            return type(readfile) == "function" and type(isfile) == "function" and isfile(BUFF_FILE) and readfile(BUFF_FILE)
+        end)
+        local data = ok and type(text) == "string" and Util.jsonDecode(text)
+        for key, at in pairs(type(data) == "table" and data or {}) do
+            EventTasks._buffUsedAt[key] = tonumber(at)
+        end
+    end
+    function EventTasks.buffMark(petUnique, class)
+        EventTasks.buffLoad()
+        EventTasks._buffUsedAt[buffKey(petUnique, class)] = os.time()
+        EventTasks._buffUsedAt[class] = os.time()
+        pcall(function()
+            local keep = {}
+            for key, at in pairs(EventTasks._buffUsedAt) do
+                if type(key) == "string" and os.time() - at < 86400 then
+                    keep[key] = at
+                end
+            end
+            writefile(BUFF_FILE, Util.jsonEncode(keep))
+        end)
+    end
+    function EventTasks.buffFree(gameData, petUnique, class, waitSeconds)
+        if not petUnique then
+            return false
+        end
+        EventTasks.buffLoad()
+        -- the pet's own buff time first (the game adds every potion's 15 min on top)
+        local word = class == 2 and "aging" or "bucks"
+        local okUntil, untilAt = pcall(function()
+            return gameData.petBuffUntil and gameData:petBuffUntil(petUnique, word)
+        end)
+        if okUntil and untilAt and untilAt - os.time() > 60 then
+            return false
+        end
+        -- a Bonus Aging potion on a pet one stage from full grown is mostly wasted
+        if class == 2 then
+            local okAge, age = pcall(function()
+                return gameData:petAge(petUnique)
+            end)
+            if okAge and age and age >= GameConstants.FullGrownAge - 1 then
+                return false
+            end
+        end
+        local last = EventTasks._buffUsedAt[buffKey(petUnique, class)]
+        return not last or os.time() - last >= waitSeconds
+    end
     function EventTasks.potionClass(id)
         id = tostring(id)
         if id == "pet_random_ailment_potion" then
@@ -14237,8 +14458,8 @@ __moduleSources["Game/EventTasks"] = function(...)
             pcall(writefile, "AdoptMeFarm/potions.txt", "Food bag potions (" .. os.date("%Y-%m-%d %H:%M") .. "):\n"
                 .. table.concat(bag, "\n") .. "\n")
         end
-        local usable = gameData:findItems(GameConstants.ItemCategory, EventTasks.potionList(farm, gameData))[1]
         local target = EventTasks.potionTarget(gameData, farm)
+        local usable = gameData:findItems(GameConstants.ItemCategory, EventTasks.potionList(farm, gameData, false, target))[1]
         local why = (not usable and "no usable potion now (Age-Up none; Bonus Aging / Bucks used less than BuffMinutes ago or none)")
             or (not target and "no equipped pet that still grows" .. (GameConstants.focusKind(farm)
                 and (" of the focus kind " .. tostring(GameConstants.focusKind(farm))) or ""))
@@ -14268,13 +14489,17 @@ __moduleSources["Game/EventTasks"] = function(...)
         timeoutSeconds = 40,
         run = function(ctx)
             local petUnique = EventTasks.potionTarget(ctx.gameData, ctx.farmConfig)
-            local potions = EventTasks.potionList(ctx.farmConfig, ctx.gameData, EventTasks.petIdle(ctx.state, petUnique))
+            local potions = EventTasks.potionList(ctx.farmConfig, ctx.gameData, EventTasks.petIdle(ctx.state, petUnique), petUnique)
             local item = #potions > 0 and ctx.gameData:findItems(GameConstants.ItemCategory, potions)[1] or nil
             if not petUnique or not item then
                 return true
             end
             local ageBefore = ctx.gameData:petAge(petUnique)
             local kind = ctx.gameData:getPetKind(petUnique) or petUnique
+            local itemClass = EventTasks.potionClass(item.id)
+            if itemClass == 2 or itemClass == 3 then
+                EventTasks.buffMark(petUnique, itemClass) -- before giving: a slow answer must not mean "again in 5 s"
+            end
             local ok, why = Tasks.givePetItem(ctx, petUnique, item, function()
                 return ctx.gameData:itemUsesLeft(GameConstants.ItemCategory, item.unique) == nil
                     or (ctx.gameData:petAge(petUnique) or 0) > (ageBefore or 0)
@@ -14287,7 +14512,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                 ctx.logger:success("Event", "Busy Body potion on " .. kind .. ": a new need to farm")
                 return true
             elseif class > 1 then
-                EventTasks._buffUsedAt[class] = Util.now()
+                -- marked before giving
             else
                 ctx.waitUntil(function()
                     return (ctx.gameData:petAge(petUnique) or 0) > (ageBefore or 0)
@@ -15429,7 +15654,7 @@ __moduleSources["Game/TaskManager"] = function(...)
             end
             local potionPet = type(potions) == "table" and potions.Enabled and EventTasks.potionTarget(data, self._farmConfig)
             if potionPet and dueExtra("age_potion") and data:findItems(GameConstants.ItemCategory,
-                EventTasks.potionList(self._farmConfig, data, EventTasks.petIdle(self._state, potionPet)))[1] then
+                EventTasks.potionList(self._farmConfig, data, EventTasks.petIdle(self._state, potionPet), potionPet))[1] then
                 return "age_potion", "age potion", EventTasks.agePotion, nil
             end
             local open = self._farmConfig.AutoOpen
