@@ -54,7 +54,8 @@ local UserConfig = {
             AutoSkelicorn = false, -- Crypt -> Lightning Lever -> the machine by the Manor -> buy 1 Skelicorn (120k candy)
             CandyPets = {
                 Enabled = false,
-                Pick = {},
+                Pick = {}, -- what to buy (Skelicorn too): one every 0.5 s until the candy runs out
+                MaxBuy = false, -- true: as many as the candy pays for, in ONE purchase
             },
             Quests = false,
             HouseVisits = false,
@@ -484,9 +485,12 @@ __moduleSources["Core/Config"] = function(...)
                     Enabled = false,
                     Pick = {},
                     KeepCandy = 0,
+                    MaxBuy = false,
                     Buy = {
                         { id = "halloween_2026_jump_scare", price = 40000, max = 1 },
                         { id = "halloween_2026_jacobean_pigeon", price = 4000, max = 4 },
+                        -- sold by the machine by the Manor (Lightning Lever): bought by the Skelicorn task, not here
+                        { id = "halloween_2026_skelicorn", price = 120000, max = 0, machine = true },
                     },
                 },
                 PetPenSlots = 4,
@@ -3149,7 +3153,8 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.CRYPT_NAMES = { { "ladder", "Next floor (Mummy Spider)" }, { "lever", "Lightning Lever (Skelicorn)" }, { "twig", "Twig" },
         { "candy_corn_pile_ginormous", "Mega candy pile (3000)" }, { "candy_corn_pile_big", "Big candy pile (2000)" },
         { "candy_corn_pile_small", "Small candy pile (1000)" } }
-    Interface.SHOP_NAMES = { halloween_2026_jump_scare = "Jump Scare", halloween_2026_jacobean_pigeon = "Jacobean Pigeon" }
+    Interface.SHOP_NAMES = { halloween_2026_jump_scare = "Jump Scare", halloween_2026_jacobean_pigeon = "Jacobean Pigeon",
+        halloween_2026_skelicorn = "Skelicorn" }
     Interface.EGG_NAMES = { { "cracked_egg", "Cracked Egg (350 Bucks)" }, { "pet_egg", "Pet Egg (600 Bucks)" },
         { "fairytale_egg_2026_fairytale_egg", "Fairytale Egg (event)" } }
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
@@ -3164,6 +3169,8 @@ __moduleSources["Services/Interface"] = function(...)
         "Travel: a place that does not open from the house is reached via the main map (the Crypt)",
         "An egg the shop does not sell is left alone for 2 h after 6 misses",
         "Hauntlet: a key that opens another door of the same room no longer reads as going back",
+        "Characters wedged in a railing or a model (stuck Jumping) are moved to the nearest free spot",
+        "Candy Shop: Skelicorn too; Auto buy = one every 0.5 s until the candy runs out, Max buy = all in one purchase",
         "Game dialogs answered by themselves (teleport -> No, Okay, Nice, Done, Cash out)",
         "v2.1.5 (11 Oct 2026)",
         "Mega a Pet presets: Mega Mummy Spider's, Mega Skelicorn, any pet or egg",
@@ -5259,6 +5266,11 @@ __moduleSources["Services/Interface"] = function(...)
             end
             bindPick(shopBox, "candyPick", "item:halloween_2026_jump_scare|shopping-bag", "Buy", { "Farm", "Event", "CandyPets", "Pick" }, shopChoices,
                 { multi = true, placeholder = "Pick what to buy", tooltip = "No limit: bought whenever the candy is enough" })
+            if type(candy.MaxBuy) ~= "boolean" then
+                candy.MaxBuy = false -- a number from the build with the slider
+            end
+            bindToggle(shopBox, "candyMaxBuy", "shopping-cart", "Max buy", { "Farm", "Event", "CandyPets", "MaxBuy" },
+                "On: as many as your candy pays for, in one purchase. Off: one every 0.5 s until the candy runs out")
         end
         local eventInfoBox = eventTab:CreateGroupbox({ Name = "Event status", Icon = I("game:candy"), Column = col(2) }, "eventInfo")
         local eventInfo = eventInfoBox:CreateParagraph({ Name = "Your event", Icon = I("ghost"), Content = "Waiting for your data..." },
@@ -8081,6 +8093,68 @@ __moduleSources["Game/Interaction"] = function(...)
         return nil
     end
     Interaction.floorUnder = floorUnder
+    --[[
+        v2.1.6 (user screenshots: characters wedged in a railing / inside other models for the whole game, the
+        Humanoid stuck "Jumping"): unstick() looks for the nearest free standing spot around me (rings of 4 / 8 / 12
+        studs, 8 directions): a floor under it, and no solid part where my body would stand. Moves me there.
+        Returns the distance moved, or nil when no free spot was found.
+    ]]
+    function Interaction.unstick()
+        local player = game:GetService("Players").LocalPlayer
+        local character = player and player.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        if not (root and humanoid) then
+            return nil
+        end
+        local ignore = { character }
+        local pets = workspace:FindFirstChild(GameConstants.PetsFolderName or "Pets")
+        if pets then
+            table.insert(ignore, pets)
+        end
+        local rayParams = RaycastParams.new()
+        rayParams.FilterType = Enum.RaycastFilterType.Exclude
+        rayParams.FilterDescendantsInstances = ignore
+        local boxParams = OverlapParams.new()
+        boxParams.FilterType = Enum.RaycastFilterType.Exclude
+        boxParams.FilterDescendantsInstances = ignore
+        local hip = (humanoid.HipHeight or 2) + root.Size.Y * 0.5
+        local origin = root.Position
+        local function freeAt(x, z)
+            local hit = workspace:Raycast(Vector3.new(x, origin.Y + 6, z), Vector3.new(0, -30, 0), rayParams)
+            if not (hit and hit.Instance and hit.Instance.CanCollide) then
+                return nil
+            end
+            local stand = Vector3.new(x, hit.Position.Y + hip + 0.3, z)
+            -- the body: from just above the floor to the head
+            local parts = workspace:GetPartBoundsInBox(CFrame.new(stand + Vector3.new(0, 0.5, 0)), Vector3.new(2.5, 4.5, 2.5),
+                boxParams)
+            for _, part in ipairs(parts) do
+                if part.CanCollide then
+                    return nil
+                end
+            end
+            return stand
+        end
+        for _, radius in ipairs({ 4, 8, 12 }) do
+            for step = 0, 7 do
+                local angle = step * math.pi / 4
+                local spot = freeAt(origin.X + math.cos(angle) * radius, origin.Z + math.sin(angle) * radius)
+                if spot then
+                    local moved = pcall(function()
+                        root.AssemblyLinearVelocity = Vector3.zero
+                        root.AssemblyAngularVelocity = Vector3.zero
+                        character:PivotTo(CFrame.new(spot))
+                        humanoid:ChangeState(Enum.HumanoidStateType.Landed)
+                    end)
+                    if moved then
+                        return radius
+                    end
+                end
+            end
+        end
+        return nil
+    end
     function Interaction.settle(maxWait)
         local player = game:GetService("Players").LocalPlayer
         local character = player and player.Character
@@ -13138,10 +13212,44 @@ __moduleSources["Game/EventTasks"] = function(...)
         return penSlots + walking
     end
     -- on with the toggle, or with "Mega Skelicorn" / Mega a Pet = Skelicorn
+    -- v2.1.6 (user: "Skelicorn in the Shop: bought every 0.5 s once the machine sells, with a max buy"): the Candy
+    -- Shop pick. Returns the CandyPets settings when Skelicorn is picked and the shop is on.
+    function EventTasks.skelicornShop(farm)
+        local event = type(farm) == "table" and type(farm.Event) == "table" and farm.Event
+        local shop = event and type(event.CandyPets) == "table" and event.CandyPets
+        if not (shop and shop.Enabled and type(shop.Pick) == "table") then
+            return nil
+        end
+        for _, id in ipairs(shop.Pick) do
+            if id == E.Skelicorn then
+                return shop
+            end
+        end
+        return nil
+    end
+    -- Max buy (user: "as many as the candy pays for, in one go"): one BuyItem with buy_count = that many, then the
+    -- copies that arrived are counted. Returns how many arrived.
+    function EventTasks.buyMany(ctx, id, count)
+        local before = ctx.gameData:petUniquesOfKind(id)
+        local sent, answer = ctx.interaction:send("BuyItem", GameConstants.EggCategory, id, { buy_count = count })
+        local got = 0
+        local function arrived()
+            got = 0
+            for unique in pairs(ctx.gameData:petUniquesOfKind(id)) do
+                if not before[unique] then
+                    got += 1
+                end
+            end
+            return got >= count
+        end
+        ctx.waitUntil(arrived, 10)
+        arrived()
+        return got, sent, answer
+    end
     function EventTasks.skelicornOn(farm)
         local focus = GameConstants.focusOf(farm)
         return (type(farm) == "table" and type(farm.Event) == "table" and farm.Event.AutoSkelicorn == true)
-            or (focus ~= nil and focus.kind == "skelicorn")
+            or (focus ~= nil and focus.kind == "skelicorn") or EventTasks.skelicornShop(farm) ~= nil
     end
     function EventTasks.skelicornStep(gameData, farm)
         local state = EventTasks._skelicorn
@@ -13152,6 +13260,12 @@ __moduleSources["Game/EventTasks"] = function(...)
             local growing = gameData:growingCopies(E.Skelicorn)
             if growing >= wanted then
                 return nil, string.format("%d Skelicorns still grow (%d wanted): idle", growing, wanted)
+            end
+        elseif EventTasks.skelicornShop(farm) then
+            local shop = EventTasks.skelicornShop(farm)
+            local candy = tonumber(gameData:get(KEYS.Candy)) or 0
+            if candy - (tonumber(shop.KeepCandy) or 0) < EventTasks.skelicornPrice() then
+                return nil, string.format("Candy Shop: waiting for candy (%d / %d)", candy, EventTasks.skelicornPrice())
             end
         elseif state.bought or next(gameData:petUniquesOfKind(E.Skelicorn)) ~= nil then
             return nil, "a Skelicorn is yours: idle"
@@ -13550,6 +13664,44 @@ __moduleSources["Game/EventTasks"] = function(...)
                     candyBefore - (tonumber(ctx.gameData:get(KEYS.Candy)) or candyBefore),
                     focused and "Mega Skelicorn buys the next one at 120k candy" or "Auto Skelicorn is done"))
                 EventTasks.skelicornNote("Skelicorn bought for " .. price .. " candy")
+                return true
+            end
+            local shop = EventTasks.skelicornShop(ctx.farmConfig)
+            if step == "buy" and shop and GameConstants.focusKind(ctx.farmConfig) ~= E.Skelicorn then
+                -- Candy Shop pick: one every 0.5 s until the candy (above KeepCandy) runs out; Max buy: all in one go
+                local keep = tonumber(shop.KeepCandy) or 0
+                local price = EventTasks.skelicornPrice()
+                local function affordable()
+                    return math.floor(((tonumber(ctx.gameData:get(KEYS.Candy)) or 0) - keep) / price)
+                end
+                local count = 0
+                if shop.MaxBuy == true and affordable() > 1 then
+                    local want = math.min(affordable(), 50)
+                    local got, sent, answer = EventTasks.buyMany(ctx, E.Skelicorn, want)
+                    count = got
+                    ctx.logger:info("Skelicorn", string.format("Candy Shop Max buy: %d of %d Skelicorns in one purchase%s",
+                        got, want, got == 0 and (" (answer " .. tostring(sent) .. " " .. Util.truncate(tostring(answer), 60)
+                        .. "): one by one instead") or ""))
+                    if got > 0 then
+                        state.bought, state.delivered = true, true
+                    end
+                end
+                while count < 60 and affordable() >= 1 do
+                    state.bought = false
+                    buyOne()
+                    if not state.bought then
+                        break -- not sold (yet): the machine is not open for me
+                    end
+                    count += 1
+                    task.wait(0.5)
+                end
+                state.shopBought = (state.shopBought or 0) + count
+                ctx.logger:info("Skelicorn", string.format("Candy Shop: %d Skelicorn%s bought now, %d this session", count,
+                    count == 1 and "" or "s", state.shopBought))
+                if count > 0 then
+                    EventTasks.skelicornNote(string.format("Candy Shop: bought %d Skelicorns (%d this session)", count,
+                        state.shopBought))
+                end
                 return true
             end
             if step == "buy" then
@@ -14980,7 +15132,7 @@ __moduleSources["Game/EventTasks"] = function(...)
             end
             for _, entry in ipairs(type(settings.Buy) == "table" and settings.Buy or {}) do
                 local id, price = entry.id or entry[1], tonumber(entry.price)
-                if type(id) == "string" and picked[id] and price and price > 0
+                if type(id) == "string" and picked[id] and price and price > 0 and not entry.machine
                     and candy - (tonumber(settings.KeepCandy) or 0) >= price then
                     return { id = id, price = price }
                 end
@@ -14989,7 +15141,7 @@ __moduleSources["Game/EventTasks"] = function(...)
         end
         for _, entry in ipairs(type(settings.Buy) == "table" and settings.Buy or {}) do
             local id, price, max = entry.id or entry[1], tonumber(entry.price), tonumber(entry.max) or 0
-            if type(id) == "string" and price and price > 0 then
+            if type(id) == "string" and price and price > 0 and not entry.machine then
                 local owned = 0
                 for _ in pairs(gameData:petUniquesOfKind(id)) do
                     owned += 1
@@ -15016,10 +15168,29 @@ __moduleSources["Game/EventTasks"] = function(...)
             -- Mega a Pet asks for several copies at once (one BuyItem each: buy_count 1 is the call seen working)
             local wanted, bought = math.max(1, math.min(tonumber(pick.count) or 1, 8)), 0
             local candyStart = tonumber(ctx.gameData:get(GameConstants.DataKeys.Candy)) or 0
-            for _ = 1, wanted do
+            if not (group and group.pick) then
+                -- v2.1.6 Candy Shop pick (user): one every 0.5 s until the candy runs out; Max buy: all in one purchase
+                local keep = tonumber(settings.KeepCandy) or 0
+                local canPay = math.floor((candyStart - keep) / pick.price)
+                if settings.MaxBuy == true and canPay > 1 then
+                    local want = math.min(canPay, 50)
+                    local got, sent, answer = EventTasks.buyMany(ctx, pick.id, want)
+                    ctx.logger:info("Event", string.format("Candy Shop Max buy: %d of %d x %s in one purchase%s", got, want,
+                        pick.id, got == 0 and (" (answer " .. tostring(sent) .. " " .. Util.truncate(tostring(answer), 60)
+                        .. "): one by one instead") or ""))
+                    bought = got
+                    canPay = math.floor(((tonumber(ctx.gameData:get(GameConstants.DataKeys.Candy)) or 0) - keep) / pick.price)
+                end
+                wanted = bought + math.min(math.max(canPay, 0), 60)
+                pick = { id = pick.id, price = pick.price, keepCandy = keep, every = 0.5 }
+            end
+            for _ = bought + 1, wanted do
                 local candyNow = tonumber(ctx.gameData:get(GameConstants.DataKeys.Candy)) or 0
                 if bought > 0 and candyNow - (tonumber(pick.keepCandy) or 0) < pick.price then
                     break
+                end
+                if bought > 0 and pick.every then
+                    task.wait(pick.every)
                 end
                 local before = ctx.gameData:petUniquesOfKind(pick.id)
                 local sent, answer = ctx.interaction:send("BuyItem", GameConstants.EggCategory, pick.id, { buy_count = 1 })
@@ -15410,6 +15581,7 @@ __moduleSources["Game/TaskManager"] = function(...)
         end
         if running.eventJob then
             local wait = key == "pet_pen" and math.max(1, tonumber(self._farmConfig.Event.PetPenMinutes) or 15) * 60
+                or (key == "skelicorn" and EventTasks.skelicornShop(self._farmConfig) and 15)
                 or EVENT_RECHECK_SECONDS[key] or 60
             self._nextEventAt[key] = Util.now() + wait
         end
@@ -16981,7 +17153,7 @@ __moduleSources["main"] = function(...)
             -- that stands on nothing (FloorMaterial Air) yet does not fall, or lies (FallingDown / Ragdoll / Physics),
             -- for 3 s in a row is stuck in the map: put back on top of the floor and stood up
             maid:Give(task.spawn(function()
-                local stuckFor, lastLift = 0, 0
+                local stuckFor, lastLift, wedgedFor, lastPos = 0, 0, 0, nil
                 while true do
                     task.wait(1)
                     pcall(function()
@@ -17000,6 +17172,12 @@ __moduleSources["main"] = function(...)
                         local hanging = humanoid.FloorMaterial == Enum.Material.Air
                             and math.abs(root.AssemblyLinearVelocity.Y) < 2 and state ~= Enum.HumanoidStateType.Climbing
                             and state ~= Enum.HumanoidStateType.Swimming
+                        -- v2.1.6 (user: "the stuck ones stay in Jumping"): Jumping / Freefall that goes nowhere = wedged
+                        local airborne = state == Enum.HumanoidStateType.Jumping or state == Enum.HumanoidStateType.Freefall
+                        local here = root.Position
+                        local still = lastPos ~= nil and (here - lastPos).Magnitude < 1.5
+                        lastPos = here
+                        wedgedFor = (airborne and still) and wedgedFor + 1 or 0
                         stuckFor = (lying or hanging) and stuckFor + 1 or 0
                         if stuckFor >= 3 and Util.now() - lastLift > 5 then
                             stuckFor = 0
@@ -17007,7 +17185,16 @@ __moduleSources["main"] = function(...)
                             if result == "lifted" then
                                 lastLift = Util.now()
                                 logger:info("Game", "Character was stuck in the floor: put back on top of it")
+                            elseif lying or wedgedFor >= 3 then
+                                wedgedFor = 3 -- a lying character that stands right: try a free spot as well
                             end
+                        end
+                        if wedgedFor >= 3 and Util.now() - lastLift > 5 then
+                            wedgedFor = 0
+                            lastLift = Util.now()
+                            local moved = Interaction.unstick()
+                            logger:info("Game", string.format("Character was wedged (%s, not moving): %s", tostring(state.Name),
+                                moved and ("moved to a free spot " .. moved .. " studs away") or "no free spot found nearby"))
                         end
                     end)
                 end
