@@ -915,6 +915,11 @@ __moduleSources["Core/Config"] = function(...)
         end
         local config = merge(base, overrides, "", warnings)
         config.Preset = presetId
+        -- v2.1.11 (user: "Pick what to buy shows only 2 items"): the shop list is the script's catalog, not a setting:
+        -- a list saved by an older version (2 pets) no longer hides the new entries (Skelicorn, Poltergeist Box)
+        pcall(function()
+            config.Farm.Event.CandyPets.Buy = deepCopy(Config.Defaults.Farm.Event.CandyPets.Buy)
+        end)
         for _, levelKey in ipairs({ "ConsoleLevel", "FileLevel" }) do
             local level = string.upper(config.Logging[levelKey])
             if VALID_LOG_LEVELS[level] == nil then
@@ -3232,6 +3237,7 @@ __moduleSources["Services/Interface"] = function(...)
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     Interface.CHANGELOG = {
         "v2.1.11 (13 Oct 2026)",
+        "Candy Shop list always shows every item (a list saved by an older version showed only 2)",
         "Camera fix: fixcam + min = max zoom (Camera distance 5-20), 10 times at start; run again when the zoom or camera changes",
         "v2.1.10 (13 Oct 2026)",
         "Candy Shop: Poltergeist Box (13,000 candy; Auto Open opens it), Keep candy / Keep Bucks sliders",
