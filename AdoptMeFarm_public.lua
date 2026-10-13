@@ -3227,6 +3227,7 @@ __moduleSources["Services/Interface"] = function(...)
         "The playtime payout (Cash out) window is hidden instead of clicked",
         "Ride / walk: when the game moves the character elsewhere, the walk stops (no more falling through the map)",
         "Hauntlet: no door warning every second while the run is not on this device",
+        "Ride / walk: the stroller and the pet in it no longer collide with the character (the cause of the flings)",
         "v2.1.7 (12 Oct 2026, night)",
         "Developer report: the farm's log files go along (session, Hauntlet debug, GUI log, Skelicorn, potions)",
         "gui_log.txt: every game window shown and every button the script pressed",
@@ -10698,8 +10699,37 @@ __moduleSources["Game/Tasks"] = function(...)
                         end
                     end
                 end
+                -- v2.1.8 (problem report: ride with the stroller, state Freefall, the character pushed 100+ studs a
+                -- second, 3 times in a row; walking without a stroller never did it): the stroller / the pet in it
+                -- collide with my own body and launch it. Their parts stop colliding (on this device only) while
+                -- I walk; the game's own parts and the map are untouched.
+                local function noSelfCollide()
+                    pcall(function()
+                        local holders = {}
+                        for _, child in ipairs(character and character:GetChildren() or {}) do
+                            if child:IsA("Tool") or child:IsA("Model") then
+                                table.insert(holders, child)
+                            end
+                        end
+                        local pet = ctx.petLocator:findModel(unique)
+                        if pet then
+                            table.insert(holders, pet)
+                        end
+                        for _, holder in ipairs(holders) do
+                            for _, part in ipairs(holder:GetDescendants()) do
+                                if part:IsA("BasePart") and part.CanCollide then
+                                    part.CanCollide = false
+                                    part.Massless = true
+                                end
+                            end
+                        end
+                    end)
+                end
                 local function tick()
                     tickCount += 1
+                    if tickCount % 4 == 1 then
+                        noSelfCollide()
+                    end
                     guardFling()
                     if stroller and os.clock() - lastUse > 2 then
                         lastUse = os.clock()
