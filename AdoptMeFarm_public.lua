@@ -45,6 +45,7 @@ local UserConfig = {
             HauntletMove = "tween", -- how the bot reaches a door's circle: "tween" (smooth) | "walk" | "tp"
             HauntletMoveSeconds = 0.5, -- tween: seconds to reach the circle (0.1 - 5)
             HauntletFirst = true, -- a Hauntlet run before a Ghost Gallery round when both are near
+            UsePrompt = true, -- go to the minigames by the game's own "Teleport there now?" prompt (home first)
             HauntletSquad = true, -- your accounts in one run play as a team (phone / keys / wand by turns)
             HauntletSquadKey = "", -- private: only accounts with the relay's SQUAD_KEY ask it who is in the run (never shared)
             StrayCat = false,
@@ -468,6 +469,7 @@ __moduleSources["Core/Config"] = function(...)
                 HauntletMove = "tween", -- "tween" (smooth, default) | "walk" | "tp": how the bot reaches a door's circle
                 HauntletMoveSeconds = 0.5, -- tween: seconds to reach the circle (0.1 - 5; the room's time is ~25 s)
                 HauntletFirst = true, -- a Hauntlet run comes before a Ghost Gallery round when both are near
+                UsePrompt = true,
                 HauntletSquad = true, -- several of your accounts in one run: shared items (phone, keys, wand) by turns
                 HauntletSquadKey = "", -- private squad key (= the worker's SQUAD_KEY secret): empty = nothing is sent
                 GhostJoinByZone = true,
@@ -1316,7 +1318,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.8 (Adopt Victims - UI Remastered Edition, Mega presets)"
+    Disclosure.VERSION = "2.1.9 (Adopt Victims - UI Remastered Edition, Mega presets)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -3221,6 +3223,8 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     Interface.CHANGELOG = {
+        "v2.1.9 (13 Oct 2026)",
+        "Minigames by the game's own teleport prompt: home ~70 s before, then Yes on the prompt (Farm.Event.UsePrompt)",
         "v2.1.8 (13 Oct 2026)",
         "White screen: the game's white fade (Whiteout) stuck on the screen is hidden after 8 s",
         "The \"starting soon, teleport?\" prompt is answered No in every language",
@@ -3275,7 +3279,7 @@ __moduleSources["Services/Interface"] = function(...)
         "Autoclose GUI on execute (Config > Settings)",
     }
     Interface.CHANGELOG_LATEST = {
-        Title = "v2.1.8 - White screen (Whiteout) fix",
+        Title = "v2.1.9 - Minigames via the game's prompt",
         Date = "12 Oct 2026 (TR)",
         Description = "Mystery fixed, alts no longer stuck at the last Hauntlet door, game dialogs closed, no more flings or floor sinking, lighter on the phone.",
     }
@@ -5299,6 +5303,8 @@ __moduleSources["Services/Interface"] = function(...)
             "Auto Hauntlet — join runs, pick safer doors, use keys/items")
         bindToggle(halloweenBox, "hauntletFirst", "key-round", "Hauntlet before Ghost Gallery", { "Farm", "Event", "HauntletFirst" },
             "A Hauntlet run comes first when a Ghost Gallery round is near")
+        bindToggle(halloweenBox, "usePrompt", "door-open", "Use the game's teleport prompt", { "Farm", "Event", "UsePrompt" },
+            "Home before a minigame, then Yes on the game's own Teleport prompt (fewer white screens)")
         bindToggle(halloweenBox, "hauntletSquad", "users", "Hauntlet squad play", { "Farm", "Event", "HauntletSquad" },
             "Your accounts in one run take turns with phone / keys / wand")
         bindText(halloweenBox, "hauntletSquadKey", "key-round", "Squad key (private)", { "Farm", "Event", "HauntletSquadKey" },
@@ -14058,6 +14064,7 @@ __moduleSources["Game/EventTasks"] = function(...)
             end
             local candyBefore = tonumber(ctx.gameData:get(KEYS.Candy))
             local keysBefore = #ctx.gameData:itemsOfId(TOYS, E.RustyKey)
+            pcall(EventTasks.viaPrompt, ctx, "ghost", "HauntedManor", tonumber(start))
             local arrived, why = ctx.travel:goTo("HauntedManor")
             if not arrived then
                 return false, "travel to the Manor failed: " .. tostring(why)
@@ -14230,6 +14237,45 @@ __moduleSources["Game/EventTasks"] = function(...)
             return finish(true)
         end,
     }
+    --[[
+        v2.1.9 (a user's fork, white screens gone: "stop all tasks at T-70, home at T-60, then the game's own TP prompt
+        at T-40"): going to a minigame by the game's own prompt. From the main map (its Halloween state glitches on
+        many devices) home first; then wait for the prompt (the dialog watcher answers Yes and notes it here) and for
+        the game to bring me. Returns true when I am at `place`; false = go the old way.
+    ]]
+    function EventTasks.viaPrompt(ctx, kind, place, startAt)
+        if type(ctx.farmConfig.Event) == "table" and ctx.farmConfig.Event.UsePrompt == false then
+            return false
+        end
+        if ctx.travel:isAt(place) then
+            return true
+        end
+        local function prompted()
+            local p = ctx.interaction.promptTeleport
+            return p ~= nil and p.kind == kind and Util.now() - p.at < 60
+        end
+        if not prompted() and not ctx.travel:isAt(GameConstants.HouseInteriorName) then
+            ctx.logger:info("Event", kind .. ": home first, then the game's own teleport prompt")
+            pcall(function()
+                ctx.travel:goTo(GameConstants.HouseInteriorName)
+            end)
+        end
+        local left = startAt and (startAt - Minigame.serverNow() - 32) or 20
+        if not prompted() then
+            ctx.waitUntil(prompted, math.max(0, math.min(left, 70)))
+        end
+        if not prompted() then
+            ctx.logger:info("Event", kind .. ": no teleport prompt came: going there the usual way")
+            return false
+        end
+        ctx.waitUntil(function()
+            return ctx.travel:isAt(place)
+        end, 15)
+        local arrived = ctx.travel:isAt(place)
+        ctx.logger:info("Event", kind .. ": the game's teleport prompt " .. (arrived and ("brought me to " .. place)
+            or "did not bring me: going there the usual way"))
+        return arrived
+    end
     EventTasks._journalAt = nil
     EventTasks.hauntlet = {
         id = "hauntlet",
@@ -14245,6 +14291,8 @@ __moduleSources["Game/EventTasks"] = function(...)
             end
             local pending = h.join ~= nil and not h.leave and not h.kicked and Util.now() - h.join.at < 90
             if not pending then
+                pcall(EventTasks.viaPrompt, ctx, "hauntlet", E.HauntletLobby, (group and tonumber(group.start))
+                    or EventTasks.nextRoundStart(ctx.gameData:get(KEYS.HauntletCycle), Minigame.serverNow()))
                 local arrived, why = ctx.travel:goTo(E.HauntletLobby)
                 if not arrived then
                     return false, "travel to the Hotel failed: " .. tostring(why)
@@ -15523,10 +15571,10 @@ __moduleSources["Game/TaskManager"] = function(...)
     local TEAM_KEY = "team"
     local EVENT_RECHECK_SECONDS = { ghost_gallery = 120, stray_cat = 1800, crypt = 60, pigeon_nest = 60, quests = 300, pen_stock = 20, age_potion = 5, open_gift = 3, neon_fusion = 2, mega_fusion = 2, candy_pet = 30, house_visits = 300, hauntlet = 90, skelicorn = 120 }
     local GHOST_GALLERY_LEAD_SECONDS = 75
-    local GHOST_INTERRUPT_SECONDS = 50
-    local HAUNTLET_LEAD_SECONDS = 45
+    local GHOST_INTERRUPT_SECONDS = 72
+    local HAUNTLET_LEAD_SECONDS = 75 -- v2.1.9: home first, then the game's prompt at T-45
     local HAUNTLET_GHOST_GAP_SECONDS = 420
-    local HAUNTLET_INTERRUPT_SECONDS = 42 -- Farm.Event.HauntletFirst: a normal task stops this long before a run
+    local HAUNTLET_INTERRUPT_SECONDS = 72 -- Farm.Event.HauntletFirst: a normal task stops this long before a run
     local GHOST_ROUND_BUSY_SECONDS = 270 -- a Ghost Gallery round with travel ("Done: Ghost Gallery round in 244 s")
     local NO_FURNITURE_SKIP_SECONDS = 600
     local NEVER_INTERRUPT = { ghost_gallery = true, hauntlet = true, recover = true, team = true, neon_fusion = true, mega_fusion = true }
@@ -17225,11 +17273,11 @@ __moduleSources["main"] = function(...)
             -- their harmless answer, the whole session. "Teleport there now?" -> No (the farm travels on its own
             -- schedule); a "Do not show again this session" box is ticked first when the dialog has one.
             local DIALOGS = {
-                { text = "starting soon", button = "^%s*no%s*$", label = "Minigame starting soon (No)" },
+                { text = "starting soon", button = "^%s*no%s*$", label = "Minigame starting soon", prompt = true },
                 -- v2.1.8 (gui_log.txt: the same prompt in Italian / Spanish was never answered): found by its frame
                 -- (DialogApp > CheckboxDialog with No / Yes), whatever the language
                 { frame = "CheckboxDialog", screen = "DialogApp", text = "\0never\0", button = "^%s*no%s*$",
-                    label = "Minigame starting soon (No, any language)" },
+                    label = "Minigame starting soon (any language)", prompt = true },
                 { text = "crypt has been reset", button = "^%s*okay%s*$", label = "Crypt reset (Okay)" },
                 { text = "game over", button = "^%s*nice!?%s*$", label = "Game over (Nice)" },
                 { text = "new pet discovered", button = "^%s*done%s*$", label = "New pet discovered (Done)" },
@@ -17432,13 +17480,37 @@ __moduleSources["main"] = function(...)
                                     local dialogGui = marker and marker:FindFirstAncestorOfClass("ScreenGui")
                                     if dialogGui and Util.now() >= (misses[rule.label] or 0)
                                         and (not rule.also or also[dialogGui]) then
-                                        local button = findDialogButton(dialogGui, rule.button)
+                                        local pattern, label = rule.button, rule.label
+                                        local promptKind = nil
+                                        if rule.prompt then
+                                            -- v2.1.9 (a user's fork: "home at T-60, then the game's own TP prompt: no white
+                                            -- screens, no falling through the map"): the prompt of a minigame the farm plays
+                                            -- is answered YES (the game takes me there itself); the others No. Its "do not
+                                            -- show again" box is left alone (the next prompt is needed).
+                                            local all = string.lower(Interaction.guiTexts(dialogGui, 12))
+                                            promptKind = string.find(all, "hauntlet", 1, true) and "hauntlet" or "ghost"
+                                            local event = config.Farm.Event or {}
+                                            local wanted = event.UsePrompt ~= false and ((promptKind == "hauntlet" and event.Hauntlet)
+                                                or (promptKind == "ghost" and event.GhostGallery))
+                                            pattern = wanted and "^%s*yes%s*$" or "^%s*no%s*$"
+                                            label = (promptKind == "hauntlet" and "Hauntlet" or "Ghost Gallery")
+                                                .. " teleport prompt (" .. (wanted and "Yes" or "No") .. ")"
+                                            if not wanted then
+                                                promptKind = nil
+                                            end
+                                        end
+                                        local button = findDialogButton(dialogGui, pattern)
                                         if button then
-                                            tickDontShowAgain(dialogGui)
-                                            if quickClose(rule.label, button, function()
+                                            if not rule.prompt then
+                                                tickDontShowAgain(dialogGui)
+                                            end
+                                            if promptKind then
+                                                Interaction.promptTeleport = { kind = promptKind, at = Util.now() }
+                                            end
+                                            if quickClose(label, button, function()
                                                 return isOnScreen(marker)
                                             end) then
-                                                logger:info("Game", rule.label .. ": closed")
+                                                logger:info("Game", label .. ": closed")
                                                 fails[rule.label] = 0
                                             else
                                                 fails[rule.label] = (fails[rule.label] or 0) + 1
