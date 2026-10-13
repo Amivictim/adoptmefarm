@@ -1326,7 +1326,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.10 (Adopt Victims - UI Remastered Edition, Mega presets)"
+    Disclosure.VERSION = "2.1.11 (Adopt Victims - UI Remastered Edition, Mega presets)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -1384,7 +1384,7 @@ __moduleSources["Services/Disclosure"] = function(...)
             "Auto Skelicorn (Farm.Event.AutoSkelicorn, off by default): Rusty Keys look for the Lightning Lever in the Crypt,"
                 .. " the lever goes into the machine by the Manor ONCE and is pulled, then 1 Skelicorn is bought with candy;"
                 .. " idle once you own one",
-            "camera lock (Farm.CameraGuard, works paused): the camera distance is locked to Farm.CameraZoom (5-20) with Roblox's own min / max zoom"
+            "camera fix (Farm.CameraGuard, works paused): fixcam (camera on the Humanoid, Custom, Classic, Head unanchored) + min = max zoom Farm.CameraZoom (5-20); 10 times at start / respawn, again when the zoom or camera changes"
                 .. " through your own zoom limit for a moment (a local setting, no remote)",
             "configs (Config tab): the settings you save go to AdoptMeFarm/configs/ on this device; one may load at start",
             "Autoclose GUI on execute (Interface.StartHidden): the window starts hidden by pressing its own minimize button"
@@ -3231,10 +3231,11 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     Interface.CHANGELOG = {
+        "v2.1.11 (13 Oct 2026)",
+        "Camera fix: fixcam + min = max zoom (Camera distance 5-20), 10 times at start; run again when the zoom or camera changes",
         "v2.1.10 (13 Oct 2026)",
         "Candy Shop: Poltergeist Box (13,000 candy; Auto Open opens it), Keep candy / Keep Bucks sliders",
         "Hauntlet teleport prompt is told apart from the Ghost Gallery one (it was read as Ghost Gallery)",
-        "Camera lock: Roblox's own min / max zoom set 10 times at start (Farm.CameraZoom, 5-20), then left alone",
         "Every slider has a text box under it: type any value (no limit; the slider stays at its end)",
         "v2.1.9 (13 Oct 2026)",
         "Minigames by the game's own teleport prompt: home ~70 s before, then Yes on the prompt (Farm.Event.UsePrompt)",
@@ -5665,10 +5666,10 @@ __moduleSources["Services/Interface"] = function(...)
         local look = configTab:CreateGroupbox({ Name = "Settings", Icon = I("settings"), Column = 1 }, "settings")
         bindToggle(look, "antiAfk", "shield-check", "Anti-AFK", { "Farm", "AntiAfk" }, "Clicks on Roblox's idle warning (no idle kick)")
         bindToggle(look, "autoMenu", "mouse-pointer-click", "Auto click Play (menu)", { "Farm", "AutoAcceptMenu" })
-        bindToggle(look, "cameraGuard", "camera", "Camera lock", { "Farm", "CameraGuard" },
-            "Locks the camera distance (Roblox min = max zoom) so it never goes inside your character")
+        bindToggle(look, "cameraGuard", "camera", "Camera fix (fixcam + zoom)", { "Farm", "CameraGuard" },
+            "fixcam + min = max zoom: 10 times at start, again whenever the zoom or the camera changes")
         bindSlider(look, "cameraZoom", "camera", "Camera distance", { "Farm", "CameraZoom" }, 5, 20, 1, " studs",
-            "The distance the camera lock keeps")
+            "The zoom the camera fix keeps (Roblox min = max zoom)")
         bindToggle(look, "toasts", "bell", "Event pop-ups", { "Interface", "Toasts" }, "Pop-ups for keys, neon, purchases, rounds")
         bindToggle(look, "startHidden", "eye-off", "Autoclose GUI on execute", { "Interface", "StartHidden" },
             "The window starts hidden: " .. (touch and "the round paw button" or "the hide / show key") .. " opens it")
@@ -17959,27 +17960,93 @@ __moduleSources["main"] = function(...)
             -- changes them in some places); the player's own zoom limits come back when the guard is turned off
             -- v2.1.10 (user: "it only worked on 1 account: set it 5-10 times when the script starts, then never touch
             -- it again"): 10 times, half a second apart, at start and when the guard or the distance is changed
-            local lastKey = nil
-            local function lockZoom()
-                local zoom = math.clamp(tonumber(config.Farm.CameraZoom) or 10, 5, 20)
-                for _ = 1, 10 do
-                    pcall(function()
-                        local player = Players.LocalPlayer
-                        player.CameraMaxZoomDistance = zoom
-                        player.CameraMinZoomDistance = zoom
-                    end)
+            -- v2.1.11 (user: "use fixcam"; then "min / max zoom must work together with fixcam: when the player's
+            -- values do not match our min / max zoom, run fixcam and set the zooms again"): fixcam (CameraSubject =
+            -- Humanoid, CameraType Custom, CameraMode Classic, Head unanchored) then min = max = Farm.CameraZoom (5-20).
+            -- 10 times half a second apart at start, on a new character and when the setting changes; after that a
+            -- check every 2 s runs it again (3 times) only when the zoom values or the camera subject went wrong
+            local function zoomTarget()
+                return math.clamp(tonumber(config.Farm.CameraZoom) or 10, 5, 20)
+            end
+            local function applyOnce()
+                pcall(function()
+                    local player = Players.LocalPlayer
+                    local character = player.Character
+                    local camera = workspace.CurrentCamera
+                    local humanoid = character and character:FindFirstChildWhichIsA("Humanoid")
+                    if camera and humanoid then
+                        camera.CameraSubject = humanoid
+                        camera.CameraType = Enum.CameraType.Custom
+                    end
+                    player.CameraMode = Enum.CameraMode.Classic
+                    local head = character and character:FindFirstChild("Head")
+                    if head and head:IsA("BasePart") then head.Anchored = false end
+                    local zoom = zoomTarget()
+                    player.CameraMaxZoomDistance = zoom
+                    player.CameraMinZoomDistance = zoom
+                end)
+            end
+            local busy = false
+            local lastLog, quiet = -math.huge, 0
+            local function fixCam(times, why)
+                if busy then return end
+                busy = true
+                for _ = 1, times do
+                    if not config.Farm.CameraGuard then break end
+                    applyOnce()
                     task.wait(0.5)
                 end
-                logger:info("Camera", "Camera distance locked at " .. zoom .. " (Farm.CameraZoom)")
-            end
-            scheduler:addJob("CameraGuard", 2, function()
-                local key = config.Farm.CameraGuard and tostring(config.Farm.CameraZoom) or nil
-                if key ~= nil and key ~= lastKey then
-                    lastKey = key
-                    task.spawn(lockZoom)
-                elseif key == nil then
-                    lastKey = nil
+                busy = false
+                if os.clock() - lastLog >= 60 then
+                    lastLog = os.clock()
+                    logger:info("Camera", "fixcam + zoom " .. zoomTarget() .. " applied (" .. why .. ")"
+                        .. (quiet > 0 and (", +" .. quiet .. " more since the last line") or ""))
+                    quiet = 0
+                else
+                    quiet += 1
                 end
+            end
+            local function wrong()
+                local bad = false
+                pcall(function()
+                    local player = Players.LocalPlayer
+                    local zoom = zoomTarget()
+                    if math.abs(player.CameraMinZoomDistance - zoom) > 0.01 or math.abs(player.CameraMaxZoomDistance - zoom) > 0.01 then
+                        bad = true
+                        return
+                    end
+                    local character = player.Character
+                    local humanoid = character and character:FindFirstChildWhichIsA("Humanoid")
+                    local camera = workspace.CurrentCamera
+                    if humanoid and camera and camera.CameraSubject ~= humanoid then bad = true end
+                end)
+                return bad
+            end
+            local lastKey = nil
+            local lastFix = 0
+            scheduler:addJob("CameraGuard", 2, function()
+                if not config.Farm.CameraGuard then
+                    lastKey = nil
+                    return
+                end
+                local key = tostring(zoomTarget())
+                if key ~= lastKey then
+                    lastKey = key
+                    lastFix = os.clock()
+                    task.spawn(fixCam, 10, "start / setting changed")
+                elseif not busy and wrong() and os.clock() - lastFix >= 5 then
+                    lastFix = os.clock()
+                    task.spawn(fixCam, 3, "the zoom or camera had changed")
+                end
+            end)
+            pcall(function()
+                Players.LocalPlayer.CharacterAdded:Connect(function()
+                    task.wait(1)
+                    if config.Farm.CameraGuard then
+                        lastFix = os.clock()
+                        task.spawn(fixCam, 10, "new character")
+                    end
+                end)
             end)
         end
         notifier:notify(Enums.NotifyEvent.SessionStarted, {
