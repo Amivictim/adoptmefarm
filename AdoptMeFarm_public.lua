@@ -1295,7 +1295,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.13 (Adopt Victims - UI Remastered Edition, Mega presets)"
+    Disclosure.VERSION = "2.1.14 (Adopt Victims - UI Remastered Edition, Mega presets)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -1355,7 +1355,7 @@ __moduleSources["Services/Disclosure"] = function(...)
             "several jobs at once (v2.1.12): one task moves the character (needs, minigames, Crypt, Pet Pen); next to it the"
                 .. " Candy Shop, quest claims, gifts, potions and neon fusion run without walking (gifts / potions / neon only"
                 .. " while nothing else holds an item or the pet)",
-            "camera fix (Farm.CameraGuard, works paused): fixcam (camera on the Humanoid, Custom, Classic, Head unanchored)"
+            "camera fix (Farm.CameraGuard, works paused, never inside a minigame): fixcam (camera on the Humanoid, Custom, Classic, Head unanchored)"
                 .. " + min = max zoom Farm.CameraZoom (5-20); 10 times at start / respawn, again when the zoom or camera"
                 .. " changes (a local setting, no remote)",
             "configs (Config tab): the settings you save go to AdoptMeFarm/configs/ on this device; one may load at start",
@@ -3318,6 +3318,8 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     Interface.CHANGELOG = {
+        "v2.1.14 (13 Oct 2026)",
+        "Hauntlet / Ghost Gallery: the camera fix and the side jobs (shop, quests, gifts...) stay off during a run",
         "v2.1.13 (13 Oct 2026)",
         "Crypt: the game's answer to a Rusty Key is read (refused -> no 6 s wait; ok -> up to 12 s for the grave) and written in the report",
         "v2.1.12 (13 Oct 2026)",
@@ -17038,6 +17040,12 @@ __moduleSources["Game/TaskManager"] = function(...)
             return -- at most one look a second (lighter on phones running many accounts)
         end
         self._quickCheckAt = now + 1
+        -- v2.1.14 (user: "Hauntlet is broken since the update, it does not get into the minigame"): nothing runs next
+        -- to a minigame (Hauntlet run / Ghost Gallery round): the run has the character, the camera and the hands
+        local mainKey = self._running and self._running.key
+        if mainKey == "hauntlet" or mainKey == "ghost_gallery" then
+            return
+        end
         local key, label, taskDefinition, group, hands = self:_selectQuickJob()
         if key then
             self:_start(key, label, taskDefinition, group, true, "_quick", hands)
@@ -18397,6 +18405,17 @@ __moduleSources["main"] = function(...)
             local function zoomTarget()
                 return math.clamp(tonumber(config.Farm.CameraZoom) or 10, 5, 20)
             end
+            -- v2.1.14 (user: "Hauntlet broke after the update"; 2.1.11 added this guard, the report shows it firing during
+            -- the run): inside a minigame the game drives the camera itself, so the guard leaves it alone there
+            local function inMinigame()
+                local task = state:get("farm.currentTask")
+                if task == "hauntlet" or task == "ghost_gallery" then
+                    return true
+                end
+                local place = tostring(state:get("player.interior") or "")
+                return string.find(place, GameConstants.Event.HauntletInteriorPrefix, 1, true) == 1
+                    or string.find(place, GameConstants.Event.MinigameInteriorPrefix, 1, true) == 1
+            end
             local function applyOnce()
                 pcall(function()
                     local player = Players.LocalPlayer
@@ -18421,7 +18440,7 @@ __moduleSources["main"] = function(...)
                 if busy then return end
                 busy = true
                 for _ = 1, times do
-                    if not config.Farm.CameraGuard then break end
+                    if not config.Farm.CameraGuard or inMinigame() then break end
                     applyOnce()
                     task.wait(0.5)
                 end
@@ -18458,6 +18477,9 @@ __moduleSources["main"] = function(...)
                     lastKey = nil
                     return
                 end
+                if inMinigame() then
+                    return
+                end
                 local key = tostring(zoomTarget())
                 if key ~= lastKey then
                     lastKey = key
@@ -18471,7 +18493,7 @@ __moduleSources["main"] = function(...)
             pcall(function()
                 Players.LocalPlayer.CharacterAdded:Connect(function()
                     task.wait(1)
-                    if config.Farm.CameraGuard then
+                    if config.Farm.CameraGuard and not inMinigame() then
                         lastFix = os.clock()
                         task.spawn(fixCam, 10, "new character")
                     end
