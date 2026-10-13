@@ -4971,6 +4971,44 @@ __moduleSources["Services/Interface"] = function(...)
             describe(box, index, opts.tooltip or (path and about(path)))
             return label, dropdown
         end
+        -- v2.1.10 (user: "I cannot type the number into the slider; a typed value has no limit, the slider stays at its
+        -- max but the value is what I typed"): a number box next to a slider; any whole number >= 0 is kept as typed
+        local function bindNumber(box, index, icon, name, path, placeholder)
+            if type(read(path)) ~= "number" then
+                return nil
+            end
+            local element
+            element = box:CreateInput({
+                Name = name,
+                Icon = I(icon),
+                Tooltip = about(path),
+                CurrentValue = tostring(math.floor(tonumber(read(path)) or 0)),
+                PlaceholderText = placeholder or "Type a number",
+                Enter = true,
+                Callback = function(typed)
+                    local digits = string.gsub(tostring(typed or ""), "[%s,%.]", "")
+                    local number = tonumber(digits)
+                    if number and number >= 0 then
+                        number = math.floor(number)
+                        if number ~= tonumber(read(path)) then
+                            write(path, number)
+                        end
+                    else
+                        notify(name, "Type a whole number (0 or more)", "triangle-alert")
+                    end
+                    pcall(function()
+                        element:Set({ CurrentValue = tostring(math.floor(tonumber(read(path)) or 0)) })
+                    end)
+                end,
+            }, index)
+            remember(table.concat(path, "."), function()
+                local now = tostring(math.floor(tonumber(read(path)) or 0))
+                if tostring(element.Values.CurrentValue) ~= now then
+                    element:Set({ CurrentValue = now })
+                end
+            end)
+            return element
+        end
         local function bindText(box, index, icon, name, path, placeholder, accept, shown)
             if type(read(path)) ~= "string" then
                 return nil
@@ -5373,8 +5411,12 @@ __moduleSources["Services/Interface"] = function(...)
             end
             bindSlider(shopBox, "keepCandy", "game:candy", "Keep candy", { "Farm", "Event", "CandyPets", "KeepCandy" },
                 0, 5000000, 1000, "", "Candy the shop never spends")
+            bindNumber(shopBox, "keepCandyTyped", "game:candy", "Keep candy (type any amount)",
+                { "Farm", "Event", "CandyPets", "KeepCandy" }, "e.g. 7500000")
             bindSlider(shopBox, "keepBucks", "game:bucks", "Keep Bucks", { "Farm", "Event", "CandyPets", "KeepBucks" },
                 0, 1000000, 100, "", "Bucks the shop never spends (boxes sold for Bucks)")
+            bindNumber(shopBox, "keepBucksTyped", "game:bucks", "Keep Bucks (type any amount)",
+                { "Farm", "Event", "CandyPets", "KeepBucks" }, "e.g. 250000")
         end
         local eventInfoBox = eventTab:CreateGroupbox({ Name = "Event status", Icon = I("game:candy"), Column = col(2) }, "eventInfo")
         local eventInfo = eventInfoBox:CreateParagraph({ Name = "Your event", Icon = I("ghost"), Content = "Waiting for your data..." },
