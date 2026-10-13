@@ -3234,7 +3234,8 @@ __moduleSources["Services/Interface"] = function(...)
         "v2.1.10 (13 Oct 2026)",
         "Candy Shop: Poltergeist Box (13,000 candy; Auto Open opens it), Keep candy / Keep Bucks sliders",
         "Hauntlet teleport prompt is told apart from the Ghost Gallery one (it was read as Ghost Gallery)",
-        "Camera lock: Roblox's own min / max zoom, fixed at Farm.CameraZoom (5-20, slider)",
+        "Camera lock: Roblox's own min / max zoom set 10 times at start (Farm.CameraZoom, 5-20), then left alone",
+        "Every slider has a text box under it: type any value (no limit; the slider stays at its end)",
         "v2.1.9 (13 Oct 2026)",
         "Minigames by the game's own teleport prompt: home ~70 s before, then Yes on the prompt (Farm.Event.UsePrompt)",
         "v2.1.8 (13 Oct 2026)",
@@ -4834,6 +4835,51 @@ __moduleSources["Services/Interface"] = function(...)
             end)
             return element
         end
+        -- v2.1.10 (user: "I cannot type the number into the slider; a typed value has no limit, the slider stays at its
+        -- max but the value is what I typed"): a number box next to a slider; any whole number >= 0 is kept as typed
+        local function bindNumber(box, index, icon, name, path, placeholder, scale, integer)
+            scale = scale or 1
+            if type(read(path)) ~= "number" then
+                return nil
+            end
+            local element
+            element = box:CreateInput({
+                Name = name,
+                Icon = I(icon),
+                Tooltip = about(path),
+                CurrentValue = tostring((tonumber(read(path)) or 0) / scale),
+                PlaceholderText = placeholder or "Type a number",
+                Enter = true,
+                Callback = function(typed)
+                    local digits = string.gsub(tostring(typed or ""), "[%s,]", "")
+                    local _, dots = string.gsub(digits, "%.", "")
+                    if integer or dots > 1 then
+                        digits = string.gsub(digits, "%.", "") -- 7.500.000 = 7500000
+                    end
+                    local number = tonumber(digits)
+                    if number and number >= 0 then
+                        if integer then
+                            number = math.floor(number)
+                        end
+                        if number * scale ~= tonumber(read(path)) then
+                            write(path, number * scale)
+                        end
+                    else
+                        notify(name, "Type a number (0 or more)", "triangle-alert")
+                    end
+                    pcall(function()
+                        element:Set({ CurrentValue = tostring((tonumber(read(path)) or 0) / scale) })
+                    end)
+                end,
+            }, index)
+            remember(table.concat(path, "."), function()
+                local now = tostring((tonumber(read(path)) or 0) / scale)
+                if tostring(element.Values.CurrentValue) ~= now then
+                    element:Set({ CurrentValue = now })
+                end
+            end)
+            return element
+        end
         local function bindSlider(box, index, icon, name, path, min, max, step, suffix, tooltip, scale)
             scale = scale or 1
             if type(read(path)) ~= "number" then
@@ -4864,6 +4910,10 @@ __moduleSources["Services/Interface"] = function(...)
                     element:Set({ CurrentValue = shown() })
                 end
             end)
+            -- v2.1.10 (user: "no slider value can be typed - only the text boxes (webhook URL, user id) can"): every
+            -- slider gets a text box under it; a typed value has no limit (the slider then stays at its end)
+            pcall(bindNumber, box, index .. "Typed", icon, name .. " (type)", path, tostring(min) .. " - " .. tostring(max)
+                .. (suffix and suffix ~= "" and (" " .. string.gsub(suffix, "^%s+", "")) or ""), scale, step >= 1)
             return element
         end
         local fitPopup
@@ -4970,44 +5020,6 @@ __moduleSources["Services/Interface"] = function(...)
             end
             describe(box, index, opts.tooltip or (path and about(path)))
             return label, dropdown
-        end
-        -- v2.1.10 (user: "I cannot type the number into the slider; a typed value has no limit, the slider stays at its
-        -- max but the value is what I typed"): a number box next to a slider; any whole number >= 0 is kept as typed
-        local function bindNumber(box, index, icon, name, path, placeholder)
-            if type(read(path)) ~= "number" then
-                return nil
-            end
-            local element
-            element = box:CreateInput({
-                Name = name,
-                Icon = I(icon),
-                Tooltip = about(path),
-                CurrentValue = tostring(math.floor(tonumber(read(path)) or 0)),
-                PlaceholderText = placeholder or "Type a number",
-                Enter = true,
-                Callback = function(typed)
-                    local digits = string.gsub(tostring(typed or ""), "[%s,%.]", "")
-                    local number = tonumber(digits)
-                    if number and number >= 0 then
-                        number = math.floor(number)
-                        if number ~= tonumber(read(path)) then
-                            write(path, number)
-                        end
-                    else
-                        notify(name, "Type a whole number (0 or more)", "triangle-alert")
-                    end
-                    pcall(function()
-                        element:Set({ CurrentValue = tostring(math.floor(tonumber(read(path)) or 0)) })
-                    end)
-                end,
-            }, index)
-            remember(table.concat(path, "."), function()
-                local now = tostring(math.floor(tonumber(read(path)) or 0))
-                if tostring(element.Values.CurrentValue) ~= now then
-                    element:Set({ CurrentValue = now })
-                end
-            end)
-            return element
         end
         local function bindText(box, index, icon, name, path, placeholder, accept, shown)
             if type(read(path)) ~= "string" then
@@ -5411,12 +5423,9 @@ __moduleSources["Services/Interface"] = function(...)
             end
             bindSlider(shopBox, "keepCandy", "game:candy", "Keep candy", { "Farm", "Event", "CandyPets", "KeepCandy" },
                 0, 5000000, 1000, "", "Candy the shop never spends")
-            bindNumber(shopBox, "keepCandyTyped", "game:candy", "Keep candy (type any amount)",
-                { "Farm", "Event", "CandyPets", "KeepCandy" }, "e.g. 7500000")
             bindSlider(shopBox, "keepBucks", "game:bucks", "Keep Bucks", { "Farm", "Event", "CandyPets", "KeepBucks" },
                 0, 1000000, 100, "", "Bucks the shop never spends (boxes sold for Bucks)")
-            bindNumber(shopBox, "keepBucksTyped", "game:bucks", "Keep Bucks (type any amount)",
-                { "Farm", "Event", "CandyPets", "KeepBucks" }, "e.g. 250000")
+
         end
         local eventInfoBox = eventTab:CreateGroupbox({ Name = "Event status", Icon = I("game:candy"), Column = col(2) }, "eventInfo")
         local eventInfo = eventInfoBox:CreateParagraph({ Name = "Your event", Icon = I("ghost"), Content = "Waiting for your data..." },
@@ -17948,29 +17957,29 @@ __moduleSources["main"] = function(...)
             -- v2.1.10 (user: "the camera guard does not work: use Roblox's own min / max zoom, fixed between 5 and 20"):
             -- CameraMinZoomDistance = CameraMaxZoomDistance = Farm.CameraZoom (5-20), set again every second (the game
             -- changes them in some places); the player's own zoom limits come back when the guard is turned off
-            local saved = nil
-            scheduler:addJob("CameraGuard", 1, function()
-                pcall(function()
-                    local player = Players.LocalPlayer
-                    if not player then
-                        return
-                    end
-                    if not config.Farm.CameraGuard then
-                        if saved then
-                            player.CameraMaxZoomDistance, player.CameraMinZoomDistance = saved.max, saved.min
-                            saved = nil
-                        end
-                        return
-                    end
-                    saved = saved or { min = player.CameraMinZoomDistance, max = player.CameraMaxZoomDistance }
-                    local zoom = math.clamp(tonumber(config.Farm.CameraZoom) or 10, 5, 20)
-                    if player.CameraMaxZoomDistance ~= zoom then
+            -- v2.1.10 (user: "it only worked on 1 account: set it 5-10 times when the script starts, then never touch
+            -- it again"): 10 times, half a second apart, at start and when the guard or the distance is changed
+            local lastKey = nil
+            local function lockZoom()
+                local zoom = math.clamp(tonumber(config.Farm.CameraZoom) or 10, 5, 20)
+                for _ = 1, 10 do
+                    pcall(function()
+                        local player = Players.LocalPlayer
                         player.CameraMaxZoomDistance = zoom
-                    end
-                    if player.CameraMinZoomDistance ~= zoom then
                         player.CameraMinZoomDistance = zoom
-                    end
-                end)
+                    end)
+                    task.wait(0.5)
+                end
+                logger:info("Camera", "Camera distance locked at " .. zoom .. " (Farm.CameraZoom)")
+            end
+            scheduler:addJob("CameraGuard", 2, function()
+                local key = config.Farm.CameraGuard and tostring(config.Farm.CameraZoom) or nil
+                if key ~= nil and key ~= lastKey then
+                    lastKey = key
+                    task.spawn(lockZoom)
+                elseif key == nil then
+                    lastKey = nil
+                end
             end)
         end
         notifier:notify(Enums.NotifyEvent.SessionStarted, {
