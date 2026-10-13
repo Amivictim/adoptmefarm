@@ -1316,7 +1316,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.7 (Adopt Victims - UI Remastered Edition, Mega presets)"
+    Disclosure.VERSION = "2.1.8 (Adopt Victims - UI Remastered Edition, Mega presets)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -3221,8 +3221,13 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     Interface.CHANGELOG = {
+        "v2.1.8 (13 Oct 2026)",
+        "White screen: the game's white fade (Whiteout) stuck on the screen is hidden after 8 s",
+        "The \"starting soon, teleport?\" prompt is answered No in every language",
+        "The playtime payout (Cash out) window is hidden instead of clicked",
+        "Ride / walk: when the game moves the character elsewhere, the walk stops (no more falling through the map)",
+        "Hauntlet: no door warning every second while the run is not on this device",
         "v2.1.7 (12 Oct 2026, night)",
-        "White screen fix: a place reached by the remote route that this device did not draw is entered the game's way",
         "Developer report: the farm's log files go along (session, Hauntlet debug, GUI log, Skelicorn, potions)",
         "gui_log.txt: every game window shown and every button the script pressed",
         "Candy Shop: Skelicorn too; Auto buy = one every 0.5 s until the candy runs out, Max buy = all in one purchase",
@@ -3269,7 +3274,7 @@ __moduleSources["Services/Interface"] = function(...)
         "Autoclose GUI on execute (Config > Settings)",
     }
     Interface.CHANGELOG_LATEST = {
-        Title = "v2.1.7 - White screen fix, log files",
+        Title = "v2.1.8 - White screen (Whiteout) fix",
         Date = "12 Oct 2026 (TR)",
         Description = "Mystery fixed, alts no longer stuck at the last Hauntlet door, game dialogs closed, no more flings or floor sinking, lighter on the phone.",
     }
@@ -9267,7 +9272,6 @@ __moduleSources["Game/Travel"] = function(...)
                 if destination == "MainMap" then
                     return self:_checkPlacedOnMainMap(recipe, me)
                 end
-                pcall(self._ensureDrawn, self, destination, recipe)
                 return true
             end
             if recipe.ownHouse and not resubscribed and Util.now() - started > 6 then
@@ -10640,13 +10644,22 @@ __moduleSources["Game/Tasks"] = function(...)
                 -- v2.1.6 (2.1.6 reports: most "flings" were 120-200 studs, still on the main map: no harm, yet the ride
                 -- failed after 3): only a real throw counts - far away (400+) or off the main map
                 local FLING = 400
-                local anchorPos, flings, flungOut = nil, 0, false
+                local anchorPos, flings, flungOut, movedAway = nil, 0, false, false
                 local function guardFling()
                     if not (root and anchorPos) then
                         return
                     end
                     local p = root.Position
                     local far = math.sqrt((p.X - anchorPos.X) ^ 2 + (p.Z - anchorPos.Z) ^ 2)
+                    if far > 2000 then
+                        -- v2.1.8 (2.1.7 reports: the first "fling" was always to about (-9100, 3040), 10000 studs away:
+                        -- the game moved me somewhere else; pulling me back made me fall through an unloaded map 2 more
+                        -- times): stop the walk, the next trip starts from where the game put me
+                        ctx.logger:info("Tasks", string.format("%s: the game moved me %d studs away (at %.0f, %.0f): stopping here",
+                            kind, math.floor(far), p.X, p.Z))
+                        flungOut, stalled, movedAway = true, true, true
+                        return
+                    end
                     if far > FLING or not isOnMainMapArea(p) then
                         flings += 1
                         ctx.logger:warn("Tasks", string.format("%s: flung %d studs away (at %.0f, %.0f): back to the start (%d)",
@@ -10735,7 +10748,8 @@ __moduleSources["Game/Tasks"] = function(...)
                     return true
                 end
                 if flungOut then
-                    return false, kind .. ": the character was flung off the map 3 times (stopped, back at the start)"
+                    return false, movedAway and (kind .. ": the game moved me away from the map (stopped)")
+                        or (kind .. ": the character was flung off the map 3 times (stopped, back at the start)")
                 end
                 if stalled and GameConstants.Spots.beach_party then
                     ctx.logger:info("Tasks", kind .. " is not progressing here: moving to the open beach spot and walking there")
@@ -14717,8 +14731,13 @@ __moduleSources["Game/EventTasks"] = function(...)
                                 end
                             else
                                 failedMoves += 1
-                                ctx.logger:warn("Hauntlet", "Could not reach door " .. door .. ": " .. tostring(how))
-                                task.wait(1)
+                                -- v2.1.8 (2.1.7 reports: 1737 of these, every second while the run's rooms were not on
+                                -- this device): the first one per room is a warning, the rest wait quietly
+                                local noRun = type(how) == "string" and string.find(how, "no HauntletInterior", 1, true) ~= nil
+                                if not noRun or failedMoves <= 1 then
+                                    ctx.logger:warn("Hauntlet", "Could not reach door " .. door .. ": " .. tostring(how))
+                                end
+                                task.wait(noRun and 2 or 1)
                             end
                         end
                     end
@@ -17177,14 +17196,16 @@ __moduleSources["main"] = function(...)
             -- schedule); a "Do not show again this session" box is ticked first when the dialog has one.
             local DIALOGS = {
                 { text = "starting soon", button = "^%s*no%s*$", label = "Minigame starting soon (No)" },
+                -- v2.1.8 (gui_log.txt: the same prompt in Italian / Spanish was never answered): found by its frame
+                -- (DialogApp > CheckboxDialog with No / Yes), whatever the language
+                { frame = "CheckboxDialog", screen = "DialogApp", text = "\0never\0", button = "^%s*no%s*$",
+                    label = "Minigame starting soon (No, any language)" },
                 { text = "crypt has been reset", button = "^%s*okay%s*$", label = "Crypt reset (Okay)" },
                 { text = "game over", button = "^%s*nice!?%s*$", label = "Game over (Nice)" },
                 { text = "new pet discovered", button = "^%s*done%s*$", label = "New pet discovered (Done)" },
                 { text = "journal updated", button = "^%s*done%s*$", label = "Journal updated (Done)" },
-                -- v2.1.6 (reports: "Cash out" alone also matched a button that is always there, 4 clicks every 2 min that
-                -- never closed anything): only the dialog that also has the "Do not show again" box
-                { text = "^%s*cash out%s*$", also = "do not show again", button = "^%s*cash out%s*$",
-                    label = "Bank check (Cash out)" },
+                -- (the bank check is PlaytimePayoutsApp: no click ever closed it (gui_log.txt) - it is hidden instead,
+                -- see the pass below)
             }
             local function buttonText(button)
                 local parts = {}
@@ -17276,7 +17297,7 @@ __moduleSources["main"] = function(...)
             end
             if playerGui and config.Farm.AutoCloseDialogs ~= false then
                 maid:Give(task.spawn(function()
-                    local misses, fails = {}, {}
+                    local misses, fails, whiteSince = {}, {}, {}
                     local shownBefore = nil -- the game windows open at the last pass (for gui_log.txt)
                     while true do
                         task.wait(3)
@@ -17315,9 +17336,47 @@ __moduleSources["main"] = function(...)
                             pcall(function()
                                 -- 1) one pass: the first visible text of every dialog
                                 local hits, also = {}, {}
+                                local whiteNow = {}
                                 for _, screen in ipairs(playerGui:GetChildren()) do
                                     if screen:IsA("ScreenGui") and screen.Enabled then
+                                        -- v2.1.8 (gui_log.txt: PlaytimePayoutsApp "CASH OUT" never closed with any click):
+                                        -- that window is simply hidden whenever it shows
+                                        if screen.Name == "PlaytimePayoutsApp" then
+                                            for _, frame in ipairs(screen:GetChildren()) do
+                                                if frame:IsA("GuiObject") and frame.Visible then
+                                                    frame.Visible = false
+                                                    logger:debug("Game", "Playtime payout window hidden")
+                                                end
+                                            end
+                                        end
                                         for _, object in ipairs(screen:GetDescendants()) do
+                                            -- v2.1.8 white screen: the game's white fade ("Whiteout") that stays on after a
+                                            -- trip; on for 8 s while nothing moves = stuck: hidden
+                                            if object:IsA("GuiObject") and string.find(string.lower(object.Name), "whiteout", 1, true)
+                                                and object.Visible and (object.BackgroundTransparency < 0.9
+                                                    or (object:IsA("ImageLabel") and object.ImageTransparency < 0.9))
+                                                and isOnScreen(object) then
+                                                whiteNow[object] = true
+                                                if not whiteSince[object] then
+                                                    whiteSince[object] = Util.now()
+                                                    Interaction.guiLog("WHITEOUT shown " .. object:GetFullName())
+                                                end
+                                                if Util.now() - whiteSince[object] >= 8 then
+                                                    pcall(function()
+                                                        object.Visible = false
+                                                    end)
+                                                    whiteSince[object] = nil
+                                                    logger:info("Game", "White screen: the game's white fade was stuck on for 8 s:"
+                                                        .. " hidden (" .. object:GetFullName() .. ")")
+                                                    Interaction.guiLog("WHITEOUT hidden " .. object:GetFullName())
+                                                end
+                                            end
+                                            for _, rule in ipairs(DIALOGS) do
+                                                if rule.frame and not hits[rule] and object.Name == rule.frame
+                                                    and screen.Name == rule.screen and isOnScreen(object) then
+                                                    hits[rule] = object
+                                                end
+                                            end
                                             if (object:IsA("TextLabel") or object:IsA("TextButton")) and object.Text ~= "" then
                                                 local text = string.lower(object.Text)
                                                 if string.find(text, "do not show again", 1, true) then
@@ -17330,6 +17389,11 @@ __moduleSources["main"] = function(...)
                                                 end
                                             end
                                         end
+                                    end
+                                end
+                                for object in pairs(whiteSince) do
+                                    if not whiteNow[object] then
+                                        whiteSince[object] = nil
                                     end
                                 end
                                 -- 2) answer what was found
