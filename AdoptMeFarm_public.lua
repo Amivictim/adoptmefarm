@@ -29,6 +29,7 @@ local UserConfig = {
         AutoAcceptMenu = true,
         AntiAfk = true,
         CameraGuard = true,
+        CameraZoom = 10, -- camera distance the camera guard locks (5-20)
         AutoRejoin = false,
         SpotTravel = "teleport",
         GameTravel = true,
@@ -420,6 +421,7 @@ __moduleSources["Core/Config"] = function(...)
             AutoAcceptMenu = true,
             AntiAfk = true,
             CameraGuard = true,
+            CameraZoom = 10, -- camera distance the camera guard locks (5-20)
             CollectCashback = false,
             CashbackMinutes = 10,
             SpotTravel = "teleport",
@@ -1382,7 +1384,7 @@ __moduleSources["Services/Disclosure"] = function(...)
             "Auto Skelicorn (Farm.Event.AutoSkelicorn, off by default): Rusty Keys look for the Lightning Lever in the Crypt,"
                 .. " the lever goes into the machine by the Manor ONCE and is pulled, then 1 Skelicorn is bought with candy;"
                 .. " idle once you own one",
-            "camera guard (Farm.CameraGuard, works paused): when the camera is inside your character it is pushed back out"
+            "camera lock (Farm.CameraGuard, works paused): the camera distance is locked to Farm.CameraZoom (5-20) with Roblox's own min / max zoom"
                 .. " through your own zoom limit for a moment (a local setting, no remote)",
             "configs (Config tab): the settings you save go to AdoptMeFarm/configs/ on this device; one may load at start",
             "Autoclose GUI on execute (Interface.StartHidden): the window starts hidden by pressing its own minimize button"
@@ -3232,6 +3234,7 @@ __moduleSources["Services/Interface"] = function(...)
         "v2.1.10 (13 Oct 2026)",
         "Candy Shop: Poltergeist Box (13,000 candy; Auto Open opens it), Keep candy / Keep Bucks sliders",
         "Hauntlet teleport prompt is told apart from the Ghost Gallery one (it was read as Ghost Gallery)",
+        "Camera lock: Roblox's own min / max zoom, fixed at Farm.CameraZoom (5-20, slider)",
         "v2.1.9 (13 Oct 2026)",
         "Minigames by the game's own teleport prompt: home ~70 s before, then Yes on the prompt (Farm.Event.UsePrompt)",
         "v2.1.8 (13 Oct 2026)",
@@ -5611,8 +5614,10 @@ __moduleSources["Services/Interface"] = function(...)
         local look = configTab:CreateGroupbox({ Name = "Settings", Icon = I("settings"), Column = 1 }, "settings")
         bindToggle(look, "antiAfk", "shield-check", "Anti-AFK", { "Farm", "AntiAfk" }, "Clicks on Roblox's idle warning (no idle kick)")
         bindToggle(look, "autoMenu", "mouse-pointer-click", "Auto click Play (menu)", { "Farm", "AutoAcceptMenu" })
-        bindToggle(look, "cameraGuard", "camera", "Camera guard", { "Farm", "CameraGuard" },
-            "The camera went inside your character: it is zoomed back out")
+        bindToggle(look, "cameraGuard", "camera", "Camera lock", { "Farm", "CameraGuard" },
+            "Locks the camera distance (Roblox min = max zoom) so it never goes inside your character")
+        bindSlider(look, "cameraZoom", "camera", "Camera distance", { "Farm", "CameraZoom" }, 5, 20, 1, " studs",
+            "The distance the camera lock keeps")
         bindToggle(look, "toasts", "bell", "Event pop-ups", { "Interface", "Toasts" }, "Pop-ups for keys, neon, purchases, rounds")
         bindToggle(look, "startHidden", "eye-off", "Autoclose GUI on execute", { "Interface", "StartHidden" },
             "The window starts hidden: " .. (touch and "the round paw button" or "the hide / show key") .. " opens it")
@@ -17898,35 +17903,30 @@ __moduleSources["main"] = function(...)
             end
         end
         do
-            local pushing, lastLog = false, -math.huge
+            -- v2.1.10 (user: "the camera guard does not work: use Roblox's own min / max zoom, fixed between 5 and 20"):
+            -- CameraMinZoomDistance = CameraMaxZoomDistance = Farm.CameraZoom (5-20), set again every second (the game
+            -- changes them in some places); the player's own zoom limits come back when the guard is turned off
+            local saved = nil
             scheduler:addJob("CameraGuard", 1, function()
-                if not config.Farm.CameraGuard or pushing then
-                    return
-                end
                 pcall(function()
                     local player = Players.LocalPlayer
-                    local camera = workspace.CurrentCamera
-                    local character = player and player.Character
-                    local head = character and character:FindFirstChild("Head")
-                    if not (camera and head) or camera.CameraType ~= Enum.CameraType.Custom
-                        or player.CameraMode == Enum.CameraMode.LockFirstPerson then
+                    if not player then
                         return
                     end
-                    if (camera.CFrame.Position - head.Position).Magnitude > CAMERA_INSIDE_STUDS then
+                    if not config.Farm.CameraGuard then
+                        if saved then
+                            player.CameraMaxZoomDistance, player.CameraMinZoomDistance = saved.max, saved.min
+                            saved = nil
+                        end
                         return
                     end
-                    pushing = true
-                    local before = player.CameraMinZoomDistance
-                    player.CameraMinZoomDistance = math.max(before, CAMERA_OUT_STUDS)
-                    task.delay(0.3, function()
-                        pcall(function()
-                            player.CameraMinZoomDistance = before
-                        end)
-                        pushing = false
-                    end)
-                    if Util.now() - lastLog > 60 then
-                        lastLog = Util.now()
-                        logger:debug("Camera", "Camera was inside your character: zoomed it back out (Farm.CameraGuard)")
+                    saved = saved or { min = player.CameraMinZoomDistance, max = player.CameraMaxZoomDistance }
+                    local zoom = math.clamp(tonumber(config.Farm.CameraZoom) or 10, 5, 20)
+                    if player.CameraMaxZoomDistance ~= zoom then
+                        player.CameraMaxZoomDistance = zoom
+                    end
+                    if player.CameraMinZoomDistance ~= zoom then
+                        player.CameraMinZoomDistance = zoom
                     end
                 end)
             end)
