@@ -3319,7 +3319,7 @@ __moduleSources["Services/Interface"] = function(...)
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     Interface.CHANGELOG = {
         "v2.1.14 (13 Oct 2026)",
-        "Hauntlet / Ghost Gallery: the camera fix and the side jobs (shop, quests, gifts...) stay off during a run",
+        "Hauntlet / Ghost Gallery: every other task stops 30 s before a minigame and starts again 20 s after it; the camera fix stays off in the run",
         "v2.1.13 (13 Oct 2026)",
         "Crypt: the game's answer to a Rusty Key is read (refused -> no 6 s wait; ok -> up to 12 s for the grave) and written in the report",
         "v2.1.12 (13 Oct 2026)",
@@ -16079,6 +16079,11 @@ __moduleSources["Game/TaskManager"] = function(...)
     local GHOST_ROUND_BUSY_SECONDS = 270 -- a Ghost Gallery round with travel ("Done: Ghost Gallery round in 244 s")
     local NO_FURNITURE_SKIP_SECONDS = 600
     local NEVER_INTERRUPT = { ghost_gallery = true, hauntlet = true, recover = true, team = true, neon_fusion = true, mega_fusion = true }
+    -- v2.1.14 (user: "while Hauntlet / Ghost Gallery run, stop every other task: 30 s before a minigame starts, again
+    -- 20 s after it ended"): the minigame window
+    local MINIGAME_TASKS = { hauntlet = true, ghost_gallery = true }
+    local MINIGAME_STOP_BEFORE_SECONDS = 30
+    local MINIGAME_RESUME_AFTER_SECONDS = 20
     local NEVER_SKIP = { neon_fusion = true, mega_fusion = true, team = true }
     local SKIP_REST_SECONDS = 90
     local HERE_BONUS = 12
@@ -16349,6 +16354,9 @@ __moduleSources["Game/TaskManager"] = function(...)
             return
         end
         self[slot] = nil
+        if slot == "_running" and MINIGAME_TASKS[running.key] then
+            self._minigameEndedAt = Util.now() -- v2.1.14: other tasks wait MINIGAME_RESUME_AFTER_SECONDS after this
+        end
         if slot == "_side" then
             local multi = self._farmConfig.MultiNeed
             self._sideNextAt = Util.now() + math.max(0, tonumber(type(multi) == "table" and multi.GapSeconds) or 2)
@@ -16624,9 +16632,17 @@ __moduleSources["Game/TaskManager"] = function(...)
                 self:_finish("INTERRUPTED", "Ghost Gallery round", "_side")
                 self:_stopQuickHands("Ghost Gallery round")
             else
-                self:_maybeStartSide()
+                local freeze = self:_minigameFreeze()
+                if freeze then
+                    self:_stopForMinigame(freeze)
+                else
+                    self:_maybeStartSide()
+                end
             end
             return
+        end
+        if self._side and self:_minigameFreeze() then
+            self:_finish("INTERRUPTED", tostring(self:_minigameFreeze()), "_side") -- v2.1.14: minigame window
         end
         if self._side then
             self._why = "side task finishing"
@@ -16692,6 +16708,19 @@ __moduleSources["Game/TaskManager"] = function(...)
             if key == "hauntlet" then
                 self:_stopQuickHands("Hauntlet run")
                 self:_start(key, label, taskDef, group, true)
+                return
+            end
+        end
+        do
+            local freeze = self:_minigameFreeze()
+            if freeze then
+                self:_stopForMinigame(freeze)
+                local key, label, taskDef, group = self:_selectEventJob()
+                if MINIGAME_TASKS[key] then
+                    self:_start(key, label, taskDef, group, true)
+                    return
+                end
+                self._why = "waiting: " .. freeze
                 return
             end
         end
@@ -16911,6 +16940,44 @@ __moduleSources["Game/TaskManager"] = function(...)
             self:_finish("INTERRUPTED", reason, "_quick")
         end
     end
+    -- v2.1.14: why other tasks must not run now (nil = they may): a minigame task runs, its join is pending, one
+    -- starts within MINIGAME_STOP_BEFORE_SECONDS of its task's own start, or one ended less than
+    -- MINIGAME_RESUME_AFTER_SECONDS ago. Only the minigame tasks themselves start in this window.
+    function TaskManager:_minigameFreeze()
+        if self._running and MINIGAME_TASKS[self._running.key] then
+            return "a minigame is running (" .. self._running.label .. ")"
+        end
+        local endedAgo = Util.now() - (self._minigameEndedAt or -math.huge)
+        if endedAgo < MINIGAME_RESUME_AFTER_SECONDS then
+            return string.format("minigame ended %d s ago (other tasks resume after %d s)", math.floor(endedAgo),
+                MINIGAME_RESUME_AFTER_SECONDS)
+        end
+        if self:_hauntletPending() then
+            return "Hauntlet join accepted"
+        end
+        local hauntFirst = self:_hauntletFirst()
+        if hauntFirst and self:_hauntletRoundDue(HAUNTLET_LEAD_SECONDS + MINIGAME_STOP_BEFORE_SECONDS) then
+            return "Hauntlet starts soon"
+        end
+        -- the same rule as _selectEventJob: a round that the Hauntlet will skip does not stop anything
+        if self:_ghostRoundDue(GHOST_GALLERY_LEAD_SECONDS + MINIGAME_STOP_BEFORE_SECONDS)
+            and not (hauntFirst and self:_hauntletRoundDue(GHOST_GALLERY_LEAD_SECONDS + GHOST_ROUND_BUSY_SECONDS)) then
+            return "Ghost Gallery starts soon"
+        end
+        return nil
+    end
+    function TaskManager:_stopForMinigame(reason)
+        if self._running and not MINIGAME_TASKS[self._running.key] and not NEVER_INTERRUPT[self._running.key] then
+            self._logger:info("Tasks", "Minigame window: stopping " .. self._running.label .. " (" .. reason .. ")")
+            self:_finish("INTERRUPTED", reason)
+        end
+        if self._side then
+            self:_finish("INTERRUPTED", reason, "_side")
+        end
+        if self._quick and not NEVER_INTERRUPT[self._quick.key] then
+            self:_finish("INTERRUPTED", reason, "_quick")
+        end
+    end
     function TaskManager:_minigameSoon()
         if self:_hauntletPending() then
             return true
@@ -17025,6 +17092,11 @@ __moduleSources["Game/TaskManager"] = function(...)
         if quick then
             if Util.now() > quick.deadline then
                 self:_finish("TIMEOUT", "no result within " .. math.floor(quick.deadline - quick.startedAt) .. " s", "_quick")
+            elseif not NEVER_INTERRUPT[quick.key] and self._farmConfig.Enabled then
+                local freeze = self:_minigameFreeze()
+                if freeze then
+                    self:_finish("INTERRUPTED", freeze, "_quick")
+                end
             end
             return
         end
@@ -17040,10 +17112,8 @@ __moduleSources["Game/TaskManager"] = function(...)
             return -- at most one look a second (lighter on phones running many accounts)
         end
         self._quickCheckAt = now + 1
-        -- v2.1.14 (user: "Hauntlet is broken since the update, it does not get into the minigame"): nothing runs next
-        -- to a minigame (Hauntlet run / Ghost Gallery round): the run has the character, the camera and the hands
-        local mainKey = self._running and self._running.key
-        if mainKey == "hauntlet" or mainKey == "ghost_gallery" then
+        -- v2.1.14 (user): nothing runs next to a minigame, from 30 s before it to 20 s after it
+        if self:_minigameFreeze() then
             return
         end
         local key, label, taskDefinition, group, hands = self:_selectQuickJob()
@@ -17052,6 +17122,9 @@ __moduleSources["Game/TaskManager"] = function(...)
         end
     end
     function TaskManager:_maybeStartSide()
+        if self:_minigameFreeze() then
+            return
+        end
         local multi = self._farmConfig.MultiNeed
         local main = self._running
         if type(multi) ~= "table" or not multi.Enabled or self._side or not main or not main.waiting
