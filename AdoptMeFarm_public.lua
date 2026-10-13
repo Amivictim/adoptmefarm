@@ -1295,7 +1295,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.15 (Adopt Victims - UI Remastered Edition, Mega presets)"
+    Disclosure.VERSION = "2.1.16 (Adopt Victims - UI Remastered Edition, Mega presets)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -3319,6 +3319,11 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     Interface.CHANGELOG = {
+        "v2.1.16 (14 Oct 2026)",
+        "Trips by the remote route check that the place is really drawn (house too); if not, the game's own way in loads it",
+        "Void rescue also works on the way to the Hotel / Manor (not only between tasks)",
+        "Hauntlet: back into the join circle only when pushed out of it (no more teleport every 20 s)",
+        "Window no longer gets fainter after hiding / showing it",
         "v2.1.15 (13 Oct 2026)",
         "Void rescue: no floor under the character for 20 s (house not loaded, fell off the map) -> everything stops, respawn home",
         "v2.1.14 (13 Oct 2026)",
@@ -6503,7 +6508,8 @@ __moduleSources["Services/Interface"] = function(...)
         Interface.opened = (Interface.opened or 0) + 1
         handle.startHidden = settings.StartHidden == true and Interface.opened == 1
         if handle.startHidden then
-            task.delay(1, function()
+            -- v2.1.16: after the window's own fade-in (a hide during it saved a half-faded look)
+            task.delay(3, function()
                 for _, box in pairs(boxes) do
                     if alive and type(box) == "table" and box.Instance then
                         handle.hidden = Interface.hideWindow(box.Instance)
@@ -6512,6 +6518,76 @@ __moduleSources["Services/Interface"] = function(...)
                 end
             end)
         end
+        -- v2.1.16 (user: "the window gets more see-through over time"): Starlight's Hide() saves the CURRENT
+        -- transparency of every part and Unhide() puts that back, so a hide during a fade saves a half-faded look and
+        -- every hide / show can make it fainter. The look seen while the window stays open is remembered here (only
+        -- values that stayed the same twice) and put back once after each show, only where it got fainter.
+        task.spawn(function()
+            local PROPS = { Frame = { "BackgroundTransparency" }, TextLabel = { "BackgroundTransparency", "TextTransparency" },
+                TextButton = { "BackgroundTransparency", "TextTransparency" }, TextBox = { "BackgroundTransparency", "TextTransparency" },
+                ImageLabel = { "BackgroundTransparency", "ImageTransparency" }, ImageButton = { "BackgroundTransparency", "ImageTransparency" } }
+            local seen = setmetatable({}, { __mode = "k" }) -- value seen at the last look
+            local kept = setmetatable({}, { __mode = "k" }) -- value seen twice in a row while open = the real look
+            local lastMin, flipAt, fixedSinceFlip = nil, 0, true
+            local main
+            while alive do
+                task.wait(1.5)
+                pcall(function()
+                    if not main or not main.Parent then
+                        for _, box in pairs(boxes) do
+                            local screen = type(box) == "table" and box.Instance and box.Instance:FindFirstAncestorOfClass("ScreenGui")
+                            main = screen and screen:FindFirstChild("MainWindow")
+                            if main then
+                                break
+                            end
+                        end
+                    end
+                    if not main then
+                        return
+                    end
+                    local minimized = Starlight.Minimized == true
+                    if minimized ~= lastMin then
+                        lastMin, flipAt, fixedSinceFlip = minimized, os.clock(), false
+                    end
+                    if minimized or os.clock() - flipAt < 1.5 then
+                        return
+                    end
+                    if not fixedSinceFlip then
+                        fixedSinceFlip = true
+                        local fixed = 0
+                        for object, values in pairs(kept) do
+                            if object.Parent then
+                                for prop, value in pairs(values) do
+                                    if object[prop] > value + 0.02 then
+                                        object[prop] = value
+                                        fixed += 1
+                                    end
+                                end
+                            end
+                        end
+                        if fixed > 0 and options.logger then
+                            options.logger:debug("Interface", "Window shown: " .. fixed .. " faded parts put back")
+                        end
+                        return
+                    end
+                    for _, object in ipairs(main:GetDescendants()) do
+                        local props = PROPS[object.ClassName]
+                        if props then
+                            local last = seen[object] or {}
+                            seen[object] = last
+                            for _, prop in ipairs(props) do
+                                local value = object[prop]
+                                if last[prop] == value then
+                                    kept[object] = kept[object] or {}
+                                    kept[object][prop] = value
+                                end
+                                last[prop] = value
+                            end
+                        end
+                    end
+                end)
+            end
+        end)
         Interface.current = handle
         notify(Interface.TITLE, touch and T("Ready. Round paw button: hide / show. Square button at the top: full screen. "
             .. "Sliders: tap the number to type.") or T("Ready. %s hides / shows the window.", keybind), "paw-print")
@@ -9467,10 +9543,18 @@ __moduleSources["Game/Travel"] = function(...)
     ]]
     function Travel:_ensureDrawn(destination, recipe)
         self._drawCheckOff = self._drawCheckOff or {}
-        if destination == "MainMap" or recipe.ownHouse or self._drawCheckOff[destination] then
+        if destination == "MainMap" or self._drawCheckOff[destination] then
             return true
         end
+        local me = Players.LocalPlayer
         local function drawn()
+            if recipe.ownHouse then
+                -- v2.1.16: my house = workspace.HouseInteriors.blueprint.<me> (11_GAME_FINDINGS D1) with its parts
+                local houses = workspace:FindFirstChild("HouseInteriors")
+                local blueprint = houses and houses:FindFirstChild("blueprint")
+                local mine = blueprint and blueprint:FindFirstChild(me.Name)
+                return mine ~= nil and mine:FindFirstChildWhichIsA("BasePart", true) ~= nil
+            end
             local interiors = workspace:FindFirstChild("Interiors")
             if not interiors then
                 return false
@@ -9495,7 +9579,7 @@ __moduleSources["Game/Travel"] = function(...)
         end
         self._logger:info("Travel", destination .. " is not drawn on this device after the remote route: entering it the"
             .. " game's way so it loads (white screen fix)")
-        task.spawn(pcall, module.enter, destination, gameDoorId(recipe), {})
+        task.spawn(pcall, module.enter, destination, gameDoorId(recipe), recipe.ownHouse and { house_owner = me } or {})
         untilAt = Util.now() + 10
         while Util.now() < untilAt do
             if drawn() then
@@ -9505,7 +9589,10 @@ __moduleSources["Game/Travel"] = function(...)
             task.wait(0.25)
         end
         -- never seen under that name even after the game's way in: the name differs, no more checks for this place
-        self._drawCheckOff[destination] = true
+        -- (my own house has a known place: always checked)
+        if not recipe.ownHouse then
+            self._drawCheckOff[destination] = true
+        end
         self._logger:warn("Travel", destination .. " not found under workspace.Interiors (white screen, or another name):"
             .. " not checked again this session")
         return false
@@ -9603,6 +9690,13 @@ __moduleSources["Game/Travel"] = function(...)
                 self._logger:info("Travel", "Arrived: " .. tostring(now))
                 if destination == "MainMap" then
                     return self:_checkPlacedOnMainMap(recipe, me)
+                end
+                -- v2.1.16 (user: voids + "Hauntlet join zone not found (interiors loaded: none)" after remote trips):
+                -- the remote route moves me on the server only; the place must also be drawn on this device
+                -- (_ensureDrawn existed since 2.1.6 but was no longer called)
+                local okDrawn, drawnNow = pcall(self._ensureDrawn, self, destination, recipe)
+                if okDrawn and drawnNow == false then
+                    return false, destination .. " is not drawn on this device (void)"
                 end
                 return true
             end
@@ -14684,9 +14778,15 @@ __moduleSources["Game/EventTasks"] = function(...)
                     -- Stay until queued. Soft zone refresh only if still not accepted (every 20 s, max ~2 min).
                     local joinUntil = Util.now() + 120
                     local nextZoneRefresh = Util.now() + 20
+                    -- v2.1.16 (user: "it keeps teleporting me into the circle"): only when I was pushed out of it
+                    local circleAt = myRoot() and myRoot().Position
                     while not h.joinAcceptedAt and not h.join and Util.now() < joinUntil do
-                        if zoneMoved and Util.now() >= nextZoneRefresh then
+                        local rootNow = myRoot()
+                        local pushedOut = circleAt == nil or (rootNow ~= nil and (rootNow.Position - circleAt).Magnitude > 12)
+                        if zoneMoved and pushedOut and Util.now() >= nextZoneRefresh then
+                            ctx.logger:info("Event", "Hauntlet: pushed out of the join circle: back into it")
                             ctx.interaction:teleportToHauntletJoinZone()
+                            circleAt = myRoot() and myRoot().Position
                             nextZoneRefresh = Util.now() + 20
                         end
                         ctx.waitUntil(function()
@@ -16553,7 +16653,9 @@ __moduleSources["Game/TaskManager"] = function(...)
         self._voidNextAt = now + VOID_CHECK_EVERY
         local place = self._state:get("player.interior")
         local running = self._running and self._running.key
-        local inMinigame = MINIGAME_TASKS[running] or self:_hauntletPending()
+        -- v2.1.16: only a real minigame room / an accepted join counts (the Hotel / Manor trip before a run does not:
+        -- reports showed a void there with "interiors loaded: none" for minutes)
+        local inMinigame = self:_hauntletPending()
             or (type(place) == "string" and (string.find(place, GameConstants.Event.HauntletInteriorPrefix, 1, true) == 1
                 or string.find(place, GameConstants.Event.MinigameInteriorPrefix, 1, true) == 1))
         if inMinigame or running == "recover" or place == nil or self._state:get("game.ready") ~= true
@@ -16579,7 +16681,8 @@ __moduleSources["Game/TaskManager"] = function(...)
         self._logger:warn("Tasks", string.format("Void: no floor under me for %d s at (%.0f, %.0f, %.0f) in %s: going home",
             math.floor(now - self._voidSince), p.X, p.Y, p.Z, tostring(place)))
         self._voidSince, self._voidRecoveredAt = nil, now
-        if not (self._running and NEVER_INTERRUPT[self._running.key]) then
+        local key = self._running and self._running.key
+        if key and (not NEVER_INTERRUPT[key] or MINIGAME_TASKS[key]) then
             self:_finish("INTERRUPTED", "void recovery")
         end
         self:_finish("INTERRUPTED", "void recovery", "_side")
