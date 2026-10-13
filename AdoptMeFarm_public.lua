@@ -57,6 +57,8 @@ local UserConfig = {
                 Enabled = false,
                 Pick = {}, -- what to buy (Skelicorn too): one every 0.5 s until the candy runs out
                 MaxBuy = false, -- true: as many as the candy pays for, in ONE purchase
+                KeepCandy = 0, -- candy the shop never spends
+                KeepBucks = 0, -- Bucks the shop never spends (a Bucks-priced box)
             },
             Quests = false,
             HouseVisits = false,
@@ -488,12 +490,16 @@ __moduleSources["Core/Config"] = function(...)
                     Enabled = false,
                     Pick = {},
                     KeepCandy = 0,
+                    KeepBucks = 0, -- Bucks kept back by the shop buys (a Bucks-priced box)
                     MaxBuy = false,
                     Buy = {
                         { id = "halloween_2026_jump_scare", price = 40000, max = 1 },
                         { id = "halloween_2026_jacobean_pigeon", price = 4000, max = 4 },
                         -- sold by the machine by the Manor (Lightning Lever): bought by the Skelicorn task, not here
                         { id = "halloween_2026_skelicorn", price = 120000, max = 0, machine = true },
+                        -- the box (SimpleSpy, 2026-10-13: ShopAPI/BuyItem("gifts", id, { buy_count = 1 })): its price is
+                        -- learned from the first purchase (what my candy or Bucks went down by); Auto Open opens it
+                        { id = "halloween_2026_poltergeist_box", category = "gifts", price = 13000 }, -- user: 13,000 candy
                     },
                 },
                 PetPenSlots = 4,
@@ -1318,7 +1324,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.9 (Adopt Victims - UI Remastered Edition, Mega presets)"
+    Disclosure.VERSION = "2.1.10 (Adopt Victims - UI Remastered Edition, Mega presets)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -1394,7 +1400,7 @@ __moduleSources["Services/Disclosure"] = function(...)
                 .. " buys nothing except 1 water or 1 hotdog when a need has nothing to use (limit: Farm.MaxBuysPerSession, 0 = none),"
                 .. " and 1 egg (Farm.EggToBuy, Bucks only) when you have no pet that still grows (Farm.BuyEgg, limit Farm.MaxEggBuysPerSession);"
                 .. " Halloween (Farm.Event): 1 water a day for the Stray Cat, your Rusty Keys, Crypt Twigs and the loaned Ghost Vacuum;"
-                .. " spends candy only on the Halloween pets you pick (Farm.Event.CandyPets), 1 Skelicorn (Farm.Event.AutoSkelicorn) and, with Mega a Pet (Farm.Focus), copies of the picked candy pet / Skelicorn until Pet Pen slots + 1 grow (Bucks: the picked egg); age / bucks potions on the farmed pet"
+                .. " spends candy only on the Halloween pets and boxes you pick (Farm.Event.CandyPets, Keep candy / Keep Bucks kept back), 1 Skelicorn (Farm.Event.AutoSkelicorn) and, with Mega a Pet (Farm.Focus), copies of the picked candy pet / Skelicorn until Pet Pen slots + 1 grow (Bucks: the picked egg); age / bucks potions on the farmed pet"
                 .. " that still grows (Farm.AutoPotions; never fly / ride potions); opens gifts and chests (Farm.AutoOpen);"
                 .. " fuses 4 of your full grown pets of one kind into 1 neon, and 4 full grown neons into 1 mega neon (Farm.AutoNeon)",
         },
@@ -3217,12 +3223,15 @@ __moduleSources["Services/Interface"] = function(...)
         { "candy_corn_pile_ginormous", "Mega candy pile (3000)" }, { "candy_corn_pile_big", "Big candy pile (2000)" },
         { "candy_corn_pile_small", "Small candy pile (1000)" } }
     Interface.SHOP_NAMES = { halloween_2026_jump_scare = "Jump Scare", halloween_2026_jacobean_pigeon = "Jacobean Pigeon",
-        halloween_2026_skelicorn = "Skelicorn" }
+        halloween_2026_skelicorn = "Skelicorn", halloween_2026_poltergeist_box = "Poltergeist Box" }
     Interface.EGG_NAMES = { { "cracked_egg", "Cracked Egg (350 Bucks)" }, { "pet_egg", "Pet Egg (600 Bucks)" },
         { "fairytale_egg_2026_fairytale_egg", "Fairytale Egg (event)" } }
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     Interface.CHANGELOG = {
+        "v2.1.10 (13 Oct 2026)",
+        "Candy Shop: Poltergeist Box (13,000 candy; Auto Open opens it), Keep candy / Keep Bucks sliders",
+        "Hauntlet teleport prompt is told apart from the Ghost Gallery one (it was read as Ghost Gallery)",
         "v2.1.9 (13 Oct 2026)",
         "Minigames by the game's own teleport prompt: home ~70 s before, then Yes on the prompt (Farm.Event.UsePrompt)",
         "v2.1.8 (13 Oct 2026)",
@@ -5341,8 +5350,9 @@ __moduleSources["Services/Interface"] = function(...)
             local shopChoices = {}
             for _, entry in ipairs(type(candy.Buy) == "table" and candy.Buy or {}) do
                 if type(entry) == "table" and type(entry.id) == "string" then
-                    table.insert(shopChoices, { entry.id, string.format("%s (%s candy)", Interface.SHOP_NAMES[entry.id]
-                        or prettyKind(entry.id), commas(entry.price)) })
+                    table.insert(shopChoices, { entry.id, entry.price and string.format("%s (%s candy)",
+                        Interface.SHOP_NAMES[entry.id] or prettyKind(entry.id), commas(entry.price))
+                        or ((Interface.SHOP_NAMES[entry.id] or prettyKind(entry.id)) .. " (box)") })
                 end
             end
             bindPick(shopBox, "candyPick", "item:halloween_2026_jump_scare|shopping-bag", "Buy", { "Farm", "Event", "CandyPets", "Pick" }, shopChoices,
@@ -5352,6 +5362,16 @@ __moduleSources["Services/Interface"] = function(...)
             end
             bindToggle(shopBox, "candyMaxBuy", "shopping-cart", "Max buy", { "Farm", "Event", "CandyPets", "MaxBuy" },
                 "On: as many as your candy pays for, in one purchase. Off: one every 0.5 s until the candy runs out")
+            if type(candy.KeepCandy) ~= "number" then
+                candy.KeepCandy = 0
+            end
+            if type(candy.KeepBucks) ~= "number" then
+                candy.KeepBucks = 0
+            end
+            bindSlider(shopBox, "keepCandy", "game:candy", "Keep candy", { "Farm", "Event", "CandyPets", "KeepCandy" },
+                0, 5000000, 1000, "", "Candy the shop never spends")
+            bindSlider(shopBox, "keepBucks", "game:bucks", "Keep Bucks", { "Farm", "Event", "CandyPets", "KeepBucks" },
+                0, 1000000, 100, "", "Bucks the shop never spends (boxes sold for Bucks)")
         end
         local eventInfoBox = eventTab:CreateGroupbox({ Name = "Event status", Icon = I("game:candy"), Column = col(2) }, "eventInfo")
         local eventInfo = eventInfoBox:CreateParagraph({ Name = "Your event", Icon = I("ghost"), Content = "Waiting for your data..." },
@@ -15503,6 +15523,122 @@ __moduleSources["Game/EventTasks"] = function(...)
             return true
         end,
     }
+    -- v2.1.9 Candy Shop: boxes (gifts) picked in the list. The price is not in the script: the first purchase shows
+    -- it (candy or Bucks went down by), it is remembered, and later purchases use it (Max buy, Keep candy / Bucks).
+    EventTasks._giftPrice = EventTasks._giftPrice or {}
+    function EventTasks.shopGiftTarget(gameData, settings)
+        if type(settings) ~= "table" or not settings.Enabled or type(settings.Pick) ~= "table" then
+            return nil
+        end
+        local picked = {}
+        for _, id in ipairs(settings.Pick) do
+            picked[id] = true
+        end
+        local candy = tonumber(gameData:get(GameConstants.DataKeys.Candy)) or 0
+        local bucks = tonumber(gameData:get(GameConstants.DataKeys.Money)) or 0
+        local keepCandy, keepBucks = tonumber(settings.KeepCandy) or 0, tonumber(settings.KeepBucks) or 0
+        for _, entry in ipairs(type(settings.Buy) == "table" and settings.Buy or {}) do
+            if type(entry) == "table" and entry.category == GameConstants.GiftCategory and picked[entry.id] then
+                if not EventTasks._giftPrice[entry.id] and tonumber(entry.price) then
+                    EventTasks._giftPrice[entry.id] = { price = tonumber(entry.price), currency = entry.currency or "candy" }
+                end
+                local known = EventTasks._giftPrice[entry.id]
+                if (EventTasks._giftPaused or {})[entry.id] and Util.now() < EventTasks._giftPaused[entry.id] then
+                    -- refused a moment ago (not enough of the money it costs): later
+                elseif known then
+                    local left = known.currency == "bucks" and (bucks - keepBucks) or (candy - keepCandy)
+                    if left >= known.price then
+                        return { id = entry.id, category = entry.category, price = known }
+                    end
+                elseif candy > keepCandy and bucks > keepBucks then
+                    return { id = entry.id, category = entry.category }
+                end
+            end
+        end
+        return nil
+    end
+    EventTasks.buyShopGift = {
+        id = "shop_gift",
+        timeoutSeconds = 90,
+        run = function(ctx, group)
+            local settings = ctx.farmConfig.Event and ctx.farmConfig.Event.CandyPets or {}
+            local pick = group and group.pick or EventTasks.shopGiftTarget(ctx.gameData, settings)
+            if not pick then
+                return true
+            end
+            local KEYS_ = GameConstants.DataKeys
+            local keepCandy, keepBucks = tonumber(settings.KeepCandy) or 0, tonumber(settings.KeepBucks) or 0
+            local function money()
+                return tonumber(ctx.gameData:get(KEYS_.Candy)) or 0, tonumber(ctx.gameData:get(KEYS_.Money)) or 0
+            end
+            local function owned()
+                return #ctx.gameData:itemsOfId(pick.category, pick.id)
+            end
+            local function affordable()
+                local known = EventTasks._giftPrice[pick.id]
+                if not known then
+                    return 1
+                end
+                local candy, bucks = money()
+                local left = known.currency == "bucks" and (bucks - keepBucks) or (candy - keepCandy)
+                return math.floor(left / known.price)
+            end
+            local function buy(count)
+                local before = owned()
+                local candy0, bucks0 = money()
+                local sent, answer = ctx.interaction:send("BuyItem", pick.category, pick.id, { buy_count = count })
+                ctx.waitUntil(function()
+                    return owned() >= before + count
+                end, 8)
+                local got = owned() - before
+                if got > 0 then
+                    local candy1, bucks1 = money()
+                    local spentCandy, spentBucks = candy0 - candy1, bucks0 - bucks1
+                    if spentCandy > 0 or spentBucks > 0 then
+                        local currency = spentCandy >= spentBucks and "candy" or "bucks"
+                        local price = math.floor((currency == "candy" and spentCandy or spentBucks) / got + 0.5)
+                        if price > 0 and not EventTasks._giftPrice[pick.id] then
+                            ctx.logger:info("Event", string.format("Candy Shop: %s costs %d %s (learned from the purchase)",
+                                pick.id, price, currency))
+                        end
+                        EventTasks._giftPrice[pick.id] = { price = price, currency = currency }
+                    end
+                else
+                    ctx.logger:info("Event", string.format("Candy Shop: %s was not bought (answer %s %s)", pick.id,
+                        tostring(sent), Util.truncate(tostring(answer), 60)))
+                end
+                return got
+            end
+            local bought = 0
+            if settings.MaxBuy == true and EventTasks._giftPrice[pick.id] and affordable() > 1 then
+                local want = math.min(affordable(), 50)
+                bought = buy(want)
+                ctx.logger:info("Event", string.format("Candy Shop Max buy: %d of %d x %s in one purchase", bought, want, pick.id))
+            end
+            local tries = 0
+            while tries < 60 and affordable() >= 1 do
+                tries += 1
+                local got = buy(1)
+                if got <= 0 then
+                    break
+                end
+                bought += got
+                local candy, bucks = money()
+                if candy <= keepCandy or bucks <= keepBucks then
+                    break
+                end
+                task.wait(0.5)
+            end
+            if bought == 0 then
+                EventTasks._giftPaused = EventTasks._giftPaused or {}
+                EventTasks._giftPaused[pick.id] = Util.now() + 600
+                return false, pick.id .. " was not bought (not enough candy / Bucks, or not sold now): again in 10 min"
+            end
+            ctx.logger:success("Event", string.format("Candy Shop: bought %d x %s%s", bought, pick.id,
+                ctx.farmConfig.AutoOpen and ctx.farmConfig.AutoOpen.Enabled and " (Auto Open opens them)" or ""))
+            return true
+        end,
+    }
     function EventTasks.nextGift(gameData, farm)
         local settings = type(farm.AutoOpen) == "table" and farm.AutoOpen or {}
         local skip = {}
@@ -15569,7 +15705,7 @@ __moduleSources["Game/TaskManager"] = function(...)
     local TaskManager = {}
     TaskManager.__index = TaskManager
     local TEAM_KEY = "team"
-    local EVENT_RECHECK_SECONDS = { ghost_gallery = 120, stray_cat = 1800, crypt = 60, pigeon_nest = 60, quests = 300, pen_stock = 20, age_potion = 5, open_gift = 3, neon_fusion = 2, mega_fusion = 2, candy_pet = 30, house_visits = 300, hauntlet = 90, skelicorn = 120 }
+    local EVENT_RECHECK_SECONDS = { ghost_gallery = 120, stray_cat = 1800, crypt = 60, pigeon_nest = 60, quests = 300, pen_stock = 20, age_potion = 5, open_gift = 3, neon_fusion = 2, mega_fusion = 2, candy_pet = 30, shop_gift = 30, house_visits = 300, hauntlet = 90, skelicorn = 120 }
     local GHOST_GALLERY_LEAD_SECONDS = 75
     local GHOST_INTERRUPT_SECONDS = 72
     local HAUNTLET_LEAD_SECONDS = 75 -- v2.1.9: home first, then the game's prompt at T-45
@@ -16625,6 +16761,12 @@ __moduleSources["Game/TaskManager"] = function(...)
             end
         end
         local candyPets = event.CandyPets
+        if type(candyPets) == "table" and candyPets.Enabled and due("shop_gift") then
+            local gift = EventTasks.shopGiftTarget(data, candyPets)
+            if gift then
+                return "shop_gift", "Candy Shop: buy " .. gift.id, EventTasks.buyShopGift, { pick = gift }
+            end
+        end
         if type(candyPets) == "table" and candyPets.Enabled and due("candy_pet") and data:petInventoryKnown() then
             local pick = EventTasks.candyPetTarget(data, candyPets)
             if pick then
@@ -17487,7 +17629,20 @@ __moduleSources["main"] = function(...)
                                             -- screens, no falling through the map"): the prompt of a minigame the farm plays
                                             -- is answered YES (the game takes me there itself); the others No. Its "do not
                                             -- show again" box is left alone (the next prompt is needed).
-                                            local all = string.lower(Interaction.guiTexts(dialogGui, 12))
+                                            -- v2.1.10 (2.1.9 reports: Hauntlet prompts were read as Ghost Gallery ones - the
+                                            -- first 12 texts of the whole DialogApp were other, hidden dialogs): the texts of
+                                            -- THIS dialog only, the visible ones
+                                            local box = marker:FindFirstAncestor("Dialog") or marker.Parent or marker
+                                            local seen = {}
+                                            for _, d in ipairs(box:GetDescendants()) do
+                                                if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Text ~= "" and isOnScreen(d) then
+                                                    table.insert(seen, d.Text)
+                                                end
+                                            end
+                                            if marker:IsA("TextLabel") then
+                                                table.insert(seen, marker.Text)
+                                            end
+                                            local all = string.lower(table.concat(seen, " | "))
                                             promptKind = string.find(all, "hauntlet", 1, true) and "hauntlet" or "ghost"
                                             local event = config.Farm.Event or {}
                                             local wanted = event.UsePrompt ~= false and ((promptKind == "hauntlet" and event.Hauntlet)
