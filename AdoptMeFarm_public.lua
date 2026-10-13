@@ -285,7 +285,8 @@ __moduleSources["Core/Signal"] = function(...)
             if listener.connected then
                 local ok, err = pcall(listener.handler, ...)
                 if not ok then
-                    warn("[" .. self._name .. "] handler error: " .. tostring(err))
+                    -- v2.1.13 (user rule): never write to the game console (Adopt Me records it); kept for the report
+                    self.LastError = tostring(err)
                 end
             end
         end
@@ -343,7 +344,7 @@ __moduleSources["Core/Maid"] = function(...)
             if not isConnection(job) then
                 local ok, err = pcall(cleanJob, job)
                 if not ok then
-                    warn("[Maid] cleanup error: " .. tostring(err))
+                    self.LastError = tostring(err) -- v2.1.13: no console output (user rule)
                 end
             end
         end
@@ -981,17 +982,8 @@ __moduleSources["Core/Logger"] = function(...)
     function Logger:_output(level, category, message)
         local line = formatLine(level, category, message)
         local rank = Enums.LogLevelRank[level]
-        local consoleRank = Enums.LogLevelRank[string.upper(tostring(self._config.ConsoleLevel))] or self._consoleRank
-        if self._reporting then
-            consoleRank = math.min(consoleRank, Enums.LogLevelRank.INFO)
-        end
-        if rank >= consoleRank then
-            if rank >= Enums.LogLevelRank.WARN then
-                warn(line)
-            else
-                print(line)
-            end
-        end
+        -- v2.1.13 (user rule, 2026-10-13): NOTHING is written to the game console (print / warn): Adopt Me records
+        -- the console and that could get users banned. Lines go only to the log file, the window and the report.
         if self._filePath and rank >= self._fileRank then
             if self._linesWritten < self._config.MaxLinesPerSession then
                 table.insert(self._pendingFileLines, line)
@@ -1059,12 +1051,7 @@ __moduleSources["Core/Logger"] = function(...)
         return pcall(writefile, Logger.PROBLEM_FILE, self:problemReport())
     end
     function Logger:report(category, message)
-        local saved = self._consoleRank
-        self._consoleRank = math.min(saved, Enums.LogLevelRank.INFO)
-        self._reporting = true
-        self:info(category, message)
-        self._reporting = false
-        self._consoleRank = saved
+        self:info(category, message) -- v2.1.13: no console (user rule)
     end
     function Logger:debug(category, message, fields)
         self:log(Enums.LogLevel.DEBUG, category, message, fields)
@@ -1103,7 +1090,6 @@ __moduleSources["Core/Logger"] = function(...)
         if not ok then
             self._fileDisabledReason = "write failed: " .. tostring(err)
             self._filePath = nil
-            warn("[Logger] File logging disabled: " .. tostring(err))
         end
     end
     function Logger:close()
@@ -1309,7 +1295,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.12 (Adopt Victims - UI Remastered Edition, Mega presets)"
+    Disclosure.VERSION = "2.1.13 (Adopt Victims - UI Remastered Edition, Mega presets)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -2694,7 +2680,7 @@ __moduleSources["Services/Lang"] = function(...)
     add("Autosave: on (this device)", "Otomatik kayıt: açık (bu cihaz)", "Guardado automático: sí (este dispositivo)", "Salvamento automático: ligado (este aparelho)")
     add("Reset to loader settings?", "Loader ayarlarına dönülsün mü?", "¿Volver a los ajustes del loader?", "Voltar às opções do loader?")
     add("Transparency report", "Şeffaflık raporu", "Informe de transparencia", "Relatório de transparência")
-    add("Printed to the console (F9 / executor console).", "Konsola yazıldı (F9 / executor konsolu).", "Escrito en la consola (F9 / consola del executor).", "Escrito no console (F9 / console do executor).")
+    add("Saved to AdoptMeFarm/disclosure.txt on this device.", "Bu cihazda AdoptMeFarm/disclosure.txt dosyasına kaydedildi.", "Guardado en AdoptMeFarm/disclosure.txt en este dispositivo.", "Salvo em AdoptMeFarm/disclosure.txt neste aparelho.")
     add("Hide / show: tap the round paw button", "Gizle / göster: yuvarlak pati düğmesine dokun", "Mostrar / ocultar: toca el botón de pata", "Mostrar / ocultar: toque no botão de pata")
     add("the round paw button", "yuvarlak pati düğmesi", "el botón redondo de pata", "o botão redondo de pata")
     add("the hide / show key", "gizle / göster tuşu", "la tecla mostrar / ocultar", "a tecla mostrar / ocultar")
@@ -3332,6 +3318,8 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     Interface.CHANGELOG = {
+        "v2.1.13 (13 Oct 2026)",
+        "Crypt: the game's answer to a Rusty Key is read (refused -> no 6 s wait; ok -> up to 12 s for the grave) and written in the report",
         "v2.1.12 (13 Oct 2026)",
         "No master switch: every feature runs with its own switch; 'Pause all' stops everything for a while",
         "Gifts, chests and boxes open by themselves (the Poltergeist Box was never opened before)",
@@ -6038,7 +6026,7 @@ __moduleSources["Services/Interface"] = function(...)
             IndicatorStyle = 1,
             Callback = function()
                 api.Disclosure()
-                notify("Transparency report", "Printed to the console (F9 / executor console).", "file-text")
+                notify("Transparency report", "Saved to AdoptMeFarm/disclosure.txt on this device.", "file-text")
             end,
         }, "disclosure")
         hideKey = look:CreateLabel({ Name = touch and "Hide / show: tap the round paw button" or ("Hide / show: " .. keybind),
@@ -12995,6 +12983,15 @@ __moduleSources["Game/EventTasks"] = function(...)
     local E = GameConstants.Event
     local KEYS = GameConstants.DataKeys
     local TOYS = GameConstants.ToyCategory
+    -- v2.1.13 (reports: "the grave did not open (answer: table: 0x5e72...)" 8x): a server answer that is a table is
+    -- written out (JSON), so the report says what the game answered instead of a memory address
+    local function answerText(answer)
+        if type(answer) == "table" then
+            return Util.truncate(Util.jsonEncode(answer) or tostring(answer), 200)
+        end
+        return tostring(answer)
+    end
+    EventTasks.answerText = answerText
     local function count(map)
         local n = 0
         for _ in pairs(map) do
@@ -13547,7 +13544,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                     ctx.logger:success("Event", "Crypt: Mummy Spider claimed, the Crypt starts again")
                     return true
                 end
-                return false, "the Mummy Spider claim changed nothing in my data (answer: " .. tostring(answer) .. ")"
+                return false, "the Mummy Spider claim changed nothing in my data (answer: " .. answerText(answer) .. ")"
             end
             local function openedSet()
                 local set, n = {}, 0
@@ -13566,11 +13563,14 @@ __moduleSources["Game/EventTasks"] = function(...)
             task.wait(1)
             ctx.logger:info("Event", string.format("Crypt: opening grave %d on floor %d (%s)", plan.grave, plan.floor, plan.reward))
             local _, answer = ctx.interaction:send("UnlockPadlock", { padlock_index = plan.grave, floor_index = plan.floor })
-            if not ctx.waitUntil(function()
+            -- v2.1.13: the game's own answer decides how long to wait: ok -> up to 12 s for my data, a refusal -> at once
+            local refused = type(answer) == "table" and answer.ok == false
+            if refused or not ctx.waitUntil(function()
                 local _, n = openedSet()
                 return n > before
-            end, 6) then
-                return false, "the grave did not open (answer: " .. tostring(answer) .. ")"
+            end, (type(answer) == "table" and answer.ok == true) and 12 or 6) then
+                return false, string.format("the grave did not open (floor %d grave %d, %s; answer: %s)", plan.floor,
+                    plan.grave, tostring(plan.reward), answerText(answer))
             end
             local set = openedSet()
             if not set[plan.floor * E.OpenedIdPerFloor + plan.grave] then
@@ -13622,7 +13622,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                 if not ctx.waitUntil(function()
                     return placed() > before
                 end, 6) then
-                    return false, "the nest did not take the twig (answer: " .. tostring(answer) .. ")"
+                    return false, "the nest did not take the twig (answer: " .. answerText(answer) .. ")"
                 end
                 ctx.logger:success("Event", string.format("Pigeon nest: twig placed (%d of %d)", placed(), E.NestTwigs))
                 if not autoNest then
@@ -18487,9 +18487,14 @@ __moduleSources["main"] = function(...)
         scheduler:start()
         logger:success("Core", "Started. Version " .. Disclosure.VERSION)
         local api = { Version = Disclosure.VERSION, State = state, Disclosure = function()
-            for _, line in ipairs(disclosureLines) do
-                logger:report("Disclosure", line)
-            end
+            -- v2.1.13: written to a file on this device, never to the game console (user rule)
+            pcall(function()
+                if type(makefolder) == "function" and type(isfolder) == "function" and not isfolder("AdoptMeFarm") then
+                    makefolder("AdoptMeFarm")
+                end
+                writefile("AdoptMeFarm/disclosure.txt", table.concat(disclosureLines, "\n") .. "\n")
+            end)
+            return disclosureLines
         end }
         local stopped = false
         api.Config = config
@@ -18720,5 +18725,11 @@ local startOk, startError = pcall(function()
     return import("main")(settings, launchInfo)
 end)
 if not startOk then
-    warn("[AdoptMe Farm] Failed to start: " .. tostring(startError))
+    -- v2.1.13: no console output (user rule): the reason goes to a file on this device
+    pcall(function()
+        if type(makefolder) == "function" and type(isfolder) == "function" and not isfolder("AdoptMeFarm") then
+            makefolder("AdoptMeFarm")
+        end
+        writefile("AdoptMeFarm/start_error.txt", os.date("%Y-%m-%d %H:%M:%S") .. " Failed to start: " .. tostring(startError) .. "\n")
+    end)
 end
