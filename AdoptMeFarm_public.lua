@@ -1295,7 +1295,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.14 (Adopt Victims - UI Remastered Edition, Mega presets)"
+    Disclosure.VERSION = "2.1.15 (Adopt Victims - UI Remastered Edition, Mega presets)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -1339,6 +1339,7 @@ __moduleSources["Services/Disclosure"] = function(...)
                 .. " the spot; home only when a need needs home (Farm.FoodBowlTrip = false: food from the backpack away"
                 .. " from home)",
             "stuck in one place (not moving, tasks failing) for Farm.StuckRecovery.Seconds: goes home by respawn",
+            "no floor under the character for 20 s (the void; never inside a minigame): goes home by respawn",
             "a task that failed 3 times in a row rests Farm.DisableMinutes, then is tried again",
             "window quick actions (only when you press them): pause / resume, go home, skip the running task, claim the"
                 .. " Pet Pen now, retry tasks that rest",
@@ -3318,6 +3319,8 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     Interface.CHANGELOG = {
+        "v2.1.15 (13 Oct 2026)",
+        "Void rescue: no floor under the character for 20 s (house not loaded, fell off the map) -> everything stops, respawn home",
         "v2.1.14 (13 Oct 2026)",
         "Hauntlet / Ghost Gallery: every other task stops 30 s before a minigame and starts again 20 s after it; the camera fix stays off in the run",
         "v2.1.13 (13 Oct 2026)",
@@ -6571,7 +6574,7 @@ __moduleSources["Game/GameConstants"] = function(...)
         ExitSeatStates = { remote = "AdoptAPI/ExitSeatStates", purpose = "get your character (baby) up from furniture" },
         ExitFurnitureUseStates = { remote = "PetAPI/ExitFurnitureUseStates", purpose = "get your pet up if it stays on furniture" },
         EquipItem = { remote = "ToolAPI/Equip", purpose = "hold YOUR food, drink, toy, Rusty Key, Crypt Twig or the loaned Ghost Vacuum; re-equip YOUR pet ({equip_as_last=true}, as the game at spawn); neon fusion: hold each of the 4 pets once" },
-        Respawn = { remote = "TeamAPI/Spawn", purpose = "go home fast by respawning (Farm.HomeByRespawn); recover when stuck on the loading screen" },
+        Respawn = { remote = "TeamAPI/Spawn", purpose = "go home fast by respawning (Farm.HomeByRespawn); recover when stuck on the loading screen or in the void (no floor for 20 s)" },
         UseTool = { remote = "ToolAPI/ServerUseTool", purpose = "eat / drink / throw the item you hold; switch on the Ghost Vacuum (its answer is the vacuum token)" },
         UnequipItem = { remote = "ToolAPI/Unequip", purpose = "put the item away" },
         ActivateInteriorFurniture = { remote = "HousingAPI/ActivateInteriorFurniture", purpose = "sick: talk to the doctor in the Hospital" },
@@ -16499,6 +16502,96 @@ __moduleSources["Game/TaskManager"] = function(...)
         end
         return false
     end
+    -- v2.1.15 (user screenshot: "the character waited in the void until I ran the script again": data said housing,
+    -- no house under me): no floor under the character for VOID_SECONDS -> stop everything, respawn home
+    -- (Tasks.recover). Not inside a minigame (the Ghost Gallery holds me under the floor) and not while changing place.
+    local VOID_SECONDS = 20
+    local VOID_CHECK_EVERY = 2
+    local VOID_RAY_STUDS = 300
+    local function floorUnderMe()
+        local found = false
+        pcall(function()
+            local character = game:GetService("Players").LocalPlayer.Character
+            local root = character and character:FindFirstChild("HumanoidRootPart")
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.FilterDescendantsInstances = { character }
+            found = root ~= nil and workspace:Raycast(root.Position, Vector3.new(0, -VOID_RAY_STUDS, 0), params) ~= nil
+        end)
+        return found
+    end
+    -- respawn, then verified by the game: my data says home AND there is a floor under me again
+    local VOID_RECOVER = {
+        id = "recover",
+        handles = function()
+            return false
+        end,
+        timeoutSeconds = 60,
+        run = function(ctx)
+            ctx.logger:info("Tasks", "Void: respawning")
+            ctx.interaction:send("Respawn")
+            local function safe()
+                return ctx.travel:isAt(GameConstants.HouseInteriorName) and floorUnderMe()
+            end
+            if ctx.waitUntil(safe, 25) then
+                ctx.logger:info("Tasks", "Void: back home with a floor under me")
+                return true
+            end
+            ctx.logger:info("Tasks", "Void: respawn did not help, travelling home")
+            local ok, reason = ctx.travel:goTo(GameConstants.HouseInteriorName)
+            if ok and ctx.waitUntil(floorUnderMe, 10) then
+                return true
+            end
+            return false, "void: still no floor under me (" .. tostring(reason or "home, no floor") .. ")"
+        end,
+    }
+    function TaskManager:_voidCheck()
+        local now = Util.now()
+        if now < (self._voidNextAt or 0) then
+            return false
+        end
+        self._voidNextAt = now + VOID_CHECK_EVERY
+        local place = self._state:get("player.interior")
+        local running = self._running and self._running.key
+        local inMinigame = MINIGAME_TASKS[running] or self:_hauntletPending()
+            or (type(place) == "string" and (string.find(place, GameConstants.Event.HauntletInteriorPrefix, 1, true) == 1
+                or string.find(place, GameConstants.Event.MinigameInteriorPrefix, 1, true) == 1))
+        if inMinigame or running == "recover" or place == nil or self._state:get("game.ready") ~= true
+            or self._state:get("session.disconnectReason") ~= nil or self._state:get("player.team") == "Choosing" then
+            self._voidSince = nil
+            return false
+        end
+        local character = game:GetService("Players").LocalPlayer.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        if not root then
+            self._voidSince = nil
+            return false
+        end
+        if floorUnderMe() then
+            self._voidSince = nil
+            return false
+        end
+        self._voidSince = self._voidSince or now
+        if now - self._voidSince < VOID_SECONDS or now - (self._voidRecoveredAt or -math.huge) < 60 then
+            return false
+        end
+        local p = root.Position
+        self._logger:warn("Tasks", string.format("Void: no floor under me for %d s at (%.0f, %.0f, %.0f) in %s: going home",
+            math.floor(now - self._voidSince), p.X, p.Y, p.Z, tostring(place)))
+        self._voidSince, self._voidRecoveredAt = nil, now
+        if not (self._running and NEVER_INTERRUPT[self._running.key]) then
+            self:_finish("INTERRUPTED", "void recovery")
+        end
+        self:_finish("INTERRUPTED", "void recovery", "_side")
+        if self._quick and not NEVER_INTERRUPT[self._quick.key] then
+            self:_finish("INTERRUPTED", "void recovery", "_quick")
+        end
+        if self._running then
+            return false -- a task that must not be cut finishes first; the next check tries again
+        end
+        self:_start("recover", "recover: void, go home", VOID_RECOVER, nil)
+        return true
+    end
     function TaskManager:_stuckCheck()
         local recovery = self._farmConfig.StuckRecovery
         if type(recovery) ~= "table" or not recovery.Enabled or self._state:get("game.ready") ~= true
@@ -16599,6 +16692,9 @@ __moduleSources["Game/TaskManager"] = function(...)
             self:_finish("TIMEOUT", "no result within " .. math.floor(self._side.deadline - self._side.startedAt) .. " s", "_side")
         end
         if self:_stuckCheck() then
+            return
+        end
+        if self:_voidCheck() then
             return
         end
         if self._running then
