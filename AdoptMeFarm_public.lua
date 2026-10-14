@@ -1297,7 +1297,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.24 (Adopt Victims - UI Remastered Edition, Mega presets)"
+    Disclosure.VERSION = "2.1.25 (Adopt Victims - UI Remastered Edition, Mega presets)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -3324,6 +3324,9 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     Interface.CHANGELOG = {
+        "v2.1.25 (14 Oct 2026)",
+        "Hauntlet runs every 20 min (was counted every 10 min: every other 'Hauntlet' was the Ghost Gallery's time and never started)",
+        "In the queue = the game's own hint 'You are in the queue for ...': then the farm never moves me (it read only the start messages)",
         "v2.1.24 (14 Oct 2026)",
         "Hauntlet: already in the join circle (the game's prompt put me there) = not moved; no more teleport onto the roof beams (it left the queue)",
         "v2.1.23 (14 Oct 2026)",
@@ -6950,6 +6953,10 @@ __moduleSources["Game/GameConstants"] = function(...)
         HauntletDebug = false, -- true: every door's reasons in the log + AdoptMeFarm/hauntlet_db.txt (the game's door lists)
         HauntletDBPath = { "SharedModules", "ContentPacks", "Halloween2026", "Game", "Hauntlet" },
         RoundSeconds = 600,
+        -- v2.1.25 (queue probe + user screenshot: "starts in 0:01" in the Hauntlet circle while the game's sign said
+        -- "NEXT GAME IN 18:56"; hauntlet_cycle_timestamp.identifier ~ timestamp / 1200): a Hauntlet run every 20 min,
+        -- the Ghost Gallery every 10 min. The 10 min grid made every other "Hauntlet" a run that did not exist.
+        HauntletRoundSeconds = 1200,
         GhostsFolder = "GhostClustersVisuals",
         GhostNamePattern = "^Ghost_%a+_([%x%-]+)$",
         BossSize = "Large",
@@ -13354,6 +13361,47 @@ __moduleSources["Game/EventTasks"] = function(...)
         end
     end
     EventTasks.phase = phase
+    -- v2.1.25 (queue probe, user: "check the queue from the game"): stepping into a join circle sends NO message and
+    -- changes no data (data "queue" stayed []); the only sign is the game's hint PlayerGui.HintApp.TextLabel: "You are
+    -- in the queue for the Hauntlet 2 Minigame." / "You have left the queue for ..." (join_accepted only comes at the
+    -- start). The latest such hint per minigame is kept here.
+    local queueHint, hintLabel = {}, nil
+    local function wireQueueHint()
+        if hintLabel and hintLabel:IsDescendantOf(game) then
+            return
+        end
+        hintLabel = nil
+        pcall(function()
+            local gui = game:GetService("Players").LocalPlayer:FindFirstChild("PlayerGui")
+            local app = gui and gui:FindFirstChild("HintApp")
+            local label = app and app:FindFirstChild("TextLabel")
+            if not (label and label:IsA("TextLabel")) then
+                return
+            end
+            local function read()
+                local text = string.lower(tostring(label.Text))
+                if not string.find(text, "queue", 1, true) then
+                    return
+                end
+                local kind = string.find(text, "hauntlet", 1, true) and "hauntlet"
+                    or (string.find(text, "ghost", 1, true) and "ghost") or nil
+                if kind then
+                    queueHint[kind] = { inQueue = string.find(text, "left the queue", 1, true) == nil, at = Util.now() }
+                end
+            end
+            label:GetPropertyChangedSignal("Text"):Connect(function()
+                pcall(read)
+            end)
+            pcall(read)
+            hintLabel = label
+        end)
+    end
+    -- true = the game's last hint (after `since`) says I am in that minigame's queue
+    function EventTasks.inQueueByHint(kind, since)
+        wireQueueHint()
+        local q = queueHint[kind]
+        return q ~= nil and q.inQueue == true and q.at >= (tonumber(since) or 0)
+    end
     local function count(map)
         local n = 0
         for _ in pairs(map) do
@@ -13581,13 +13629,14 @@ __moduleSources["Game/EventTasks"] = function(...)
         end
         return #parts > 0 and table.concat(parts, " | ") or "no Halloween / normal board"
     end
-    function EventTasks.nextRoundStart(cycle, now)
+    function EventTasks.nextRoundStart(cycle, now, period)
         local start = type(cycle) == "table" and tonumber(cycle.timestamp)
         if not start or type(now) ~= "number" then
             return nil
         end
+        period = tonumber(period) or E.RoundSeconds
         while start + 20 < now do
-            start += E.RoundSeconds
+            start += period
         end
         return start
     end
@@ -14762,8 +14811,10 @@ __moduleSources["Game/EventTasks"] = function(...)
             -- v2.1.20: the last round's state is cleared BEFORE the trip (the game's prompt puts me in the join circle
             -- and can queue me while the farm is still on its way: that join used to be thrown away by a reset after it)
             mg:reset()
+            local queueSince = Util.now()
+            EventTasks.inQueueByHint("ghost", queueSince) -- starts watching the game's hint
             local function queued()
-                return mg.joinAcceptedAt ~= nil or mg.join ~= nil
+                return mg.joinAcceptedAt ~= nil or mg.join ~= nil or EventTasks.inQueueByHint("ghost", queueSince)
             end
             pcall(EventTasks.viaPrompt, ctx, "ghost", "HauntedManor", tonumber(start), queued)
             if not queued() then
@@ -15061,11 +15112,13 @@ __moduleSources["Game/EventTasks"] = function(...)
                 -- BEFORE the trip. It was cleared after it: the game's teleport prompt puts me in the join circle and can
                 -- queue me while the farm is still on its way, and that join was thrown away (the run went on alone).
                 h:reset()
+                local queueSince = Util.now()
+                EventTasks.inQueueByHint("hauntlet", queueSince) -- starts watching the game's hint
                 local function queued()
-                    return h.joinAcceptedAt ~= nil or h.join ~= nil
+                    return h.joinAcceptedAt ~= nil or h.join ~= nil or EventTasks.inQueueByHint("hauntlet", queueSince)
                 end
                 local startGuess = (group and tonumber(group.start))
-                    or EventTasks.nextRoundStart(ctx.gameData:get(KEYS.HauntletCycle), Minigame.serverNow())
+                    or EventTasks.nextRoundStart(ctx.gameData:get(KEYS.HauntletCycle), Minigame.serverNow(), E.HauntletRoundSeconds)
                 pcall(EventTasks.viaPrompt, ctx, "hauntlet", E.HauntletLobby, startGuess, queued)
                 if not queued() then
                     phase(ctx, "going to the Hotel", startGuess)
@@ -15078,7 +15131,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                 local HAUNTLET_JOIN_LEAD = 30
                 local serverNow = Minigame.serverNow()
                 local startAt = (group and tonumber(group.start))
-                    or EventTasks.nextRoundStart(ctx.gameData:get(KEYS.HauntletCycle), serverNow)
+                    or EventTasks.nextRoundStart(ctx.gameData:get(KEYS.HauntletCycle), serverNow, E.HauntletRoundSeconds)
                 if startAt and startAt - serverNow > HAUNTLET_JOIN_LEAD and not queued() then
                     local waitSec = math.floor(startAt - serverNow - HAUNTLET_JOIN_LEAD)
                     ctx.logger:info("Event", string.format(
@@ -17915,10 +17968,11 @@ __moduleSources["Game/TaskManager"] = function(...)
             return nil
         end
         local serverNow = Minigame.serverNow()
-        local start = EventTasks.nextRoundStart(data:get(GameConstants.DataKeys.HauntletCycle), serverNow)
+        local start = EventTasks.nextRoundStart(data:get(GameConstants.DataKeys.HauntletCycle), serverNow,
+            GameConstants.Event.HauntletRoundSeconds)
         if start and self._hauntlet.lastRunStart and start - self._hauntlet.lastRunStart < 900 then
-            -- the round right after a run never takes me in (reports, v2.1.3): skip it
-            start = start + GameConstants.Event.RoundSeconds
+            -- the run just played: the next one (v2.1.25: 20 min later)
+            start = start + GameConstants.Event.HauntletRoundSeconds
         end
         if start and start - serverNow <= lead and start - serverNow > -15 then
             return start
@@ -18217,9 +18271,10 @@ __moduleSources["Game/TaskManager"] = function(...)
         elseif current == "hauntlet" then
             out.haunt = "joining"
         else
-            hauntStart = EventTasks.nextRoundStart(data:get(GameConstants.DataKeys.HauntletCycle), now)
+            hauntStart = EventTasks.nextRoundStart(data:get(GameConstants.DataKeys.HauntletCycle), now,
+                GameConstants.Event.HauntletRoundSeconds)
             if hauntStart and h and h.lastRunStart and hauntStart - h.lastRunStart < 900 then
-                hauntStart += GameConstants.Event.RoundSeconds
+                hauntStart += GameConstants.Event.HauntletRoundSeconds
                 out.hauntSkipped = true
             end
             out.haunt = hauntStart and "next" or "unknown"
