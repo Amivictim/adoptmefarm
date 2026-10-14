@@ -1,4 +1,4 @@
--- AdoptMe Farm  v3.0.5 | Adopt Victims v3 | settings: the window
+-- AdoptMe Farm  v3.0.6 | Adopt Victims v3 | settings: the window
 local UserConfig = {
     Farm = {
         Enabled = true, -- false = everything paused ("Pause all" in the window); each feature has its own switch
@@ -517,7 +517,7 @@ __moduleSources["Core/Config"] = function(...)
             Descriptions = false,
             Autoload = "",
             StartHidden = false,
-            StatusLine = true, -- v2.1.18: a small line at the top of the screen: what the farm does / waits for
+            StatusLine = false, -- v2.1.18 line at the top of the screen (v3.0.6: off, the user asked; true = shown)
             BlackScreen = false, -- v3.0.1: a black screen with the farm's stats, 3D drawing off + low FPS (CPU saver)
             UIScale = "Auto",
             Language = "Auto",
@@ -1311,7 +1311,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "3.0.5 (Adopt Victims v3)"
+    Disclosure.VERSION = "3.0.6 (Adopt Victims v3)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -1357,7 +1357,8 @@ __moduleSources["Services/Disclosure"] = function(...)
             "stuck in one place (not moving, tasks failing) for Farm.StuckRecovery.Seconds: goes home by respawn",
             "no floor under the character for 20 s (the void; never inside a minigame): goes home by respawn",
             "nothing to do away from home: waits at home for the next need (Farm.IdleHome; never near a minigame)",
-            "a small line at the top of YOUR screen (Interface.StatusLine) shows what the farm does / waits for (local only)",
+            "a round AV button on the left of YOUR screen opens / closes the window; Interface.StatusLine = true also shows a"
+                .. " line at the top with what the farm does / waits for (local only)",
             "a task that failed 3 times in a row rests Farm.DisableMinutes, then is tried again",
             "window quick actions (only when you press them): pause / resume, go home, skip the running task, claim the"
                 .. " Pet Pen now, retry tasks that rest",
@@ -1384,7 +1385,7 @@ __moduleSources["Services/Disclosure"] = function(...)
                 .. " the picture). Local only, no remote; it steps aside while the farm sends a virtual tap and for Roblox's"
                 .. " disconnect window",
             "Autoclose GUI on execute (Interface.StartHidden): the window starts hidden by pressing its own minimize button"
-                .. " (the hide / show key or the round paw button opens it)",
+                .. " (the hide / show key or the round AV button opens it)",
             "the Dashboard (PC) shows this server's players, FPS / ping, region and uptime, read on your device (nothing"
                 .. " sent); its Join script button copies a script that joins this server to your clipboard",
         },
@@ -2725,6 +2726,11 @@ __moduleSources["Services/Lang"] = function(...)
     add("Saved to AdoptMeFarm/disclosure.txt on this device.", "Bu cihazda AdoptMeFarm/disclosure.txt dosyasına kaydedildi.", "Guardado en AdoptMeFarm/disclosure.txt en este dispositivo.", "Salvo em AdoptMeFarm/disclosure.txt neste aparelho.")
     add("Hide / show: tap the round paw button", "Gizle / göster: yuvarlak pati düğmesine dokun", "Mostrar / ocultar: toca el botón de pata", "Mostrar / ocultar: toque no botão de pata")
     add("the round paw button", "yuvarlak pati düğmesi", "el botón redondo de pata", "o botão redondo de pata")
+    add("the round AV button", "yuvarlak AV düğmesi", "el botón redondo AV", "o botão redondo AV")
+    add("Hide / show: tap the round AV button", "Gizle / göster: yuvarlak AV düğmesine dokun", "Mostrar / ocultar: toca el botón AV",
+        "Mostrar / ocultar: toque no botão AV")
+    add("Starts closed: the key / AV button opens it", "Kapalı başlar: tuş / AV düğmesi açar", "Empieza cerrada: la tecla / botón AV la abre",
+        "Começa fechada: a tecla / botão AV abre")
     add("the hide / show key", "gizle / göster tuşu", "la tecla mostrar / ocultar", "a tecla mostrar / ocultar")
     add("Run: getgenv().AdoptMeFarm.OpenInterface()", "Çalıştır: getgenv().AdoptMeFarm.OpenInterface()", "Ejecuta: getgenv().AdoptMeFarm.OpenInterface()", "Rode: getgenv().AdoptMeFarm.OpenInterface()")
     add("The farm is running.", "Çiftlik çalışıyor.", "La granja está activa.", "A fazenda está ligada.")
@@ -2965,6 +2971,8 @@ __moduleSources["Services/Lang"] = function(...)
     add("Join my Discord server", "Discord sunucuma katıl", "Únete a mi servidor de Discord", "Entre no meu servidor do Discord")
     add("tap to copy", "kopyalamak için dokun", "toca para copiar", "toque para copiar")
     add("%s members", "%s üye", "%s miembros", "%s membros")
+    add("Bucks never spent: eggs and the Candy Shop stop above this", "Asla harcanmayan Bucks: yumurta ve şeker dükkanı bunun"
+        .. " altına inmez", "Bucks que nunca se gastan: huevos y tienda paran aquí", "Bucks nunca gastos: ovos e loja param aqui")
     add("Repeat buy & hatch", "Sürekli al & çıkar", "Comprar y eclosionar sin parar", "Comprar e chocar sem parar")
     add("Bucks only: buys the egg below, keeps it equipped until it hatches, then buys the next one (with Auto Pet Pen"
         .. " it also keeps the pen full)",
@@ -3025,6 +3033,10 @@ __moduleSources["Services/Lang"] = function(...)
         "Hazır. Yuvarlak pati düğmesi: gizle / göster. Üstteki kare düğme: tam ekran. Kaydırıcılar: sayıya dokunup yaz.",
         "Listo. Botón de pata: mostrar / ocultar. Botón cuadrado arriba: pantalla completa. Deslizadores: toca el número para escribir.",
         "Pronto. Botão de pata: mostrar / ocultar. Botão quadrado no topo: tela cheia. Controles: toque no número para digitar.")
+    template("Ready. Round AV button: hide / show. Square button at the top: full screen. Sliders: tap the number to type.",
+        "Hazır. Yuvarlak AV düğmesi: gizle / göster. Üstteki kare düğme: tam ekran. Kaydırıcılar: sayıya dokunup yaz.",
+        "Listo. Botón AV: mostrar / ocultar. Botón cuadrado arriba: pantalla completa. Deslizadores: toca el número para escribir.",
+        "Pronto. Botão AV: mostrar / ocultar. Botão quadrado no topo: tela cheia. Controles: toque no número para digitar.")
     template("Executor: %s", "Executor: %s", "Executor: %s", "Executor: %s")
     template("Status: %s", "Durum: %s", "Estado: %s", "Status: %s")
     template("Player: %s", "Oyuncu: %s", "Jugador: %s", "Jogador: %s")
@@ -3440,6 +3452,8 @@ __moduleSources["Services/Interface"] = function(...)
             "Everything else pauses 30 s before a minigame and starts 20 s after it, also when you join by hand",
         } },
         { "Farming", "paw-print", {
+            "Pet to farm equips the picked pet (a growing copy first, else a full grown one)",
+            "Repeat buy & hatch: the egg is bought, hatched, then the next one; Keep Bucks is never spent",
             "Pet Farm + 'Pet to farm': growing pets, neon first, one pet kind or Potion Farm",
             "Potion Farm: your full grown pet with the highest friendship stays out and gets every need",
             "Mega a Pet: any pet or egg is grown, made neon and mega on repeat, its copies in the Pet Pen",
@@ -3462,7 +3476,7 @@ __moduleSources["Services/Interface"] = function(...)
         } },
         { "Window", "sparkles", {
             "Cleaner layout: Auto Farm, Claimables, Pets, Potions & neon, Pet Pen; Minigames, Halloween world, Candy Shop",
-            "A line on top of the screen says what the farm does and when the next minigame starts; tap it to open or close the window",
+            "Round AV button on the left: opens / closes the window (a closed window opens again)",
             "Presets: Everything Off, Full AutoFarm, Mega Skelicorn, Potion Farm, Mega a Pet",
             "Type any number on a slider; 'Close game pop-ups' switch in Settings",
         } },
@@ -3575,7 +3589,7 @@ __moduleSources["Services/Interface"] = function(...)
         ["Interface.Toasts"] = "Pop-ups for keys, neon, purchases, rounds",
         ["Interface.Theme"] = "Window colours",
         ["Interface.Descriptions"] = "These lines (the window opens again)",
-        ["Interface.StartHidden"] = "Starts closed: the key / paw button opens it",
+        ["Interface.StartHidden"] = "Starts closed: the key / AV button opens it",
         ["Telemetry.Enabled"] = "Bug reports to the developer (off: at once)",
         ["Farm.CashbackMinutes"] = "How often cashback is collected",
         ["Farm.Event.PetPenSlots"] = "4 free slots; 5 with the extra-slot pass",
@@ -6306,6 +6320,9 @@ __moduleSources["Services/Interface"] = function(...)
         bindToggle(petsBox, "buyEgg", eggIcon, "Repeat buy & hatch", { "Farm", "BuyEgg" },
             "Bucks only: buys the egg below, keeps it equipped until it hatches, then buys the next one (with Auto Pet Pen"
                 .. " it also keeps the pen full)")
+        -- v3.0.5: the Keep Bucks slider (Candy Shop) also guards egg buys; shown here too
+        bindSlider(petsBox, "eggKeepBucks", "game:bucks", "Keep Bucks", { "Farm", "Event", "CandyPets", "KeepBucks" }, 0,
+            1000000, 100, "", "Bucks never spent: eggs and the Candy Shop stop above this")
         bindPick(petsBox, "eggChoice", eggIcon, "Egg to buy", { "Farm", "EggToBuy" }, Interface.EGG_NAMES)
         local growthBox = mainTab:CreateGroupbox({ Name = "Potions & neon", Icon = I("flask-conical"), Column = col(2) }, "growth")
         bindToggle(growthBox, "potions", "item:pet_age_potion|flask-conical", "Use potions", { "Farm", "AutoPotions", "Enabled" },
@@ -6659,7 +6676,7 @@ __moduleSources["Services/Interface"] = function(...)
             "The zoom the camera fix keeps (Roblox min = max zoom)")
         bindToggle(look, "toasts", "bell", "Event pop-ups", { "Interface", "Toasts" }, "Pop-ups for keys, neon, purchases, rounds")
         bindToggle(look, "startHidden", "eye-off", "Autoclose GUI on execute", { "Interface", "StartHidden" },
-            "The window starts hidden: " .. (touch and "the round paw button" or "the hide / show key") .. " opens it")
+            "The window starts hidden: " .. (touch and "the round AV button" or "the hide / show key") .. " opens it")
         local canTheme = type(Starlight.Themes) == "table" and type(Starlight.SetTheme) == "function"
         local function applyTheme(name)
             local choice = canTheme and Interface.themeChoice(Starlight, name) or nil
@@ -6773,7 +6790,7 @@ __moduleSources["Services/Interface"] = function(...)
                 notify("Transparency report", "Saved to AdoptMeFarm/disclosure.txt on this device.", "file-text")
             end,
         }, "disclosure")
-        hideKey = look:CreateLabel({ Name = touch and "Hide / show: tap the round paw button" or ("Hide / show: " .. keybind),
+        hideKey = look:CreateLabel({ Name = touch and "Hide / show: tap the round AV button" or ("Hide / show: " .. keybind),
             Icon = I(touch and "smartphone" or "keyboard") }, "hideKey")
         look:CreateParagraph({ Name = "Closed the window?", Icon = I("rotate-ccw"),
             Content = "Run: getgenv().AdoptMeFarm.OpenInterface()" }, "reopen")
@@ -7282,14 +7299,14 @@ __moduleSources["Services/Interface"] = function(...)
             local nextLook = 0
             while alive do
                 task.wait(0.5)
-                if touch then -- v3.0.0: the round open / close button always stays on a phone's screen
-                    pcall(function()
-                        local toggle = Starlight.Instance:FindFirstChild("MobileToggle", true)
-                        if toggle and toggle:IsA("GuiObject") and not toggle.Visible then
-                            toggle.Visible = true
-                        end
-                    end)
-                end
+                -- v3.0.6 (user: "the paw button is not needed"): the library's round button stays hidden; the AV button
+                -- on the left opens / closes the window (it presses the hidden one)
+                pcall(function()
+                    local toggle = Starlight.Instance:FindFirstChild("MobileToggle", true)
+                    if toggle and toggle:IsA("GuiObject") and toggle.Visible then
+                        toggle.Visible = false
+                    end
+                end)
                 pcall(function()
                     if not main or not main.Parent then
                         for _, box in pairs(boxes) do
@@ -7361,7 +7378,7 @@ __moduleSources["Services/Interface"] = function(...)
             end)
         end
         Interface.current = handle
-        notify(Interface.TITLE, touch and T("Ready. Round paw button: hide / show. Square button at the top: full screen. "
+        notify(Interface.TITLE, touch and T("Ready. Round AV button: hide / show. Square button at the top: full screen. "
             .. "Sliders: tap the number to type.") or T("Ready. %s hides / shows the window.", keybind), "paw-print")
         return handle
     end
@@ -12348,6 +12365,15 @@ __moduleSources["Game/Tasks"] = function(...)
     }
     function Tasks.eggPaused(id)
         local miss = Tasks._eggMiss and Tasks._eggMiss[id]
+        -- v3.0.6 (user: "wait for the money value, not a timer"): too few Bucks = waits until the Bucks reach the price
+        if miss and miss.needBucks and miss.gameData then
+            local bucks = tonumber(miss.gameData:get(GameConstants.DataKeys.Money))
+            if bucks and bucks >= miss.needBucks then
+                Tasks._eggMiss[id] = nil
+                return false
+            end
+            return true
+        end
         return miss ~= nil and miss.count >= 6 and Util.now() < miss.untilAt
     end
     -- v2.1.20 (reports: "FAILED: buy an egg after 0.0 s - ... could not be bought" every 30 s, then disabled): the egg
@@ -12364,6 +12390,13 @@ __moduleSources["Game/Tasks"] = function(...)
         end
         local price = (Tasks._eggPrice and Tasks._eggPrice[id]) or (GameConstants.EggPrices and GameConstants.EggPrices[id])
         local bucks = gameData and tonumber(gameData:get(GameConstants.DataKeys.Money))
+        -- v3.0.5 (user: "does it watch my Bucks and Keep Bucks?"): the Keep Bucks of the window (Candy Shop box) is
+        -- never spent on eggs either
+        local event = type(farmConfig) == "table" and type(farmConfig.Event) == "table" and farmConfig.Event or {}
+        local keep = type(event.CandyPets) == "table" and tonumber(event.CandyPets.KeepBucks) or 0
+        if bucks and bucks - (price or 0) < keep then
+            return false
+        end
         return not (price and bucks and bucks < price)
     end
     Tasks.buyEgg = {
@@ -12395,9 +12428,14 @@ __moduleSources["Game/Tasks"] = function(...)
             Tasks._eggPrice = Tasks._eggPrice or {}
             local price = Tasks._eggPrice[id] or (GameConstants.EggPrices and GameConstants.EggPrices[id])
             local bucksNow = tonumber(ctx.gameData:get(GameConstants.DataKeys.Money))
-            if price and bucksNow and bucksNow < price then
-                Tasks._eggMiss[id] = { count = 6, untilAt = Util.now() + 600 }
-                return false, string.format("not enough Bucks for %s (%d of %d): tried again in 10 min", id, bucksNow, price)
+            -- v3.0.6 (user: "keep = save, don't use"): Keep Bucks is never spent, on every egg buy (the Pet Pen ones too):
+            -- 400 Bucks, keep 500, egg 350 -> bought at 850
+            local event = type(ctx.farmConfig.Event) == "table" and ctx.farmConfig.Event or {}
+            local keep = type(event.CandyPets) == "table" and tonumber(event.CandyPets.KeepBucks) or 0
+            if price and bucksNow and bucksNow < price + keep then
+                Tasks._eggMiss[id] = { count = 6, untilAt = math.huge, needBucks = price + keep, gameData = ctx.gameData }
+                return false, string.format("not enough Bucks for %s (%d, needs %d = price %d + Keep Bucks %d): bought when"
+                    .. " the Bucks reach it", id, bucksNow, price + keep, price, keep)
             end
             local function tryBuy(where)
                 local before = ctx.gameData:petUniquesOfKind(id)
@@ -20249,7 +20287,7 @@ __moduleSources["main"] = function(...)
             -- v2.1.18 (user: "the character stands idle, users think the script is not working"): one small line at the
             -- top of the screen, also when the window is hidden: what the farm does now, or what it waits for and
             -- when. Local only (this device's screen), no game action. Interface.StatusLine = false: none.
-            local gui, label
+            local gui, label, toggleButton
             local createdAt, movedToCore = 0, false
             local Lang = import("Services/Lang")
             -- v3.0.2 (user: "the open / close button does not show"): our own round "AV" button on the left opens /
@@ -20309,13 +20347,38 @@ __moduleSources["main"] = function(...)
                     corner.CornerRadius = UDim.new(0, 8)
                     corner.Parent = label
                     label.Parent = gui
+                    -- v3.0.6 (user: "the paw button and the top line are not needed any more"): the round AV button on
+                    -- the left is the one open / close button
+                    toggleButton = Instance.new("TextButton")
+                    toggleButton.Name = "AVToggle"
+                    toggleButton.AnchorPoint = Vector2.new(0, 0.5)
+                    toggleButton.Position = UDim2.new(0, 10, 0.3, 0)
+                    toggleButton.Size = UDim2.fromOffset(46, 46)
+                    toggleButton.BackgroundColor3 = Color3.fromRGB(18, 12, 26)
+                    toggleButton.BackgroundTransparency = 0.15
+                    toggleButton.Font = Enum.Font.GothamBlack
+                    toggleButton.TextSize = 16
+                    toggleButton.TextColor3 = Color3.fromRGB(255, 128, 24)
+                    toggleButton.Text = "AV"
+                    local round = Instance.new("UICorner")
+                    round.CornerRadius = UDim.new(0.5, 0)
+                    round.Parent = toggleButton
+                    local ring = Instance.new("UIStroke")
+                    ring.Color = Color3.fromRGB(255, 128, 24)
+                    ring.Thickness = 2
+                    ring.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+                    ring.Parent = toggleButton
+                    toggleButton.Activated:Connect(function()
+                        pcall(toggleWindow)
+                    end)
+                    toggleButton.Parent = gui
                     gui.Parent = (type(gethui) == "function" and gethui()) or game:GetService("CoreGui")
                     createdAt = os.clock()
-                elseif not movedToCore and os.clock() - createdAt > 2 and label.AbsoluteSize.X == 0 then
+                elseif not movedToCore and os.clock() - createdAt > 2 and toggleButton.AbsoluteSize.X == 0 then
                     -- v3.0.2: not drawn where it is (every size stays 0): CoreGui instead
                     movedToCore = true
                     gui.Parent = game:GetService("CoreGui")
-                    logger:warn("Interface", "The status line was not drawn in its place: moved to CoreGui")
+                    logger:warn("Interface", "The AV button was not drawn in its place: moved to CoreGui")
                 end
             end
             scheduler:addJob("StatusLine", 1, function()
