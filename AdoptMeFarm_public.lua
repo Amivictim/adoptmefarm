@@ -1297,7 +1297,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.28 (Adopt Victims - UI Remastered Edition, Mega presets)"
+    Disclosure.VERSION = "2.1.29 (Adopt Victims - UI Remastered Edition, Mega presets)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -3324,6 +3324,9 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     Interface.CHANGELOG = {
+        "v2.1.29 (14 Oct 2026)",
+        "Minigame prompt: Yes is pressed once (a 2nd click hit the button while the game was already teleporting)",
+        "After the game's own teleport to the Hotel / Manor: no extra trip or 'load again' on top of it (runs that never took the device in)",
         "v2.1.28 (14 Oct 2026)",
         "In a minigame room (also when the game's prompt or you took me in): every other task waits until 20 s after it",
         "v2.1.27 (14 Oct 2026)",
@@ -14828,8 +14831,11 @@ __moduleSources["Game/EventTasks"] = function(...)
             local function queued()
                 return mg.joinAcceptedAt ~= nil or mg.join ~= nil or EventTasks.inQueueByHint("ghost", queueSince)
             end
-            pcall(EventTasks.viaPrompt, ctx, "ghost", "HauntedManor", tonumber(start), queued)
-            if not queued() then
+            local okPrompt, byPrompt = pcall(EventTasks.viaPrompt, ctx, "ghost", "HauntedManor", tonumber(start), queued)
+            byPrompt = okPrompt and byPrompt == true
+            -- v2.1.29 (hauntlet_debug: the run took me on the server, the device stayed in the lobby): the game's own
+            -- teleport brought me = no trip / "draw again" of mine on top of it (it can break the game's next move)
+            if not queued() and not byPrompt then
                 phase(ctx, "going to the Manor", tonumber(start))
                 local arrived, why = ctx.travel:goTo("HauntedManor")
                 if not arrived and not queued() then
@@ -15131,8 +15137,12 @@ __moduleSources["Game/EventTasks"] = function(...)
                 end
                 local startGuess = (group and tonumber(group.start))
                     or EventTasks.nextRoundStart(ctx.gameData:get(KEYS.HauntletCycle), Minigame.serverNow(), E.HauntletRoundSeconds)
-                pcall(EventTasks.viaPrompt, ctx, "hauntlet", E.HauntletLobby, startGuess, queued)
-                if not queued() then
+                local okPrompt, byPrompt = pcall(EventTasks.viaPrompt, ctx, "hauntlet", E.HauntletLobby, startGuess, queued)
+                byPrompt = okPrompt and byPrompt == true
+                -- v2.1.29 (hauntlet_debug 23:23: "the run is on for the server (hearts), but the game did not take me
+                -- into it", still in HauntedHotel): after the game's own teleport no trip / "draw again" of mine on top
+                -- of it (InteriorsM.enter for the place I am already in can leave the game's next move undone)
+                if not queued() and not byPrompt then
                     phase(ctx, "going to the Hotel", startGuess)
                     local arrived, why = ctx.travel:goTo(E.HauntletLobby)
                     if not arrived and not queued() then
@@ -18898,7 +18908,7 @@ __moduleSources["main"] = function(...)
             -- v2.1.6 optimisation (many accounts on one phone): ONE pass over the visible ScreenGuis every 3 s for all
             -- the dialogs (was one full pass per dialog, every 2 s), and a quick closer: each click way is given 2 s
             -- (was 8 s), its misses are debug lines, and a dialog that cannot be closed twice is left alone 30 min
-            local function quickClose(label, button, isOpen)
+            local function quickClose(label, button, isOpen, once)
                 for _, method in ipairs(Interaction.CLICK_METHODS) do
                     if not isOpen() then -- v2.1.27: closed late = no screen tap on what is under it
                         return true
@@ -18915,6 +18925,16 @@ __moduleSources["main"] = function(...)
                         if not isOpen() then
                             logger:debug("Game", label .. ": closed (" .. method .. ")")
                             return true
+                        end
+                        -- v2.1.29 (gui_log: "Yes" by firesignal, then 3 s later a 2nd click by connections on the same
+                        -- button while the game was already teleporting): a teleport Yes is pressed ONCE; it counts
+                        -- when the prompt is gone within 6 s
+                        if once then
+                            local closeBy = os.clock() + 4
+                            while isOpen() and os.clock() < closeBy do
+                                task.wait(0.25)
+                            end
+                            return not isOpen()
                         end
                     end
                 end
@@ -19085,7 +19105,7 @@ __moduleSources["main"] = function(...)
                                             end
                                             if quickClose(label, button, function()
                                                 return isOnScreen(marker)
-                                            end) then
+                                            end, promptKind ~= nil) then
                                                 -- v2.1.22 (2.1.20 reports: "Minigame starting soon: could not be closed
                                                 -- twice (hidden)"): a Yes counts only when the click really closed the
                                                 -- prompt (it was noted before the click: the farm then waited for a game
