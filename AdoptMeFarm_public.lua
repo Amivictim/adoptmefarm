@@ -1,4 +1,4 @@
--- AdoptMe Farm  v2.1.2 (Adopt Victims - UI Remastered Edition) | Adopt Victims v2 - UI Remastered Edition | settings: the window
+-- AdoptMe Farm  v3.0.1 | Adopt Victims v3 | settings: the window
 local UserConfig = {
     Farm = {
         Enabled = true, -- false = everything paused ("Pause all" in the window); each feature has its own switch
@@ -518,6 +518,7 @@ __moduleSources["Core/Config"] = function(...)
             Autoload = "",
             StartHidden = false,
             StatusLine = true, -- v2.1.18: a small line at the top of the screen: what the farm does / waits for
+            BlackScreen = false, -- v3.0.1: a black screen with the farm's stats, 3D drawing off + low FPS (CPU saver)
             UIScale = "Auto",
             Language = "Auto",
         },
@@ -1310,7 +1311,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.33 (Adopt Victims - UI Remastered Edition, Mega presets)"
+    Disclosure.VERSION = "3.0.1 (Adopt Victims v3)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -1377,6 +1378,11 @@ __moduleSources["Services/Disclosure"] = function(...)
                 .. " + min = max zoom Farm.CameraZoom (5-20); 10 times at start / respawn, again when the zoom or camera"
                 .. " changes (a local setting, no remote)",
             "configs (Config tab): the settings you save go to AdoptMeFarm/configs/ on this device; one may load at start",
+            "Black Screen (Interface.BlackScreen, Config > CPU saver; off by default): a black screen over the game with your"
+                .. " farm stats and the developer's picture / Discord server; while it is shown the game's 3D drawing is off and"
+                .. " the frame rate is capped (15, 30 in a minigame) when your executor can; both come back when it closes (tap"
+                .. " the picture). Local only, no remote; it steps aside while the farm sends a virtual tap and for Roblox's"
+                .. " disconnect window",
             "Autoclose GUI on execute (Interface.StartHidden): the window starts hidden by pressing its own minimize button"
                 .. " (the hide / show key or the round paw button opens it)",
             "the Dashboard (PC) shows this server's players, FPS / ping, region and uptime, read on your device (nothing"
@@ -1503,6 +1509,8 @@ __moduleSources["Services/Disclosure"] = function(...)
             and ("loads the Starlight UI library (raw.nebulasoftworks.xyz/starlight), which keeps its own empty folder"
                 .. " 'Starlight Interface Suite/AdoptMeFarm'; its Support tab shows the developer's picture (downloaded once from"
                 .. " raw.githubusercontent.com when your executor can show it, else Roblox's own avatar picture);"
+                .. " the Black Screen (only when you switch it on) reads the developer's Discord server name and member"
+                .. " count once from Discord's public invite info (discord.com/api/v10/invites/; nothing of yours is sent);"
                 .. " Interface.Enabled = false: nothing loaded")
             or "OFF (nothing loaded)"))
         add("  - Developer logs (Telemetry): " .. tostring(telemetryText or "OFF"))
@@ -2925,6 +2933,51 @@ __moduleSources["Services/Lang"] = function(...)
         "fixcam + zoom mín = máx: 10 vezes ao iniciar, de novo se o zoom ou a câmera mudarem")
     add("The zoom the camera fix keeps (Roblox min = max zoom)", "Kamera düzeltmenin tuttuğu zoom (Roblox min = max zoom)",
         "El zoom que mantiene el arreglo (zoom mín = máx de Roblox)", "O zoom que a correção mantém (zoom mín = máx do Roblox)")
+    -- v3.0.1 Black Screen (CPU saver)
+    add("CPU saver", "CPU tasarrufu", "Ahorro de CPU", "Economia de CPU")
+    add("Black Screen (CPU saver)", "Siyah Ekran (CPU tasarrufu)", "Pantalla negra (ahorro de CPU)", "Tela preta (economia de CPU)")
+    add("Black screen with your farm stats: the game's 3D drawing off and a low FPS (less CPU, GPU and battery)."
+        .. " Tap the developer's picture at the bottom to close it.",
+        "Siyah ekranda farm istatistiklerin: oyunun 3D çizimi kapalı ve FPS düşük (daha az CPU, GPU ve pil). Kapatmak için"
+            .. " alttaki geliştirici resmine dokun.",
+        "Pantalla negra con tus estadísticas: el dibujo 3D del juego apagado y FPS bajos (menos CPU, GPU y batería). Toca la"
+            .. " foto del desarrollador abajo para cerrarla.",
+        "Tela preta com suas estatísticas: o desenho 3D do jogo desligado e FPS baixo (menos CPU, GPU e bateria). Toque na foto"
+            .. " do desenvolvedor embaixo para fechar.")
+    add("How it works", "Nasıl çalışır", "Cómo funciona", "Como funciona")
+    add("Only your stats on a black screen. 3D off and %d FPS: less CPU, GPU and battery. Tap my picture at the bottom to"
+        .. " close it.",
+        "Siyah ekranda sadece istatistiklerin. 3D kapalı ve %d FPS: daha az CPU, GPU ve pil. Kapatmak için alttaki resmime dokun.",
+        "Solo tus estadísticas en una pantalla negra. 3D apagado y %d FPS: menos CPU, GPU y batería. Toca mi foto abajo para"
+            .. " cerrarla.",
+        "Só suas estatísticas numa tela preta. 3D desligado e %d FPS: menos CPU, GPU e bateria. Toque na minha foto embaixo"
+            .. " para fechar.")
+    add("Only your stats on a black screen. 3D off: less CPU, GPU and battery. Tap my picture at the bottom to close it.",
+        "Siyah ekranda sadece istatistiklerin. 3D kapalı: daha az CPU, GPU ve pil. Kapatmak için alttaki resmime dokun.",
+        "Solo tus estadísticas en una pantalla negra. 3D apagado: menos CPU, GPU y batería. Toca mi foto abajo para cerrarla.",
+        "Só suas estatísticas numa tela preta. 3D desligado: menos CPU, GPU e bateria. Toque na minha foto embaixo para fechar.")
+    add("CPU saver on • 3D off • %d FPS", "CPU tasarrufu açık • 3D kapalı • %d FPS", "Ahorro de CPU activo • 3D apagado • %d FPS",
+        "Economia de CPU ligada • 3D desligado • %d FPS")
+    add("CPU saver on • 3D off", "CPU tasarrufu açık • 3D kapalı", "Ahorro de CPU activo • 3D apagado",
+        "Economia de CPU ligada • 3D desligado")
+    add("Tap my picture to close the black screen", "Siyah ekranı kapatmak için resmime dokun",
+        "Toca mi foto para cerrar la pantalla negra", "Toque na minha foto para fechar a tela preta")
+    add("Join my Discord server", "Discord sunucuma katıl", "Únete a mi servidor de Discord", "Entre no meu servidor do Discord")
+    add("tap to copy", "kopyalamak için dokun", "toca para copiar", "toque para copiar")
+    add("%s members", "%s üye", "%s miembros", "%s membros")
+    add("%s online", "%s çevrimiçi", "%s en línea", "%s online")
+    add("Config > CPU saver: only your farm stats on a black screen, like the webhook",
+        "Ayarlar > CPU tasarrufu: siyah ekranda sadece farm istatistiklerin, webhook gibi",
+        "Config > Ahorro de CPU: solo tus estadísticas en una pantalla negra, como el webhook",
+        "Config > Economia de CPU: só suas estatísticas numa tela preta, como o webhook")
+    add("The game's 3D drawing is off and the FPS is low: less CPU, GPU and battery",
+        "Oyunun 3D çizimi kapalı, FPS düşük: daha az CPU, GPU ve pil",
+        "El dibujo 3D del juego apagado y FPS bajos: menos CPU, GPU y batería",
+        "O desenho 3D do jogo desligado e FPS baixo: menos CPU, GPU e bateria")
+    add("Tap my picture at the bottom to close it; my Discord server is right there too",
+        "Kapatmak için alttaki resmime dokun; Discord sunucum da orada",
+        "Toca mi foto abajo para cerrarla; mi servidor de Discord también está ahí",
+        "Toque na minha foto embaixo para fechar; meu servidor do Discord também está lá")
     local TEMPLATES = {}
     Lang.TEMPLATES = TEMPLATES
     local function template(en, tr, es, pt)
@@ -3126,9 +3179,9 @@ __moduleSources["Services/Interface"] = function(...)
     local T = Lang.t
     local Interface = {}
     Interface.TITLE = "Adopt Victims"
-    Interface.EDITION = "v2  •  UI Remastered Edition"
+    Interface.EDITION = "v3"
     Interface.LIBRARY_URL = "https://raw.nebulasoftworks.xyz/starlight"
-    Interface.DISCORD_INVITE = "drCrvFqWSQ"
+    Interface.DISCORD_INVITE = "7vvwEY37YX"
     Interface.DONATION_LINKS = {
         { name = "NOWPayments", icon = "wallet", link = "https://nowpayments.io/donation/victimoffate_" },
         { name = "Buy Me a Coffee", icon = "coffee", link = "https://buymeacoffee.com/victimoffate_" },
@@ -3325,7 +3378,7 @@ __moduleSources["Services/Interface"] = function(...)
         discord = "discord", changelog = "pumpkin", executor = "blood", farm = "moon", needs = "slime", pen = "green",
         pets = "candy", growth = "witch", tasks = "teal", halloween = "pumpkin", crypt = "bone", shop = "candy",
         eventInfo = "ghost", minigameOptions = "night", hook = "discord", messages = "night", configs = "witch", settings = "night", presets = "pumpkin",
-        advanced = "gray", developer = "witch", donate = "candy", passes = "pumpkin", crypto = "moon",
+        advanced = "gray", developer = "witch", donate = "candy", passes = "pumpkin", crypto = "moon", saver = "slime",
     }
     Interface.DASHBOARD_COLORS = {
         Discord = { "discord", "witch" }, Server = { "slime", "teal" }, Changelog = { "pumpkin", "moon" },
@@ -3352,145 +3405,60 @@ __moduleSources["Services/Interface"] = function(...)
         { "fairytale_egg_2026_fairytale_egg", "Fairytale Egg (event)" } }
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
-    Interface.CHANGELOG = {
-        "v2.1.33 (14 Oct 2026)",
-        "Pet Farm + Pet to farm back in the Pets box (the dropdown could not be tapped in the left column)",
-        "Phones: hover texts off (they stayed on the screen over the menus); help lines stay",
-        "Presets: Everything Off, Full AutoFarm, Mega Skelicorn, Potion Farm, Mega a Pet (Mummy Spider: pick it in Mega a Pet)",
-        "v2.1.32 (14 Oct 2026)",
-        "Preset Potion Farm: the highest friendship pet gets every pet need; nothing else takes time",
-        "Event: Auto pull lever (the Lightning Lever into the machine, no Skelicorn bought)",
-        "Window regrouped: Auto Farm, Claimables, Eggs, Potions & neon, Pet Pen | Minigames, Halloween world, Candy Shop | Close game pop-ups in Settings",
-        "v2.1.31 (14 Oct 2026)",
-        "Pets: 'Keep a growing pet equipped' is now 'Pet Farm'; the 'Pet to farm' dropdown under it picks which pet",
-        "v2.1.30 (14 Oct 2026)",
-        "Farm first: one choice; 'Oldest pets' is now Potion farm: your full grown pet with the highest friendship stays equipped (never fused)",
-        "v2.1.29 (14 Oct 2026)",
-        "Minigame prompt: Yes is pressed once (a 2nd click hit the button while the game was already teleporting)",
-        "After the game's own teleport to the Hotel / Manor: no extra trip or 'load again' on top of it (runs that never took the device in)",
-        "v2.1.28 (14 Oct 2026)",
-        "In a minigame room (also when the game's prompt or you took me in): every other task waits until 20 s after it",
-        "v2.1.27 (14 Oct 2026)",
-        "Start: no screen tap on a window that already closed (it opened the Buy Candy Corn shop under it)",
-        "v2.1.26 (14 Oct 2026)",
-        "Join circles: back to the teleport that worked up to 2.1.20 (no more roof / under the ring); not moved at all when already in the circle",
-        "v2.1.25 (14 Oct 2026)",
-        "Hauntlet runs every 20 min (was counted every 10 min: every other 'Hauntlet' was the Ghost Gallery's time and never started)",
-        "In the queue = the game's own hint 'You are in the queue for ...': then the farm never moves me (it read only the start messages)",
-        "v2.1.24 (14 Oct 2026)",
-        "Hauntlet: already in the join circle (the game's prompt put me there) = not moved; no more teleport onto the roof beams (it left the queue)",
-        "v2.1.23 (14 Oct 2026)",
-        "Teleport prompts: No when I am already at that minigame, No when the prompt names both minigames (Hauntlet runs were sent to the Manor)",
-        "v2.1.22 (14 Oct 2026)",
-        "Minigame teleport prompt: a Yes counts only when the click really closed it (no 15 s wait for a teleport that never came)",
-        "v2.1.21 (14 Oct 2026)",
-        "Join circles (Hauntlet, Ghost Gallery): the floor is loaded first and I am put on it, held still while it loads (no fall under the map)",
-        "In the circle: checked every second until the game queues me; fell through or pushed out -> back in at once (was every 20 s)",
-        "Ghost Gallery: Manor loaded again when its circle has no floor; no extra move 3 s before the start when I already stand in it",
-        "Hauntlet: the run's join call is sent once when the run does not answer; a warning when the run never shows on this device",
-        "v2.1.20 (14 Oct 2026)",
-        "Hauntlet / Ghost Gallery: a queue the game gives on the way (its teleport prompt) is kept; no more moves out of it",
-        "Top line: a second line says the step (at home waiting for the game's prompt, in the join circle) and the start time",
-        "Trips: the 'is it drawn' check only for home, Hotel and Manor; elsewhere a floor under me is enough (no 14 s waits)",
-        "Eggs: no buy is started while the egg rests or the Bucks are too few (no FAILED line every 30 s)",
-        "Void rescue: waits for a task that must finish, then starts at once (no 60 s gap, no repeated warnings)",
-        "Window look fix: a show is noticed sooner, the window is read less often (lighter)",
-        "v2.1.19 (14 Oct 2026)",
-        "Hauntlet: when the Hotel does not load, it goes via the main map and in again (the 'not auto-queued' runs)",
-        "Eggs: no buy (and no Nursery trip) when the Bucks are too few; 10 min rest instead of a try every minute",
-        "Game dialogs that did not close: tried again after 5 min (was 30; the next minigame prompt was missed)",
-        "v2.1.18 (14 Oct 2026)",
-        "A small line at the top of the screen says what the farm does or waits for (next need, Hauntlet, Ghost Gallery)",
-        "The farm learns how often the game gives needs and shows the wait (Doing -> Waiting: next need in ~40 s)",
-        "Nothing to do away from home: waits at home, so the next need starts without a trip",
-        "v2.1.17 (14 Oct 2026)",
-        "Every trip checks the place is really drawn on the device (also 'already there'); not drawn: the game's way in",
-        "Void / white screen checks no longer switch themselves off after one miss (they did, so bugs grew with play time)",
-        "Teleport prompts: Yes only for the minigame being played now (a Ghost Gallery Yes took Hauntlet runs to the Manor)",
-        "Hauntlet: join circle missing -> the Hotel is loaded again; void rescue also after a run / round is over",
-        "v2.1.16 (14 Oct 2026)",
-        "Trips by the remote route check that the place is really drawn (house too); if not, the game's own way in loads it",
-        "Void rescue also works on the way to the Hotel / Manor (not only between tasks)",
-        "Hauntlet: back into the join circle only when pushed out of it (no more teleport every 20 s)",
-        "Window no longer gets fainter after hiding / showing it",
-        "v2.1.15 (13 Oct 2026)",
-        "Void rescue: no floor under the character for 20 s (house not loaded, fell off the map) -> everything stops, respawn home",
-        "v2.1.14 (13 Oct 2026)",
-        "Hauntlet / Ghost Gallery: every other task stops 30 s before a minigame and starts again 20 s after it; the camera fix stays off in the run",
-        "v2.1.13 (13 Oct 2026)",
-        "Crypt: the game's answer to a Rusty Key is read (refused -> no 6 s wait; ok -> up to 12 s for the grave) and written in the report",
-        "v2.1.12 (13 Oct 2026)",
-        "No master switch: every feature runs with its own switch; 'Pause all' stops everything for a while",
-        "Gifts, chests and boxes open by themselves (the Poltergeist Box was never opened before)",
-        "Several jobs at once: Candy Shop, quests, gifts, potions and neon run next to needs and minigames",
-        "Duplicates merged: Auto Skelicorn = the Candy Shop's Skelicorn, Keep the pen full = Buy eggs, Visit homes = Claim quests; Hauntlet first and 2 pets always on",
-        "Sliders: tap the number itself to type any value (the extra '(type)' rows are gone)",
-        "v2.1.11 (13 Oct 2026)",
-        "Candy Shop list always shows every item (a list saved by an older version showed only 2)",
-        "Camera fix: fixcam + min = max zoom (Camera distance 5-20), 10 times at start; run again when the zoom or camera changes",
-        "v2.1.10 (13 Oct 2026)",
-        "Candy Shop: Poltergeist Box (13,000 candy; Auto Open opens it), Keep candy / Keep Bucks sliders",
-        "Hauntlet teleport prompt is told apart from the Ghost Gallery one (it was read as Ghost Gallery)",
-        "Every slider has a text box under it: type any value (no limit; the slider stays at its end)",
-        "v2.1.9 (13 Oct 2026)",
-        "Minigames by the game's own teleport prompt: home ~70 s before, then Yes on the prompt (Farm.Event.UsePrompt)",
-        "v2.1.8 (13 Oct 2026)",
-        "White screen: the game's white fade (Whiteout) stuck on the screen is hidden after 8 s",
-        "The \"starting soon, teleport?\" prompt is answered No in every language",
-        "The playtime payout (Cash out) window is hidden instead of clicked",
-        "Ride / walk: when the game moves the character elsewhere, the walk stops (no more falling through the map)",
-        "Hauntlet: no door warning every second while the run is not on this device",
-        "Ride / walk: the stroller and the pet in it no longer collide with the character (the cause of the flings)",
-        "v2.1.7 (12 Oct 2026, night)",
-        "Developer report: the farm's log files go along (session, Hauntlet debug, GUI log, Skelicorn, potions)",
-        "gui_log.txt: every game window shown and every button the script pressed",
-        "Candy Shop: Skelicorn too; Auto buy = one every 0.5 s until the candy runs out, Max buy = all in one purchase",
-        "Characters wedged in a railing or a model (stuck Jumping) are moved to the nearest free spot",
-        "Ride / walk: only a real throw (400+ studs or off the map) stops the task",
-        "v2.1.6 (12 Oct 2026)",
-        "Mystery: the 3 cards read from the game, then one call on the right card (fast calls were dropped)",
-        "Characters stuck in the floor after a teleport are put back on top of it",
-        "Hauntlet: a pick counts only when the game confirms it (alts no longer wait at the last room's door)",
-        "Faster, lighter dialog closer (one scan for all dialogs, the bank check only with its own box)",
-        "Ride / walk: a fling is stopped for good (held still a moment, stroller paused) instead of 3 flings in 1 s",
-        "Travel: a place that does not open from the house is reached via the main map (the Crypt)",
-        "An egg the shop does not sell is left alone for 2 h after 6 misses",
-        "Hauntlet: a key that opens another door of the same room no longer reads as going back",
-        "Fewer warnings: click retries and map re-asks are debug / info lines",
-        "Game dialogs answered by themselves (teleport -> No, Okay, Nice, Done, Cash out)",
-        "v2.1.5 (11 Oct 2026)",
-        "Mega a Pet presets: Mega Mummy Spider's, Mega Skelicorn, any pet or egg",
-        "Auto Skelicorn: pulls the lever, buys every Skelicorn your slots take",
-        "Mega Skelicorn farms candy at full speed (biggest Crypt piles first)",
-        "Hauntlet: squad play, potions before risky doors, no going back",
-        "Hauntlet: ghost potions saved for the late rooms, 2-lock doors get both keys",
-        "White screen: a stuck stream no longer freezes the Hauntlet task",
-        "Hauntlet: pushed out of a ??? door that turned locked -> picks another door",
-        "Travel: no more 15 s waits when the game's travel keeps failing",
-        "Hauntlet: finds a late-loading join circle / run interior",
-        "Mystery: reads the 3 real cards from the game, one pick",
-        "Farm status: live Ghost Gallery + Hauntlet timers from the game",
-        "Ride / walk: never flung into the void (a white screen cause)",
-        "2 pets at once for accounts with the 2-pet perk / Pet Certificate",
-        "Auto Potions: every Age-Up (Tiny too), Bonus Aging / Bucks one at a time per pet, Busy Body",
-        "Mystery: tries every need until one is taken",
-        "Stray Cat found at its new place; white screen recovery",
-        "Support > Copy problem report",
-        "Adopt Victims v2 - UI Remastered Edition (07 Oct 2026, 16:28 TR)",
-        "The window in your language: English, Türkçe, Español, Português",
-        "Your country's flag on the Dashboard",
-        "The game's own icons: Bucks, candy, home, eggs, potions, keys",
-        "No emojis: coloured status icons",
-        "See-through dashboard cards",
-        "Webhook: candy + your pet's picture",
-        "One line at start (full report: Config)",
-        "Dashboard as you drew it, Farm status card",
-        "Autoclose GUI on execute (Config > Settings)",
+    -- v3.0.0 (user: "list everything new since v2, in plain words, no text running out of the window"): what's new,
+    -- by topic; the Support tab shows it with the lines wrapped to the window (Interface.wrap)
+    Interface.WHATS_NEW = {
+        { "Black Screen (CPU saver)", "monitor", {
+            "Config > CPU saver: only your farm stats on a black screen, like the webhook",
+            "The game's 3D drawing is off and the FPS is low: less CPU, GPU and battery",
+            "Tap my picture at the bottom to close it; my Discord server is right there too",
+        } },
+        { "Minigames", "ghost", {
+            "Hauntlet 2 bot: picks the safest door, uses phones, keys, potions and wands, plays as a team with your other accounts",
+            "Joins through the game's own 'Teleport there now?' button; the old teleport is only the backup",
+            "Sees the game's 'You are in the queue' message and never moves you out of the queue",
+            "Right timers: Hauntlet every 20 minutes, Ghost Gallery every 10 minutes",
+            "Everything else pauses 30 s before a minigame and starts 20 s after it, also when you join by hand",
+        } },
+        { "Farming", "paw-print", {
+            "Pet Farm + 'Pet to farm': growing pets, neon first, one pet kind or Potion Farm",
+            "Potion Farm: your full grown pet with the highest friendship stays out and gets every need",
+            "Mega a Pet: any pet or egg is grown, made neon and mega on repeat, its copies in the Pet Pen",
+            "Several jobs at once: gifts, candy shop and potions run next to the needs",
+            "Waits at home for the next need instead of standing somewhere",
+            "Buys eggs only when your Bucks pay for them",
+        } },
+        { "Halloween", "game:candy", {
+            "Crypt: pick what the Rusty Keys open (Mummy Spider, biggest candy piles, twigs, lever)",
+            "Skelicorn: the lever is found, put in and the Skelicorn bought; 'Auto pull lever' on its own",
+            "Candy Shop: buys what you pick and keeps the candy and Bucks you set",
+            "Gifts, chests and boxes (Poltergeist Box too) are opened by themselves",
+        } },
+        { "Safer and steadier", "shield-check", {
+            "Never writes to the game's console",
+            "Stuck in the void for 20 s: goes home by itself",
+            "Places that did not load are loaded again (no more white screens)",
+            "No taps on game windows that already closed (the candy shop no longer pops up)",
+            "The Stray Cat is looked for on the whole main map",
+        } },
+        { "Window", "sparkles", {
+            "Cleaner layout: Auto Farm, Claimables, Pets, Potions & neon, Pet Pen; Minigames, Halloween world, Candy Shop",
+            "A line on top of the screen says what the farm does and when the next minigame starts; tap it to open or close the window",
+            "Presets: Everything Off, Full AutoFarm, Mega Skelicorn, Potion Farm, Mega a Pet",
+            "Type any number on a slider; 'Close game pop-ups' switch in Settings",
+        } },
     }
+    Interface.CHANGELOG = {}
+    for _, section in ipairs(Interface.WHATS_NEW) do
+        for _, line in ipairs(section[3]) do
+            table.insert(Interface.CHANGELOG, line)
+        end
+    end
     Interface.CHANGELOG_LATEST = {
-        Title = "v2.1.12 - One switch per feature",
-        Date = "13 Oct 2026 (TR)",
-        Description = "No master switch, gifts and boxes open by themselves, several jobs at once, duplicate switches merged, type any number on a slider.",
+        Title = "Adopt Victims v3",
+        Date = "14 Oct 2026 (TR)",
+        Description = "Black Screen CPU saver, smarter minigames, Pet Farm and Potion Farm, a cleaner window. Full list:"
+            .. " Support > What's new.",
     }
     Interface.DEVELOPER = {
         name = "Victim",
@@ -3694,6 +3662,26 @@ __moduleSources["Services/Interface"] = function(...)
         return string.sub(text, 1, cut - 1) .. "..."
     end
     Interface.fit = fit
+    -- v3.0.0: a long text as lines of at most `width` characters (whole words)
+    local function wrap(text, width)
+        local lines, line = {}, ""
+        for word in string.gmatch(tostring(text), "%S+") do
+            local size = (utf8.len(line) or #line) + 1 + (utf8.len(word) or #word)
+            if line == "" then
+                line = word
+            elseif size <= width then
+                line = line .. " " .. word
+            else
+                table.insert(lines, line)
+                line = word
+            end
+        end
+        if line ~= "" then
+            table.insert(lines, line)
+        end
+        return lines
+    end
+    Interface.wrap = wrap
     local function deepCopy(value)
         if type(value) ~= "table" then
             return value
@@ -4284,11 +4272,11 @@ __moduleSources["Services/Interface"] = function(...)
         ["Notifications.PingDiscordUserId"] = true, ["Notifications.Ping"] = true, ["Notifications.SendSummary"] = true,
         ["Notifications.SummaryIntervalMinutes"] = true,
         ["Interface.RememberSettings"] = true, ["Interface.Autoload"] = true, ["Interface.StartHidden"] = true, ["Interface.StatusLine"] = true,
-        ["Interface.Language"] = true, ["Interface.UIScale"] = true }
+        ["Interface.Language"] = true, ["Interface.UIScale"] = true, ["Interface.BlackScreen"] = true }
     Interface.META_KEYS = { ["Interface.RememberSettings"] = true, ["Interface.Autoload"] = true }
     Interface.PRIVATE_KEYS = { ["Notifications.Webhooks.Summary"] = true, ["Notifications.Webhooks.Alerts"] = true,
         ["Notifications.PingDiscordUserId"] = true, ["Notifications.Enabled"] = true,
-        ["Farm.Event.HauntletSquadKey"] = true }
+        ["Farm.Event.HauntletSquadKey"] = true, ["Interface.BlackScreen"] = true }
     Interface.CONFIG_FOLDER = "AdoptMeFarm/configs"
     Interface.CONFIG_EXTENSION = ".cfg"
     for _, flag in ipairs(Interface.PING_FLAGS) do
@@ -4677,6 +4665,408 @@ __moduleSources["Services/Interface"] = function(...)
         end
         return rows
     end
+    -- v3.0.1 Black Screen (user: "a 'Black Screen' / 'CPU SAVE' button near the top of the settings: the screen goes
+    -- black and only the stats show, like the webhook; my logo at the bottom closes it; real CPU / GPU saving; my Discord
+    -- picture and the server shown as an ad"). A black screen over everything with the farm's numbers. While it is shown
+    -- the game's 3D drawing is off (RunService:Set3dRenderingEnabled) and the frame rate is capped (setfpscap, only when
+    -- the executor has it; more frames inside a minigame); both are put back when it closes. Local only: no game action,
+    -- no remote. Discord's public invite info (server name, member count) is read once.
+    Interface.BLACK = { fps = 15, minigameFps = 30, width = 680, height = 340 }
+    Interface.BLACK_ORDER = { "session", "doing", "bucks", "needs", "candy", "ghost", "tasks", "hauntlet", "pet", "pen",
+        "last", "off" }
+    Interface.BLACK_EMOJI = { session = "⏱️", doing = "⚡", bucks = "💵", needs = "📝", candy = "🍬", ghost = "👻",
+        tasks = "✅", hauntlet = "🚪", pet = "🐾", pen = "🏡", last = "📋", off = "⏸️" }
+    local BLACK_TEXT = { on = Color3.fromRGB(226, 226, 236), wait = Color3.fromRGB(255, 196, 120),
+        bad = Color3.fromRGB(255, 120, 120), off = Color3.fromRGB(140, 140, 152) }
+    -- the frame rate cap from before the black screen (getfpscap when the executor has it, else Roblox's usual 60)
+    function Interface.fpsCapBefore()
+        local B = Interface.BLACK
+        if type(getfpscap) == "function" then
+            local ok, value = pcall(getfpscap)
+            value = ok and tonumber(value) or nil
+            if value and value >= 0 and value ~= B.fps and value ~= B.minigameFps then
+                return value
+            end
+        end
+        return 60
+    end
+    -- true in a Ghost Gallery round / Hauntlet run or their rooms: the black screen allows more frames there
+    function Interface.inMinigame(status)
+        local s = type(status) == "table" and status or {}
+        local tm = type(s.timers) == "table" and s.timers or {}
+        if tm.ghost == "run" or tm.haunt == "run" or tm.haunt == "joined" then
+            return true
+        end
+        if type(s.place) ~= "string" then
+            return false
+        end
+        local ok, GameConstants = pcall(import, "Game/GameConstants")
+        local E = ok and type(GameConstants) == "table" and type(GameConstants.Event) == "table" and GameConstants.Event or {}
+        for _, key in ipairs({ "MinigameInteriorPrefix", "HauntletInteriorPrefix" }) do
+            local prefix = E[key]
+            if type(prefix) == "string" and prefix ~= "" and string.sub(s.place, 1, #prefix) == prefix then
+                return true
+            end
+        end
+        return false
+    end
+    -- the developer's Discord server: name and member count from Discord's public invite info (nothing of the player
+    -- is sent); one try, again after 10 minutes when it failed
+    function Interface.discordInfo()
+        local cache = Interface.discordCache
+        if cache and (cache.ok or os.time() - cache.at < 600) then
+            return cache.ok and cache or nil
+        end
+        cache = { at = os.time(), ok = false }
+        Interface.discordCache = cache
+        pcall(function()
+            local body = game:HttpGet("https://discord.com/api/v10/invites/" .. Interface.DISCORD_INVITE .. "?with_counts=true")
+            local data = game:GetService("HttpService"):JSONDecode(body)
+            local guild = type(data) == "table" and data.guild
+            if type(guild) == "table" and type(guild.name) == "string" and guild.name ~= "" then
+                cache.name = guild.name
+                cache.members = tonumber(data.approximate_member_count)
+                cache.online = tonumber(data.approximate_presence_count)
+                cache.ok = true
+            end
+        end)
+        return cache.ok and cache or nil
+    end
+    -- options: window (the window's ScreenGui: not drawn while the black screen is up), onClose (the picture was tapped),
+    -- status (first numbers). Returns { update = function(status), destroy = function() }.
+    function Interface.blackScreen(options)
+        options = options or {}
+        local B = Interface.BLACK
+        local screen = {}
+        local alive, suspended, holds = true, false, 0
+        local connections = {}
+        local capped, capBefore
+        local parent = (type(gethui) == "function" and gethui()) or game:GetService("CoreGui")
+        local displayOrder = 100000
+        for _, other in ipairs(parent:GetChildren()) do
+            if other.Name == "AVBlackScreen" then -- left by an earlier run of the script
+                pcall(function()
+                    other:Destroy()
+                end)
+            elseif other:IsA("ScreenGui") then
+                displayOrder = math.max(displayOrder, math.min(other.DisplayOrder + 1, 2147483000))
+            end
+        end
+        local gui = Instance.new("ScreenGui")
+        gui.Name = "AVBlackScreen"
+        gui.ResetOnSpawn = false
+        gui.IgnoreGuiInset = true
+        gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+        gui.DisplayOrder = displayOrder
+        pcall(function()
+            gui.ScreenInsets = Enum.ScreenInsets.None
+        end)
+        pcall(function()
+            gui.OnTopOfCoreBlur = true
+        end)
+        -- the black is a button: a tap on it goes nowhere (not to the game, not to the window under it)
+        local back = Instance.new("TextButton")
+        back.Name = "Back"
+        back.AutoButtonColor = false
+        back.Text = ""
+        back.BorderSizePixel = 0
+        back.BackgroundColor3 = Color3.new(0, 0, 0)
+        back.Position = UDim2.fromOffset(-100, -100)
+        back.Size = UDim2.new(1, 200, 1, 200)
+        back.Parent = gui
+        local body = Instance.new("Frame")
+        body.Name = "Body"
+        body.BackgroundTransparency = 1
+        body.AnchorPoint = Vector2.new(0.5, 0.5)
+        body.Position = UDim2.fromScale(0.5, 0.5)
+        body.Size = UDim2.fromOffset(B.width, B.height)
+        body.Parent = gui
+        local scale = Instance.new("UIScale")
+        scale.Parent = body
+        local column = Instance.new("UIListLayout")
+        column.SortOrder = Enum.SortOrder.LayoutOrder
+        column.HorizontalAlignment = Enum.HorizontalAlignment.Center
+        column.VerticalAlignment = Enum.VerticalAlignment.Center
+        column.Padding = UDim.new(0, 6)
+        column.Parent = body
+        local function label(holder, name, layout, size, font, color, height)
+            local item = Instance.new("TextLabel")
+            item.Name = name
+            item.LayoutOrder = layout
+            item.BackgroundTransparency = 1
+            item.Size = UDim2.new(1, 0, 0, height or (size + 6))
+            item.Font = font or Enum.Font.Gotham
+            item.TextSize = size
+            item.TextColor3 = color or BLACK_TEXT.on
+            item.TextTruncate = Enum.TextTruncate.AtEnd
+            item.Text = ""
+            item.Parent = holder
+            return item
+        end
+        local title = label(body, "Title", 1, 26, Enum.Font.GothamBlack, Color3.fromRGB(255, 128, 24), 30)
+        title.Text = string.upper(Interface.TITLE) .. "  " .. Interface.EDITION
+        local mode = label(body, "Mode", 2, 13, Enum.Font.GothamMedium, Color3.fromRGB(150, 150, 165))
+        local head = label(body, "State", 3, 15, Enum.Font.GothamBold, nil, 22)
+        local grid = Instance.new("Frame")
+        grid.Name = "Stats"
+        grid.LayoutOrder = 4
+        grid.BackgroundTransparency = 1
+        grid.Size = UDim2.new(1, 0, 0, 6 * 22)
+        grid.Parent = body
+        local cells = Instance.new("UIGridLayout")
+        cells.SortOrder = Enum.SortOrder.LayoutOrder
+        cells.CellSize = UDim2.new(0.5, -8, 0, 20)
+        cells.CellPadding = UDim2.fromOffset(16, 2)
+        cells.Parent = grid
+        local rows = {}
+        for index, key in ipairs(Interface.BLACK_ORDER) do
+            local row = label(grid, key, index, 14)
+            row.TextXAlignment = Enum.TextXAlignment.Left
+            rows[key] = row
+        end
+        local line = Instance.new("Frame")
+        line.Name = "Line"
+        line.LayoutOrder = 5
+        line.BorderSizePixel = 0
+        line.BackgroundColor3 = Color3.fromRGB(70, 45, 100)
+        line.Size = UDim2.new(0.92, 0, 0, 1)
+        line.Parent = body
+        -- the developer: his picture (a tap closes the black screen) and his Discord server
+        local card = Instance.new("Frame")
+        card.Name = "Developer"
+        card.LayoutOrder = 6
+        card.BackgroundTransparency = 1
+        card.Size = UDim2.new(1, 0, 0, 72)
+        card.Parent = body
+        local across = Instance.new("UIListLayout")
+        across.FillDirection = Enum.FillDirection.Horizontal
+        across.HorizontalAlignment = Enum.HorizontalAlignment.Center
+        across.VerticalAlignment = Enum.VerticalAlignment.Center
+        across.SortOrder = Enum.SortOrder.LayoutOrder
+        across.Padding = UDim.new(0, 14)
+        across.Parent = card
+        local logo = Instance.new("ImageButton")
+        logo.Name = "Logo"
+        logo.LayoutOrder = 1
+        logo.AutoButtonColor = false
+        logo.BackgroundColor3 = Color3.fromRGB(30, 20, 45)
+        logo.Size = UDim2.fromOffset(68, 68)
+        logo.ScaleType = Enum.ScaleType.Crop
+        logo.Image = ""
+        logo.Parent = card
+        local round = Instance.new("UICorner")
+        round.CornerRadius = UDim.new(0.5, 0)
+        round.Parent = logo
+        local ring = Instance.new("UIStroke")
+        ring.Color = Color3.fromRGB(255, 128, 24)
+        ring.Thickness = 2
+        ring.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        ring.Parent = logo
+        local initials = label(logo, "Initials", 1, 22, Enum.Font.GothamBlack, Color3.fromRGB(255, 128, 24))
+        initials.Size = UDim2.fromScale(1, 1)
+        initials.Text = "AV"
+        local info = Instance.new("Frame")
+        info.Name = "Info"
+        info.LayoutOrder = 2
+        info.BackgroundTransparency = 1
+        info.Size = UDim2.fromOffset(440, 68)
+        info.Parent = card
+        local stack = Instance.new("UIListLayout")
+        stack.SortOrder = Enum.SortOrder.LayoutOrder
+        stack.VerticalAlignment = Enum.VerticalAlignment.Center
+        stack.Padding = UDim.new(0, 2)
+        stack.Parent = info
+        local dev = Interface.DEVELOPER
+        local who = label(info, "Name", 1, 16, Enum.Font.GothamBold, nil, 20)
+        who.TextXAlignment = Enum.TextXAlignment.Left
+        who.Text = dev.name .. "  •  @" .. dev.user .. "  •  " .. Interface.TITLE .. " " .. Interface.EDITION
+        local server = label(info, "Server", 2, 13, Enum.Font.GothamMedium, Color3.fromRGB(190, 195, 255), 18)
+        server.TextXAlignment = Enum.TextXAlignment.Left
+        server.Text = "💬 " .. T("Join my Discord server")
+        local link = "https://discord.gg/" .. Interface.DISCORD_INVITE
+        local inviteText = "discord.gg/" .. Interface.DISCORD_INVITE .. "  •  " .. T("tap to copy")
+        local invite = Instance.new("TextButton")
+        invite.Name = "Invite"
+        invite.LayoutOrder = 3
+        invite.AutoButtonColor = false
+        invite.BackgroundTransparency = 1
+        invite.Size = UDim2.new(1, 0, 0, 20)
+        invite.Font = Enum.Font.GothamBold
+        invite.TextSize = 14
+        invite.TextColor3 = Color3.fromRGB(114, 137, 255)
+        invite.TextXAlignment = Enum.TextXAlignment.Left
+        invite.TextTruncate = Enum.TextTruncate.AtEnd
+        invite.Text = inviteText
+        invite.Parent = info
+        local hint = label(body, "Hint", 7, 12, Enum.Font.GothamMedium, Color3.fromRGB(150, 150, 165))
+        hint.Text = "👆 " .. T("Tap my picture to close the black screen")
+        -- CPU / GPU saving: 3D drawing off + a frame rate cap (put back by destroy)
+        local RunService = game:GetService("RunService")
+        local function save(inGame)
+            if suspended then
+                return
+            end
+            pcall(function()
+                RunService:Set3dRenderingEnabled(false)
+            end)
+            if type(setfpscap) == "function" then
+                local want = inGame and B.minigameFps or B.fps
+                if capBefore == nil then
+                    capBefore = Interface.fpsCapBefore()
+                end
+                if pcall(setfpscap, want) then
+                    capped = want
+                end
+            end
+        end
+        local function unsave()
+            pcall(function()
+                RunService:Set3dRenderingEnabled(true)
+            end)
+            if capped and type(setfpscap) == "function" then
+                pcall(setfpscap, capBefore or 60)
+            end
+            capped = nil
+        end
+        local window = options.window
+        local windowWasOn = false
+        pcall(function()
+            if window and window.Enabled then
+                window.Enabled = false -- the window under the black screen is not drawn either
+                windowWasOn = true
+            end
+        end)
+        -- the farm's virtual taps on game buttons (a fallback click) must reach the game: the black screen steps aside
+        -- while one is sent
+        local okInteraction, Interaction = pcall(import, "Game/Interaction")
+        local guards = okInteraction and type(Interaction) == "table" and type(Interaction.clickGuards) == "table"
+            and Interaction.clickGuards or nil
+        local function guard(sending)
+            holds = math.max(0, holds + (sending and 1 or -1))
+            if alive and not suspended then
+                gui.Enabled = holds == 0
+            end
+        end
+        if guards then
+            guards.blackScreen = guard
+        end
+        -- Roblox's own disconnect / kick window must be seen: the black screen steps aside for good
+        pcall(function()
+            local GuiService = game:GetService("GuiService")
+            table.insert(connections, GuiService.ErrorMessageChanged:Connect(function(message)
+                pcall(function()
+                    if type(message) ~= "string" or message == "" then
+                        message = GuiService:GetErrorMessage()
+                    end
+                    if alive and type(message) == "string" and message ~= "" then
+                        suspended = true
+                        gui.Enabled = false
+                        unsave()
+                    end
+                end)
+            end))
+        end)
+        local function fitScale()
+            pcall(function()
+                local size = workspace.CurrentCamera.ViewportSize
+                scale.Scale = math.clamp(math.min(size.Y / (B.height + 16), size.X / (B.width + 32)), 0.55, 1.6)
+            end)
+        end
+        local player = game:GetService("Players").LocalPlayer
+        function screen.update(status)
+            if not alive or suspended then
+                return
+            end
+            save(Interface.inMinigame(status))
+            fitScale()
+            local modeText = capped and T("CPU saver on • 3D off • %d FPS", capped) or T("CPU saver on • 3D off")
+            mode.Text = (player and ("@" .. player.Name .. "  •  ") or "") .. modeText
+            local headTitle, headText, state = Interface.stateHeader(status)
+            head.Text = fit((DOT[state] or DOT.off) .. " " .. headTitle .. "  —  " .. headText, 96)
+            head.TextColor3 = BLACK_TEXT[state] or BLACK_TEXT.on
+            for _, row in ipairs(Interface.statusRows(status, 44)) do
+                local item = rows[row.key]
+                if item then
+                    item.Text = (Interface.BLACK_EMOJI[row.key] or "•") .. "  " .. row.text
+                    item.TextColor3 = row.dot and BLACK_TEXT[row.state] or BLACK_TEXT.on
+                end
+            end
+        end
+        function screen.destroy()
+            if not alive then
+                return
+            end
+            alive = false
+            for _, connection in ipairs(connections) do
+                pcall(function()
+                    connection:Disconnect()
+                end)
+            end
+            if guards and guards.blackScreen == guard then
+                guards.blackScreen = nil
+            end
+            unsave()
+            pcall(function()
+                if windowWasOn then
+                    window.Enabled = true
+                end
+            end)
+            pcall(function()
+                gui:Destroy()
+            end)
+        end
+        logo.Activated:Connect(function()
+            pcall(function()
+                if type(options.onClose) == "function" then
+                    options.onClose()
+                end
+            end)
+            pcall(screen.destroy)
+        end)
+        invite.Activated:Connect(function()
+            pcall(function()
+                local copied = pcall(function()
+                    setclipboard(link)
+                end)
+                invite.Text = copied and ("✅ " .. T("Copied: %s", link)) or link
+                task.delay(3, function()
+                    pcall(function()
+                        if alive then
+                            invite.Text = inviteText
+                        end
+                    end)
+                end)
+            end)
+        end)
+        task.spawn(function()
+            pcall(function()
+                local image = Interface.developerAvatar()
+                if alive and type(image) == "string" and image ~= "" then
+                    logo.Image = image
+                    initials.Visible = false
+                end
+            end)
+        end)
+        task.spawn(function()
+            pcall(function()
+                local found = Interface.discordInfo()
+                if alive and type(found) == "table" and found.name then
+                    local parts = { "💬 " .. found.name }
+                    if found.members then
+                        table.insert(parts, T("%s members", commas(found.members)))
+                    end
+                    if found.online then
+                        table.insert(parts, T("%s online", commas(found.online)))
+                    end
+                    server.Text = table.concat(parts, "  •  ")
+                end
+            end)
+        end)
+        fitScale()
+        pcall(screen.update, options.status)
+        gui.Parent = parent
+        return screen
+    end
     local FEED_INFO = { Event = true, Minigame = true }
     local FEED_MARK = { SUCCESS = "✅", WARN = "⚠️", ERROR = "❌" }
     Interface.FEED_LINES = 8
@@ -4926,6 +5316,14 @@ __moduleSources["Services/Interface"] = function(...)
         local alive = true
         local connections = {}
         local handle = { touch = touch }
+        local blackScreen -- v3.0.1: the Black Screen while it is shown (Interface.BlackScreen)
+        -- v3.0.0: open / close the window from code (the status line on top of the screen does it when tapped)
+        function handle.Toggle()
+            local ok, toggle = pcall(function()
+                return Starlight.Instance:FindFirstChild("MobileToggle", true)
+            end)
+            return ok and toggle ~= nil and toggle:IsA("GuiButton") and Interface.press(toggle.MouseButton1Click)
+        end
         function handle.Close()
             if not alive then
                 return
@@ -4935,6 +5333,10 @@ __moduleSources["Services/Interface"] = function(...)
                 pcall(function()
                     connection:Disconnect()
                 end)
+            end
+            if blackScreen then -- 3D drawing and the frame rate come back with it
+                pcall(blackScreen.destroy)
+                blackScreen = nil
             end
             pcall(function()
                 Starlight:Destroy()
@@ -5429,6 +5831,43 @@ __moduleSources["Services/Interface"] = function(...)
             return fn(...)
         end
         local refreshStatus
+        -- v3.0.1 Black Screen: shown while Interface.BlackScreen is on (the switch in Config > CPU saver); a tap on the
+        -- developer's picture on it turns the switch off
+        local BLACK_PATH = { "Interface", "BlackScreen" }
+        local function setBlackScreen(on)
+            if on and not blackScreen and alive then
+                local okStatus, status = pcall(api.Status)
+                local ok, screen = pcall(Interface.blackScreen, {
+                    window = Starlight.Instance,
+                    status = okStatus and status or nil,
+                    onClose = function()
+                        write(BLACK_PATH, false)
+                    end,
+                })
+                if ok and type(screen) == "table" then
+                    blackScreen = screen
+                else
+                    notify("Black Screen (CPU saver)", "Could not open: " .. tostring(screen), "triangle-alert")
+                    if options.logger then
+                        options.logger:warn("Interface", "Black Screen not opened: " .. tostring(screen))
+                    end
+                end
+            elseif not on and blackScreen then
+                local screen = blackScreen
+                blackScreen = nil
+                pcall(screen.destroy)
+                task.defer(function() -- the window shows fresh numbers again
+                    pcall(function()
+                        if refreshStatus then
+                            refreshStatus()
+                        end
+                    end)
+                end)
+            end
+        end
+        remember(table.concat(BLACK_PATH, "."), function()
+            setBlackScreen(read(BLACK_PATH) == true)
+        end)
         function fitPopup(dropdown)
             if handle.scale == nil or handle.scale == 1 then
                 return
@@ -5504,9 +5943,15 @@ __moduleSources["Services/Interface"] = function(...)
         local Window = Starlight:CreateWindow(windowSettings)
         -- v2.1.33 (user screenshot: hover texts stuck on screen over the dropdowns): a phone has no mouse to leave an
         -- element, so Starlight's hover texts stay; on touch they are off (the help lines under the switches stay)
+        -- v3.0.0 (user: "the open / close button is gone" right after 2.1.33 hid that whole layer): the layer is
+        -- hidden only when the round toggle is not inside it
         if touch then
             pcall(function()
-                Starlight.Instance.Tooltips.Visible = false
+                local tips = Starlight.Instance:FindFirstChild("Tooltips")
+                local toggle = Starlight.Instance:FindFirstChild("MobileToggle", true)
+                if tips and tips:IsA("GuiObject") and not (toggle and toggle:IsDescendantOf(tips)) then
+                    tips.Visible = false
+                end
             end)
         end
         handle.scale = scale
@@ -5864,6 +6309,20 @@ __moduleSources["Services/Interface"] = function(...)
                 return true
             end, shortUrl)
         local configTab = track(setupSection:CreateTab({ Name = "Config", Icon = I("settings"), Columns = columns }, "config"))
+        -- v3.0.1 (user: "near the top of the settings, easy to see"): the Black Screen switch in its own box on top
+        local saverBox = configTab:CreateGroupbox({ Name = "CPU saver", Icon = I("cpu"), Column = 1 }, "saver")
+        bindToggle(saverBox, "blackScreen", "monitor", "Black Screen (CPU saver)", BLACK_PATH,
+            "Black screen with your farm stats: the game's 3D drawing off and a low FPS (less CPU, GPU and battery)."
+                .. " Tap the developer's picture at the bottom to close it.")
+        if not showDescriptions then
+            local howText = type(setfpscap) == "function"
+                and T("Only your stats on a black screen. 3D off and %d FPS: less CPU, GPU and battery. Tap my picture"
+                    .. " at the bottom to close it.", Interface.BLACK.fps)
+                or T("Only your stats on a black screen. 3D off: less CPU, GPU and battery. Tap my picture at the bottom"
+                    .. " to close it.")
+            saverBox:CreateParagraph({ Name = "How it works", Icon = I("info"),
+                Content = table.concat(wrap(howText, wide and 40 or 56), "\n") }, "saverInfo")
+        end
         local configsBox = configTab:CreateGroupbox({ Name = "Configs", Icon = I("save"), Column = 1 }, "configs")
         local typedName = ""
         local selected = nil
@@ -6342,13 +6801,22 @@ __moduleSources["Services/Interface"] = function(...)
                 T("Script: v%s", shortVersion),
             }, "\n")
         end
+        do -- v3.0.0: what's new since v2, by topic, every line wrapped to the window
+            local changelog = supportTab:CreateGroupbox({ Name = "What's new in v3", Icon = I("scroll-text"), Column = 1 },
+                "changelog")
+            local width = wide and 40 or 56
+            for index, section in ipairs(Interface.WHATS_NEW) do
+                local out = {}
+                for _, item in ipairs(section[3]) do
+                    for position, line in ipairs(wrap(Lang.tr(item), width)) do
+                        table.insert(out, (position == 1 and "• " or "   ") .. line)
+                    end
+                end
+                changelog:CreateParagraph({ Name = section[1], Icon = I(section[2]), Content = table.concat(out, "\n") },
+                    "changes" .. index)
+            end
+        end
         if not homeTab then
-            local changelog = supportTab:CreateGroupbox({ Name = "Changelog", Icon = I("scroll-text"), Column = 1 }, "changelog")
-            changelog:CreateParagraph({
-                Name = "What's new in v" .. shortVersion,
-                Icon = I("sparkles"),
-                Content = "• " .. table.concat(Interface.CHANGELOG, "\n• "),
-            }, "changes")
             local executorBox = supportTab:CreateGroupbox({ Name = "Executor", Icon = I("cpu"), Column = col(2) }, "executor")
             executorInfo = executorBox:CreateParagraph({ Name = "Your setup", Icon = I("monitor"), Content = executorText() },
                 "executorInfo")
@@ -6510,6 +6978,10 @@ __moduleSources["Services/Interface"] = function(...)
         refreshStatus = function()
             local okStatus, status = pcall(api.Status)
             status = okStatus and status or nil
+            if blackScreen then -- v3.0.1: only the black screen is updated while it is up (the window under it waits)
+                pcall(blackScreen.update, status)
+                return
+            end
             if stateHeader then
                 local title, text, state = Interface.stateHeader(status)
                 setText(stateHeader, "header", { Name = title, Content = text })
@@ -6639,6 +7111,14 @@ __moduleSources["Services/Interface"] = function(...)
             local nextLook = 0
             while alive do
                 task.wait(0.5)
+                if touch then -- v3.0.0: the round open / close button always stays on a phone's screen
+                    pcall(function()
+                        local toggle = Starlight.Instance:FindFirstChild("MobileToggle", true)
+                        if toggle and toggle:IsA("GuiObject") and not toggle.Visible then
+                            toggle.Visible = true
+                        end
+                    end)
+                end
                 pcall(function()
                     if not main or not main.Parent then
                         for _, box in pairs(boxes) do
@@ -6699,6 +7179,16 @@ __moduleSources["Services/Interface"] = function(...)
                 end)
             end
         end)
+        -- v3.0.1: the Black Screen comes back at start when it was left on (once the window is built)
+        if read(BLACK_PATH) == true then
+            task.delay(1, function()
+                pcall(function()
+                    if alive then
+                        setBlackScreen(read(BLACK_PATH) == true)
+                    end
+                end)
+            end)
+        end
         Interface.current = handle
         notify(Interface.TITLE, touch and T("Ready. Round paw button: hide / show. Square button at the top: full screen. "
             .. "Sliders: tap the number to type.") or T("Ready. %s hides / shows the window.", keybind), "paw-print")
@@ -8101,6 +8591,14 @@ __moduleSources["Game/Interaction"] = function(...)
         end)
     end
     Interaction.CLICK_METHODS = { "firesignal", "connections", "touch", "mouse" }
+    -- v3.0.1: screens of this script that cover the game (the Black Screen) step aside while a virtual tap / click is
+    -- sent to a game button (else the tap would land on them); each guard gets true before and false after
+    Interaction.clickGuards = {}
+    local function guardClicks(sending)
+        for _, guard in pairs(Interaction.clickGuards) do
+            pcall(guard, sending)
+        end
+    end
     local CLICK_SIGNALS = { "Activated", "MouseButton1Click", "MouseButton1Down", "MouseButton1Up" }
     local function buttonCentre(button)
         local screenGui = button:FindFirstAncestorOfClass("ScreenGui")
@@ -8189,9 +8687,16 @@ __moduleSources["Game/Interaction"] = function(...)
             end
             return true, ""
         end
+        local guarded = next(Interaction.clickGuards) ~= nil
+        if guarded then
+            guardClicks(true)
+        end
         local ok, err = pcall(function()
             local vim = game:GetService("VirtualInputManager")
             local x, y = buttonCentre(button)
+            if guarded then
+                task.wait() -- the covering screen is gone before the tap arrives
+            end
             if method == "touch" then
                 vim:SendTouchEvent(1, 0, x, y)
                 task.wait(0.1)
@@ -8201,7 +8706,13 @@ __moduleSources["Game/Interaction"] = function(...)
                 task.wait(0.1)
                 vim:SendMouseButtonEvent(x, y, 0, false, game, 0)
             end
+            if guarded then
+                task.wait(0.15) -- the game's button gets the release before the covering screen comes back
+            end
         end)
+        if guarded then
+            guardClicks(false)
+        end
         return ok, ok and "" or tostring(err)
     end
     function Interaction:teleportTo(spotName)
@@ -13896,7 +14407,10 @@ __moduleSources["Game/EventTasks"] = function(...)
                         if string.sub(interior.Name, 1, 7) == "MainMap" then
                             local event = interior:FindFirstChild("Event")
                             local halloween = event and event:FindFirstChild("Halloween")
-                            local catNode = halloween and halloween:FindFirstChild("StrayCat")
+                            -- v3.0.0 (user: "it went to the OLD Stray Cat place"): anywhere in the main map too, not
+                            -- only in its old folder (the saved spot is only the last fallback)
+                            local catNode = (halloween and halloween:FindFirstChild("StrayCat"))
+                                or interior:FindFirstChild("StrayCat", true)
                             if catNode then
                                 local position = catNode:IsA("BasePart") and catNode.Position
                                 if not position then
@@ -19500,7 +20014,18 @@ __moduleSources["main"] = function(...)
                         gui.ResetOnSpawn = false
                         gui.IgnoreGuiInset = true
                         gui.DisplayOrder = 50
-                        label = Instance.new("TextLabel")
+                        -- v3.0.0: a button: tapping the line opens / closes the window (a second way next to the round
+                        -- paw button)
+                        label = Instance.new("TextButton")
+                        label.AutoButtonColor = false
+                        label.Activated:Connect(function()
+                            pcall(function()
+                                local current = Interface.current
+                                if current and type(current.Toggle) == "function" then
+                                    current.Toggle()
+                                end
+                            end)
+                        end)
                         label.AnchorPoint = Vector2.new(0.5, 0)
                         label.Position = UDim2.new(0.5, 0, 0, 4)
                         label.Size = UDim2.new(0, 0, 0, 20)
