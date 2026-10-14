@@ -1297,7 +1297,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.22 (Adopt Victims - UI Remastered Edition, Mega presets)"
+    Disclosure.VERSION = "2.1.23 (Adopt Victims - UI Remastered Edition, Mega presets)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -3324,6 +3324,8 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     Interface.CHANGELOG = {
+        "v2.1.23 (14 Oct 2026)",
+        "Teleport prompts: No when I am already at that minigame, No when the prompt names both minigames (Hauntlet runs were sent to the Manor)",
         "v2.1.22 (14 Oct 2026)",
         "Minigame teleport prompt: a Yes counts only when the click really closed it (no 15 s wait for a teleport that never came)",
         "v2.1.21 (14 Oct 2026)",
@@ -18917,7 +18919,15 @@ __moduleSources["main"] = function(...)
                                                 table.insert(seen, marker.Text)
                                             end
                                             local all = string.lower(table.concat(seen, " | "))
-                                            promptKind = string.find(all, "hauntlet", 1, true) and "hauntlet" or "ghost"
+                                            -- v2.1.23 (2.1.22 reports: during a Hauntlet task "Hauntlet teleport
+                                            -- prompt (Yes)" and then "in HauntedManor" / a Ghost Gallery round took the
+                                            -- account; both minigames start at the same second, so both prompts show):
+                                            -- texts naming BOTH minigames = not sure which one = No
+                                            local hasHaunt = string.find(all, "hauntlet", 1, true) ~= nil
+                                            local hasGhost = string.find(all, "ghost", 1, true) ~= nil
+                                                or string.find(all, "gallery", 1, true) ~= nil
+                                            local mixed = hasHaunt and hasGhost
+                                            promptKind = hasHaunt and "hauntlet" or "ghost"
                                             local event = config.Farm.Event or {}
                                             -- v2.1.17 (reports: "join zone not found (interiors loaded: HauntedManor)"
                                             -- during a Hauntlet task): a Ghost Gallery prompt answered Yes took me to the
@@ -18926,6 +18936,12 @@ __moduleSources["main"] = function(...)
                                             local wanted = event.UsePrompt ~= false
                                                 and ((promptKind == "hauntlet" and event.Hauntlet and doing == "hauntlet")
                                                     or (promptKind == "ghost" and event.GhostGallery and doing == "ghost_gallery"))
+                                            -- v2.1.23: never Yes when I am already there (the same reports: a Yes in the
+                                            -- Hotel moved accounts out of the join circle; the circle is reached on foot)
+                                            local here = state:get("player.interior")
+                                            local there = promptKind == "hauntlet" and "HauntedHotel" or "HauntedManor"
+                                            local alreadyThere = type(here) == "string" and string.sub(here, 1, #there) == there
+                                            wanted = wanted and not mixed and not alreadyThere
                                             pattern = wanted and "^%s*yes%s*$" or "^%s*no%s*$"
                                             label = (promptKind == "hauntlet" and "Hauntlet" or "Ghost Gallery")
                                                 .. " teleport prompt (" .. (wanted and "Yes" or "No") .. ")"
