@@ -1297,7 +1297,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.23 (Adopt Victims - UI Remastered Edition, Mega presets)"
+    Disclosure.VERSION = "2.1.24 (Adopt Victims - UI Remastered Edition, Mega presets)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -3324,6 +3324,8 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     Interface.CHANGELOG = {
+        "v2.1.24 (14 Oct 2026)",
+        "Hauntlet: already in the join circle (the game's prompt put me there) = not moved; no more teleport onto the roof beams (it left the queue)",
         "v2.1.23 (14 Oct 2026)",
         "Teleport prompts: No when I am already at that minigame, No when the prompt names both minigames (Hauntlet runs were sent to the Manor)",
         "v2.1.22 (14 Oct 2026)",
@@ -8411,7 +8413,20 @@ __moduleSources["Game/Interaction"] = function(...)
             end
             return false, "Hauntlet join zone not found (interiors loaded: " .. (#names > 0 and table.concat(names, ", ") or "none") .. ")"
         end
-        local destination = target.Position + Vector3.new(0, (target.Size and target.Size.Y or 2) * 0.5 + 2.5, 0)
+        -- v2.1.24 (user screenshots: the game's prompt put me IN the circle, then this teleport put me on the roof
+        -- beams over it and the game said "You have left the queue for the Hauntlet 2 Minigame"): standing in the
+        -- circle already (on a floor, close to its centre) = not moved at all; entering the circle is the queue.
+        local here = root.Position
+        local hx, hz = here.X - target.Position.X, here.Z - target.Position.Z
+        local humanoidHere = character:FindFirstChildOfClass("Humanoid")
+        local halfHeight = (target.Size and target.Size.Y or 2) * 0.5
+        if math.sqrt(hx * hx + hz * hz) <= 12 and math.abs(here.Y - target.Position.Y) <= halfHeight + 8
+            and humanoidHere and humanoidHere.FloorMaterial ~= Enum.Material.Air then
+            return true, target:GetFullName() .. " (already standing in it)"
+        end
+        -- v2.1.24: the floor is looked for from the BOTTOM of the circle's part (from its top + 2.5 the ray found the
+        -- roof beams over a tall zone part and I was put up there)
+        local destination = target.Position + Vector3.new(0, -halfHeight + 3, 0)
         -- v2.1.21: on the floor found there, held still up to 8 s while it loads (was: a fixed height, 2 s held by
         -- settle, then a fall through a floor that was not there yet = "pushed out of the join circle", never queued)
         local stood, standWhy = self:standOnCircle(destination, 8)
