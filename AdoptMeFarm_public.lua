@@ -1,4 +1,4 @@
--- AdoptMe Farm  v3.0.8 | Adopt Victims v3 | settings: the window
+-- AdoptMe Farm  v3.0.9 | Adopt Victims v3 | settings: the window
 local UserConfig = {
     Farm = {
         Enabled = true, -- false = everything paused ("Pause all" in the window); each feature has its own switch
@@ -1323,7 +1323,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "3.0.8 (Adopt Victims v3)"
+    Disclosure.VERSION = "3.0.9 (Adopt Victims v3)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -1393,7 +1393,7 @@ __moduleSources["Services/Disclosure"] = function(...)
             "configs (Config tab): the settings you save go to AdoptMeFarm/configs/ on this device; one may load at start",
             "Black Screen (Interface.BlackScreen, Config > CPU saver; off by default): a black screen over the game with your"
                 .. " farm stats and the developer's picture / Discord server; while it is shown the game's 3D drawing is off and"
-                .. " the frame rate is capped (15, 30 in a minigame) when your executor can, graphics quality is set to the lowest,"
+                .. " the frame rate is capped (15, 30 in a minigame) when your executor can, graphics quality is set to the lowest (also Roblox's own setting) and the sound is muted,"
                 .. " the window is closed and the log files keep only warnings; all come back when it closes (tap"
                 .. " the picture). Local only, no remote; it steps aside while the farm sends a virtual tap and for Roblox's"
                 .. " disconnect window",
@@ -5075,11 +5075,23 @@ __moduleSources["Services/Interface"] = function(...)
             capped = nil
         end
         -- v3.0.8: lowest graphics quality and quieter files while it is up (all put back by destroy)
-        local qualityBefore
+        local qualityBefore, savedQualityBefore, volumeBefore
         pcall(function()
             local rendering = settings().Rendering
             qualityBefore = rendering.QualityLevel
             rendering.QualityLevel = Enum.QualityLevel.Level01
+        end)
+        -- v3.0.9 (user: "Roblox does not keep my settings after a rejoin"): Roblox's own graphics quality = 1 and the
+        -- sound off are set again every time the black screen opens (put back when it closes)
+        pcall(function()
+            local game_ = UserSettings():GetService("UserGameSettings")
+            savedQualityBefore = game_.SavedQualityLevel
+            game_.SavedQualityLevel = Enum.SavedQualitySetting.QualityLevel1
+        end)
+        pcall(function()
+            local game_ = UserSettings():GetService("UserGameSettings")
+            volumeBefore = game_.MasterVolume
+            game_.MasterVolume = 0
         end)
         local logger, fileRankBefore = options.logger, nil
         pcall(function()
@@ -5227,6 +5239,15 @@ __moduleSources["Services/Interface"] = function(...)
             pcall(function()
                 if qualityBefore then
                     settings().Rendering.QualityLevel = qualityBefore
+                end
+            end)
+            pcall(function()
+                local game_ = UserSettings():GetService("UserGameSettings")
+                if savedQualityBefore then
+                    game_.SavedQualityLevel = savedQualityBefore
+                end
+                if volumeBefore then
+                    game_.MasterVolume = volumeBefore
                 end
             end)
             pcall(function()
