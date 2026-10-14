@@ -1,4 +1,4 @@
--- AdoptMe Farm  v3.0.6 | Adopt Victims v3 | settings: the window
+-- AdoptMe Farm  v3.0.8 | Adopt Victims v3 | settings: the window
 local UserConfig = {
     Farm = {
         Enabled = true, -- false = everything paused ("Pause all" in the window); each feature has its own switch
@@ -1095,13 +1095,25 @@ __moduleSources["Core/Logger"] = function(...)
             self._part = (self._part or 1) + 1
             self._fileContent = {}
             self._partBytes = 0
+            self._partStarted = false
             self._filePath = string.gsub(self._basePath or self._filePath, "%.log$", "") .. "_part" .. self._part .. ".log"
         end
         self._basePath = self._basePath or self._filePath
-        table.insert(self._fileContent, chunk)
         self._partBytes = (self._partBytes or 0) + #chunk
         self._bytesWritten += #chunk
-        local ok, err = pcall(writefile, self._filePath, table.concat(self._fileContent))
+        -- v3.0.7 (user: "after 1-2 hours the phone crashed"): only the new lines are added to the file (appendfile);
+        -- the whole file (up to 400 KB) was built and written again every 5 s
+        local ok, err
+        if self._partStarted and type(appendfile) == "function" then
+            ok, err = pcall(appendfile, self._filePath, chunk)
+        else
+            table.insert(self._fileContent, chunk)
+            ok, err = pcall(writefile, self._filePath, table.concat(self._fileContent))
+            self._partStarted = ok and type(appendfile) == "function"
+            if self._partStarted then
+                self._fileContent = {}
+            end
+        end
         self._fileCreated = self._fileCreated or ok
         if not ok then
             self._fileDisabledReason = "write failed: " .. tostring(err)
@@ -1311,7 +1323,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "3.0.6 (Adopt Victims v3)"
+    Disclosure.VERSION = "3.0.8 (Adopt Victims v3)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -1381,7 +1393,8 @@ __moduleSources["Services/Disclosure"] = function(...)
             "configs (Config tab): the settings you save go to AdoptMeFarm/configs/ on this device; one may load at start",
             "Black Screen (Interface.BlackScreen, Config > CPU saver; off by default): a black screen over the game with your"
                 .. " farm stats and the developer's picture / Discord server; while it is shown the game's 3D drawing is off and"
-                .. " the frame rate is capped (15, 30 in a minigame) when your executor can; both come back when it closes (tap"
+                .. " the frame rate is capped (15, 30 in a minigame) when your executor can, graphics quality is set to the lowest,"
+                .. " the window is closed and the log files keep only warnings; all come back when it closes (tap"
                 .. " the picture). Local only, no remote; it steps aside while the farm sends a virtual tap and for Roblox's"
                 .. " disconnect window",
             "Autoclose GUI on execute (Interface.StartHidden): the window starts hidden by pressing its own minimize button"
@@ -2982,6 +2995,10 @@ __moduleSources["Services/Lang"] = function(...)
             .. " llena)",
         "Só Bucks: compra o ovo abaixo, segura até chocar e compra outro (com Cercadinho automático também o enche)")
     add("LIVE", "CANLI", "EN VIVO", "AO VIVO")
+    add("The game's 3D drawing is off, the FPS and graphics are low, the window is closed: less CPU, GPU, RAM and battery",
+        "Oyunun 3D çizimi kapalı, FPS ve grafik düşük, pencere kapalı: daha az CPU, GPU, RAM ve pil",
+        "3D apagado, FPS y gráficos bajos, ventana cerrada: menos CPU, GPU, RAM y batería",
+        "3D desligado, FPS e gráficos baixos, janela fechada: menos CPU, GPU, RAM e bateria")
     add("BUCKS", "BUCKS", "BUCKS", "BUCKS")
     add("CANDY", "ŞEKER", "DULCES", "DOCES")
     add("NEEDS DONE", "İHTİYAÇLAR", "NECESIDADES", "NECESSIDADES")
@@ -3441,7 +3458,7 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.WHATS_NEW = {
         { "Black Screen (CPU saver)", "monitor", {
             "Config > CPU saver: only your farm stats on a black screen, like the webhook",
-            "The game's 3D drawing is off and the FPS is low: less CPU, GPU and battery",
+            "The game's 3D drawing is off, the FPS and graphics are low, the window is closed: less CPU, GPU, RAM and battery",
             "Tap my picture at the bottom to close it; my Discord server is right there too",
         } },
         { "Minigames", "ghost", {
@@ -5057,6 +5074,21 @@ __moduleSources["Services/Interface"] = function(...)
             end
             capped = nil
         end
+        -- v3.0.8: lowest graphics quality and quieter files while it is up (all put back by destroy)
+        local qualityBefore
+        pcall(function()
+            local rendering = settings().Rendering
+            qualityBefore = rendering.QualityLevel
+            rendering.QualityLevel = Enum.QualityLevel.Level01
+        end)
+        local logger, fileRankBefore = options.logger, nil
+        pcall(function()
+            local warnRank = import("Core/Enums").LogLevelRank.WARN
+            if logger and type(logger._fileRank) == "number" and warnRank and logger._fileRank < warnRank then
+                fileRankBefore = logger._fileRank
+                logger._fileRank = warnRank -- only warnings / errors go to the log file
+            end
+        end)
         local window = options.window
         local windowWasOn = false
         pcall(function()
@@ -5078,6 +5110,9 @@ __moduleSources["Services/Interface"] = function(...)
         end
         if guards then
             guards.blackScreen = guard
+        end
+        if okInteraction and type(Interaction) == "table" then
+            Interaction.logPaused = true -- gui_log.txt rests
         end
         -- Roblox's own disconnect / kick window must be seen: the black screen steps aside for good
         pcall(function()
@@ -5186,6 +5221,22 @@ __moduleSources["Services/Interface"] = function(...)
             if guards and guards.blackScreen == guard then
                 guards.blackScreen = nil
             end
+            if okInteraction and type(Interaction) == "table" then
+                Interaction.logPaused = false
+            end
+            pcall(function()
+                if qualityBefore then
+                    settings().Rendering.QualityLevel = qualityBefore
+                end
+            end)
+            pcall(function()
+                if fileRankBefore then
+                    logger._fileRank = fileRankBefore
+                end
+            end)
+            if Interface.saverScreen == screen then
+                Interface.saverScreen = nil
+            end
             unsave()
             pcall(function()
                 if windowWasOn then
@@ -5243,9 +5294,31 @@ __moduleSources["Services/Interface"] = function(...)
                 end
             end)
         end)
+        screen.alive = true
+        local baseDestroy = screen.destroy
+        function screen.destroy()
+            screen.alive = false
+            baseDestroy()
+        end
         fitScale()
         pcall(screen.update, options.status)
         gui.Parent = parent
+        -- v3.0.8: it updates itself (the window is closed while it is up)
+        if type(options.statusFn) == "function" then
+            task.spawn(function()
+                while alive do
+                    task.wait(2)
+                    pcall(function()
+                        if not gui.Parent then -- removed by a newer run of the script
+                            screen.destroy()
+                            return
+                        end
+                        local okStatus, status = pcall(options.statusFn)
+                        screen.update(okStatus and status or nil)
+                    end)
+                end
+            end)
+        end
         return screen
     end
     local FEED_INFO = { Event = true, Minigame = true }
@@ -6015,35 +6088,47 @@ __moduleSources["Services/Interface"] = function(...)
         -- v3.0.1 Black Screen: shown while Interface.BlackScreen is on (the switch in Config > CPU saver); a tap on the
         -- developer's picture on it turns the switch off
         local BLACK_PATH = { "Interface", "BlackScreen" }
+        -- v3.0.8 (user: "this script exists to run alts without lag: add everything that helps"): while the black
+        -- screen is up the whole window is closed (Starlight's per-element frame work and its memory are gone); the
+        -- black screen lives on its own and updates itself. A tap on the picture turns it off and builds the window again.
         local function setBlackScreen(on)
-            if on and not blackScreen and alive then
+            local saver = Interface.saverScreen
+            if on and alive and not (saver and saver.alive) then
                 local okStatus, status = pcall(api.Status)
                 local ok, screen = pcall(Interface.blackScreen, {
-                    window = Starlight.Instance,
                     status = okStatus and status or nil,
+                    statusFn = api.Status,
+                    logger = options.logger,
                     onClose = function()
-                        write(BLACK_PATH, false)
+                        config.Interface.BlackScreen = false
+                        local saved, key = Interface.saved, "Interface.BlackScreen"
+                        if saved.originals[key] == false then
+                            saved.changes[key], saved.originals[key] = nil, nil
+                        elseif settings.RememberSettings ~= false then
+                            saved.changes[key] = false
+                        end
+                        pcall(Interface.writeSaved, saved.changes, settings.RememberSettings ~= false)
+                        if type(api.OpenInterface) == "function" then
+                            task.spawn(function()
+                                pcall(api.OpenInterface)
+                            end)
+                        end
                     end,
                 })
                 if ok and type(screen) == "table" then
-                    blackScreen = screen
+                    Interface.saverScreen = screen
+                    task.defer(function()
+                        pcall(handle.Close)
+                    end)
                 else
                     notify("Black Screen (CPU saver)", "Could not open: " .. tostring(screen), "triangle-alert")
                     if options.logger then
                         options.logger:warn("Interface", "Black Screen not opened: " .. tostring(screen))
                     end
                 end
-            elseif not on and blackScreen then
-                local screen = blackScreen
-                blackScreen = nil
-                pcall(screen.destroy)
-                task.defer(function() -- the window shows fresh numbers again
-                    pcall(function()
-                        if refreshStatus then
-                            refreshStatus()
-                        end
-                    end)
-                end)
+            elseif not on and saver and saver.alive then
+                Interface.saverScreen = nil
+                pcall(saver.destroy)
             end
         end
         remember(table.concat(BLACK_PATH, "."), function()
@@ -7164,6 +7249,9 @@ __moduleSources["Services/Interface"] = function(...)
         end
         local tick = 0
         refreshStatus = function()
+            if not blackScreen and Starlight.Minimized == true then -- v3.0.7: a hidden window is not redrawn (lighter)
+                return
+            end
             local okStatus, status = pcall(api.Status)
             status = okStatus and status or nil
             if blackScreen then -- v3.0.1: only the black screen is updated while it is up (the window under it waits)
@@ -8808,6 +8896,9 @@ __moduleSources["Game/Interaction"] = function(...)
     Interaction.GUI_LOG = "AdoptMeFarm/gui_log.txt"
     local guiLogSize = nil
     function Interaction.guiLog(line)
+        if Interaction.logPaused then -- v3.0.8: the Black Screen is up
+            return
+        end
         pcall(function()
             if type(appendfile) ~= "function" or type(writefile) ~= "function" then
                 return
@@ -19932,7 +20023,19 @@ __moduleSources["main"] = function(...)
                                                 end
                                             end
                                         end
-                                        for _, object in ipairs(screen:GetDescendants()) do
+                                        -- v3.0.7 (user: "the phone crashes after 1-2 hours"): only what is shown is read;
+                                        -- every hidden frame's whole subtree (most of the game's screens) is skipped
+                                        local shownObjects = {}
+                                        local function collect(node)
+                                            for _, child in ipairs(node:GetChildren()) do
+                                                if not child:IsA("GuiObject") or child.Visible then
+                                                    table.insert(shownObjects, child)
+                                                    collect(child)
+                                                end
+                                            end
+                                        end
+                                        collect(screen)
+                                        for _, object in ipairs(shownObjects) do
                                             -- v2.1.8 white screen: the game's white fade ("Whiteout") that stays on after a
                                             -- trip; on for 8 s while nothing moves = stuck: hidden
                                             if object:IsA("GuiObject") and string.find(string.lower(object.Name), "whiteout", 1, true)
