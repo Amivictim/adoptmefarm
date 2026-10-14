@@ -1297,7 +1297,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.19 (Adopt Victims - UI Remastered Edition, Mega presets)"
+    Disclosure.VERSION = "2.1.20 (Adopt Victims - UI Remastered Edition, Mega presets)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -3324,6 +3324,13 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     Interface.CHANGELOG = {
+        "v2.1.20 (14 Oct 2026)",
+        "Hauntlet / Ghost Gallery: a queue the game gives on the way (its teleport prompt) is kept; no more moves out of it",
+        "Top line: a second line says the step (at home waiting for the game's prompt, in the join circle) and the start time",
+        "Trips: the 'is it drawn' check only for home, Hotel and Manor; elsewhere a floor under me is enough (no 14 s waits)",
+        "Eggs: no buy is started while the egg rests or the Bucks are too few (no FAILED line every 30 s)",
+        "Void rescue: waits for a task that must finish, then starts at once (no 60 s gap, no repeated warnings)",
+        "Window look fix: a show is noticed sooner, the window is read less often (lighter)",
         "v2.1.19 (14 Oct 2026)",
         "Hauntlet: when the Hotel does not load, it goes via the main map and in again (the 'not auto-queued' runs)",
         "Eggs: no buy (and no Nursery trip) when the Bucks are too few; 10 min rest instead of a try every minute",
@@ -4498,6 +4505,9 @@ __moduleSources["Services/Interface"] = function(...)
             doing, doingState = T("Doing: nothing to do right now"), "wait"
         else
             doing, doingState = T("Doing: %s", word(task)), "on"
+            if s.taskPhase then -- v2.1.20: the step of the task (at home waiting for the prompt, in the join circle...)
+                doing = doing .. " — " .. Lang.tr(tostring(s.taskPhase))
+            end
         end
         if s.sideTask and running then
             doing = doing .. " + " .. Lang.tr(tostring(s.sideTask))
@@ -6550,8 +6560,11 @@ __moduleSources["Services/Interface"] = function(...)
             local kept = setmetatable({}, { __mode = "k" }) -- value seen twice in a row while open = the real look
             local lastMin, flipAt, fixedSinceFlip = nil, 0, true
             local main
+            -- v2.1.20: a show is noticed within 0.5 s (fixed ~1.5 s after it); the look of all parts is read every 3 s
+            -- (was every 1.5 s: lighter with several accounts on one phone)
+            local nextLook = 0
             while alive do
-                task.wait(1.5)
+                task.wait(0.5)
                 pcall(function()
                     if not main or not main.Parent then
                         for _, box in pairs(boxes) do
@@ -6590,6 +6603,10 @@ __moduleSources["Services/Interface"] = function(...)
                         end
                         return
                     end
+                    if os.clock() < nextLook then
+                        return
+                    end
+                    nextLook = os.clock() + 3
                     for _, object in ipairs(main:GetDescendants()) do
                         local props = PROPS[object.ClassName]
                         if props then
@@ -9650,22 +9667,33 @@ __moduleSources["Game/Travel"] = function(...)
     -- v2.1.17 (reports: "Hauntlet join zone not found (interiors loaded: School / HauntedManor / none)" while my data
     -- said HauntedHotel; voids at (-5989, 2160, -9030) "in Hospital / Salon"): my data can say "there" while this
     -- device still shows the last place or nothing. Every arrival, by any route (also "already there"), is checked.
+    -- v2.1.20: the places whose own parts the farm uses (furniture at home, the minigame join circles): checked on every
+    -- arrival. Elsewhere a floor under me is enough (a need there runs on the server; the name check cost up to 14 s
+    -- per trip when a place is drawn under another name, e.g. "Nursery is still not drawn" with a floor under me).
+    local NEED_DRAWN = { housing = true, HauntedHotel = true, HauntedManor = true }
+    local function floorUnderMe()
+        local floor = false
+        pcall(function()
+            local character = Players.LocalPlayer.Character
+            local root = character and character:FindFirstChild("HumanoidRootPart")
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.FilterDescendantsInstances = { character }
+            floor = root ~= nil and workspace:Raycast(root.Position, Vector3.new(0, -300, 0), params) ~= nil
+        end)
+        return floor
+    end
     function Travel:goTo(destination)
         local arrived, why = self:_goToRoute(destination)
         if arrived and destination ~= "MainMap" then
             local recipe = GameConstants.Travel[destination]
+            if not NEED_DRAWN[destination] and floorUnderMe() then
+                return true
+            end
             local okDrawn, drawn = pcall(self._ensureDrawn, self, destination, recipe)
             if okDrawn and drawn == false then
                 -- a floor under me = the place is there under another name: the trip counts
-                local floor = false
-                pcall(function()
-                    local character = Players.LocalPlayer.Character
-                    local root = character and character:FindFirstChild("HumanoidRootPart")
-                    local params = RaycastParams.new()
-                    params.FilterType = Enum.RaycastFilterType.Exclude
-                    params.FilterDescendantsInstances = { character }
-                    floor = root ~= nil and workspace:Raycast(root.Position, Vector3.new(0, -300, 0), params) ~= nil
-                end)
+                local floor = floorUnderMe()
                 if not floor and not recipe.ownHouse and not self._redrawViaMap then
                     -- v2.1.19 (2.1.18 reports: "HauntedHotel is still not drawn" x3 then "join zone not found (interiors
                     -- loaded: Neighborhood!Halloween / HauntedManor)"): the game's way in does not open the Hotel from
@@ -11411,6 +11439,22 @@ __moduleSources["Game/Tasks"] = function(...)
     function Tasks.eggPaused(id)
         local miss = Tasks._eggMiss and Tasks._eggMiss[id]
         return miss ~= nil and miss.count >= 6 and Util.now() < miss.untilAt
+    end
+    -- v2.1.20 (reports: "FAILED: buy an egg after 0.0 s - ... could not be bought" every 30 s, then disabled): the egg
+    -- the farm would buy (the same rule as Tasks.buyEgg) and whether a buy can work now (not resting after misses, the
+    -- Bucks pay for it). The task is not even started otherwise: no failed lines, no rest of the whole egg job.
+    function Tasks.eggToBuy(farmConfig)
+        local focus = GameConstants.focusOf(farmConfig)
+        return focus and focus.kind == "egg" and focus.id or farmConfig.EggToBuy or "cracked_egg"
+    end
+    function Tasks.eggBuyable(gameData, farmConfig)
+        local id = Tasks.eggToBuy(farmConfig)
+        if Tasks.eggPaused(id) then
+            return false
+        end
+        local price = (Tasks._eggPrice and Tasks._eggPrice[id]) or (GameConstants.EggPrices and GameConstants.EggPrices[id])
+        local bucks = gameData and tonumber(gameData:get(GameConstants.DataKeys.Money))
+        return not (price and bucks and bucks < price)
     end
     Tasks.buyEgg = {
         name = "buy_egg",
@@ -13175,6 +13219,14 @@ __moduleSources["Game/EventTasks"] = function(...)
         return tostring(answer)
     end
     EventTasks.answerText = answerText
+    -- v2.1.20 (user screenshot: 4 accounts at home with "doing: Ghost Gallery round" -> looks stuck): a task says which
+    -- step it is on (shown on the status line and the Farm card), with the round's start time when there is one
+    local function phase(ctx, text, at)
+        if type(ctx) == "table" and type(ctx.phase) == "function" then
+            pcall(ctx.phase, text, at)
+        end
+    end
+    EventTasks.phase = phase
     local function count(map)
         local n = 0
         for _ in pairs(map) do
@@ -14580,26 +14632,36 @@ __moduleSources["Game/EventTasks"] = function(...)
             end
             local candyBefore = tonumber(ctx.gameData:get(KEYS.Candy))
             local keysBefore = #ctx.gameData:itemsOfId(TOYS, E.RustyKey)
-            pcall(EventTasks.viaPrompt, ctx, "ghost", "HauntedManor", tonumber(start))
-            local arrived, why = ctx.travel:goTo("HauntedManor")
-            if not arrived then
-                return false, "travel to the Manor failed: " .. tostring(why)
-            end
+            -- v2.1.20: the last round's state is cleared BEFORE the trip (the game's prompt puts me in the join circle
+            -- and can queue me while the farm is still on its way: that join used to be thrown away by a reset after it)
             mg:reset()
+            local function queued()
+                return mg.joinAcceptedAt ~= nil or mg.join ~= nil
+            end
+            pcall(EventTasks.viaPrompt, ctx, "ghost", "HauntedManor", tonumber(start), queued)
+            if not queued() then
+                phase(ctx, "going to the Manor", tonumber(start))
+                local arrived, why = ctx.travel:goTo("HauntedManor")
+                if not arrived and not queued() then
+                    return false, "travel to the Manor failed: " .. tostring(why)
+                end
+            end
             local byZone = not (ctx.farmConfig.Event and ctx.farmConfig.Event.GhostJoinByZone == false)
             local inZone = false
-            if byZone then
+            if byZone and not queued() then
                 local zoneWhy
                 inZone, zoneWhy = ctx.interaction:teleportToJoinZone()
                 ctx.logger:info("Event", "Ghost Gallery: standing in the join circle" .. (inZone and "" or (" failed (" .. tostring(zoneWhy) .. ")")))
             end
+            phase(ctx, "in the join circle: the game queues me when the round starts", tonumber(start))
             ctx.waitUntil(function()
-                return Minigame.serverNow() >= start - 3
+                return queued() or Minigame.serverNow() >= start - 3
             end, math.max(0, start - Minigame.serverNow()) + 5)
-            if byZone then
+            if byZone and not queued() then
                 inZone = ctx.interaction:teleportToJoinZone()
             end
             ctx.logger:info("Event", "Ghost Gallery: joining the round" .. (inZone and " (join circle)" or ""))
+            phase(ctx, "joining the round")
             if inZone then
                 ctx.waitUntil(function()
                     return mg.joinAcceptedAt ~= nil or mg.join ~= nil
@@ -14640,6 +14702,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                 return false, "did not arrive in the minigame (left the round)"
             end
             local endTime = Minigame.serverNow() + 170
+            phase(ctx, "playing the round")
             local function finish(ok, reason)
                 ctx.waitUntil(function()
                     return mg.leave ~= nil or not inRound()
@@ -14647,6 +14710,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                 ctx.waitUntil(function()
                     return not inRound()
                 end, 15)
+                phase(ctx, "round over: going home")
                 local home, homeWhy = ctx.travel:goTo(GameConstants.HouseInteriorName)
                 if not home then
                     ctx.logger:info("Event", "Ghost Gallery: going home after the round did not work (" .. tostring(homeWhy) .. ")")
@@ -14759,11 +14823,15 @@ __moduleSources["Game/EventTasks"] = function(...)
         many devices) home first; then wait for the prompt (the dialog watcher answers Yes and notes it here) and for
         the game to bring me. Returns true when I am at `place`; false = go the old way.
     ]]
-    function EventTasks.viaPrompt(ctx, kind, place, startAt)
+    function EventTasks.viaPrompt(ctx, kind, place, startAt, stop)
+        -- v2.1.20: stop() = the game has queued me already (its prompt puts me in the join circle): nothing more to do
+        stop = type(stop) == "function" and stop or function()
+            return false
+        end
         if type(ctx.farmConfig.Event) == "table" and ctx.farmConfig.Event.UsePrompt == false then
             return false
         end
-        if ctx.travel:isAt(place) then
+        if ctx.travel:isAt(place) or stop() then
             return true
         end
         local function prompted()
@@ -14772,22 +14840,34 @@ __moduleSources["Game/EventTasks"] = function(...)
         end
         if not prompted() and not ctx.travel:isAt(GameConstants.HouseInteriorName) then
             ctx.logger:info("Event", kind .. ": home first, then the game's own teleport prompt")
+            phase(ctx, "going home first (the game's teleport prompt comes there)", startAt)
             pcall(function()
                 ctx.travel:goTo(GameConstants.HouseInteriorName)
             end)
         end
         local left = startAt and (startAt - Minigame.serverNow() - 32) or 20
-        if not prompted() then
-            ctx.waitUntil(prompted, math.max(0, math.min(left, 70)))
+        if not prompted() and not stop() then
+            phase(ctx, "at home, waiting for the game's 'Teleport there now?' prompt", startAt)
+            ctx.waitUntil(function()
+                return prompted() or stop()
+            end, math.max(0, math.min(left, 70)))
+        end
+        if stop() then
+            return true
         end
         if not prompted() then
             ctx.logger:info("Event", kind .. ": no teleport prompt came: going there the usual way")
             return false
         end
+        phase(ctx, "the game's prompt said Yes: the game is taking me there", startAt)
         ctx.waitUntil(function()
-            return ctx.travel:isAt(place)
+            return ctx.travel:isAt(place) or stop()
         end, 15)
         local arrived = ctx.travel:isAt(place)
+        if not arrived and stop() then
+            ctx.logger:info("Event", kind .. ": the game's teleport prompt queued me")
+            return true
+        end
         ctx.logger:info("Event", kind .. ": the game's teleport prompt " .. (arrived and ("brought me to " .. place)
             or "did not bring me: going there the usual way"))
         return arrived
@@ -14807,23 +14887,35 @@ __moduleSources["Game/EventTasks"] = function(...)
             end
             local pending = h.join ~= nil and not h.leave and not h.kicked and Util.now() - h.join.at < 90
             if not pending then
-                pcall(EventTasks.viaPrompt, ctx, "hauntlet", E.HauntletLobby, (group and tonumber(group.start))
-                    or EventTasks.nextRoundStart(ctx.gameData:get(KEYS.HauntletCycle), Minigame.serverNow()))
-                local arrived, why = ctx.travel:goTo(E.HauntletLobby)
-                if not arrived then
-                    return false, "travel to the Hotel failed: " .. tostring(why)
-                end
+                -- v2.1.20 (user: "hearts over my character = it is in the run, but it keeps teleporting me into the join
+                -- circle"; reports: "not auto-queued from the join circle within 120 s"): the last run's state is cleared
+                -- BEFORE the trip. It was cleared after it: the game's teleport prompt puts me in the join circle and can
+                -- queue me while the farm is still on its way, and that join was thrown away (the run went on alone).
                 h:reset()
+                local function queued()
+                    return h.joinAcceptedAt ~= nil or h.join ~= nil
+                end
+                local startGuess = (group and tonumber(group.start))
+                    or EventTasks.nextRoundStart(ctx.gameData:get(KEYS.HauntletCycle), Minigame.serverNow())
+                pcall(EventTasks.viaPrompt, ctx, "hauntlet", E.HauntletLobby, startGuess, queued)
+                if not queued() then
+                    phase(ctx, "going to the Hotel", startGuess)
+                    local arrived, why = ctx.travel:goTo(E.HauntletLobby)
+                    if not arrived and not queued() then
+                        return false, "travel to the Hotel failed: " .. tostring(why)
+                    end
+                end
                 -- Task is only scheduled near T-45. Enter the circle at T-30 (or immediately if already closer).
                 local HAUNTLET_JOIN_LEAD = 30
                 local serverNow = Minigame.serverNow()
                 local startAt = (group and tonumber(group.start))
                     or EventTasks.nextRoundStart(ctx.gameData:get(KEYS.HauntletCycle), serverNow)
-                if startAt and startAt - serverNow > HAUNTLET_JOIN_LEAD then
+                if startAt and startAt - serverNow > HAUNTLET_JOIN_LEAD and not queued() then
                     local waitSec = math.floor(startAt - serverNow - HAUNTLET_JOIN_LEAD)
                     ctx.logger:info("Event", string.format(
                         "Hauntlet: next run in ~%ds, waiting until T-%d before entering the circle",
                         math.floor(startAt - serverNow), HAUNTLET_JOIN_LEAD))
+                    phase(ctx, "at the Hotel: into the join circle 30 s before the run", startAt)
                     ctx.waitUntil(function()
                         return h.joinAcceptedAt ~= nil or h.join ~= nil
                             or Minigame.serverNow() >= startAt - HAUNTLET_JOIN_LEAD
@@ -14841,18 +14933,21 @@ __moduleSources["Game/EventTasks"] = function(...)
                     -- Enter the circle once (retry a few times), then stay. Re-TP only if pushed out.
                     local zoneMoved, zoneInfo = false, "not attempted"
                     for attempt = 1, 3 do
+                        if queued() then -- v2.1.20: queued meanwhile: never leave the Hotel now
+                            break
+                        end
                         zoneMoved, zoneInfo = ctx.interaction:teleportToHauntletJoinZone()
                         if zoneMoved then
                             break
                         end
-                        if attempt == 1 then
+                        if attempt == 1 and not queued() then
                             -- v2.1.5: not in the hotel (or it did not load): the trip again, then look again
                             ctx.logger:info("Event", "Hauntlet: join circle not found (" .. tostring(zoneInfo)
                                 .. "): loading the hotel again")
                             -- v2.1.17: "already at HauntedHotel" in my data, but not drawn here: the game's way in
-                            if not ctx.travel:redraw("HauntedHotel") then
+                            if not ctx.travel:redraw("HauntedHotel") and not queued() then
                                 -- v2.1.19: the Hotel opens from the main map
-                                if ctx.travel:goTo("MainMap") then
+                                if ctx.travel:goTo("MainMap") and not queued() then
                                     ctx.travel:goTo("HauntedHotel")
                                 end
                             end
@@ -14862,6 +14957,9 @@ __moduleSources["Game/EventTasks"] = function(...)
                     if zoneMoved then
                         ctx.logger:info("Event", "Hauntlet: in hotel join circle (" .. tostring(zoneInfo)
                             .. ") — waiting for auto-queue")
+                        phase(ctx, "in the join circle: the game queues me when the run starts", startAt)
+                    elseif queued() then
+                        ctx.logger:info("Event", "Hauntlet: the game queued me already")
                     else
                         ctx.logger:warn("Event", "Hauntlet: join circle unavailable (" .. tostring(zoneInfo) .. ")")
                     end
@@ -14887,6 +14985,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                         return false, "not auto-queued from the join circle within 120 s"
                     end
                 end
+                phase(ctx, "queued: the run is about to start")
                 if not ctx.waitUntil(function()
                     return h.join ~= nil
                 end, 90) then
@@ -14902,6 +15001,7 @@ __moduleSources["Game/EventTasks"] = function(...)
             -- v2.1.3 (reports: 54 x "not auto-queued", always the round right after a run): one run per 20 min. The
             -- round after this one is skipped (TaskManager:_hauntletRoundDue), the Ghost Gallery gets it instead.
             h.lastRunStart = (group and tonumber(group.start)) or Minigame.serverNow()
+            phase(ctx, "in the run")
             if not ctx.waitUntil(function()
                 return h.enter ~= nil or inRun() or h.leave ~= nil or h.kicked ~= nil
             end, 45) then
@@ -15437,6 +15537,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                 end
             end
             if h.leave ~= nil or not inRun() then
+                phase(ctx, "run over: going home")
                 local home, homeWhy = ctx.travel:goTo(GameConstants.HouseInteriorName)
                 if not home then
                     ctx.logger:info("Event", "Hauntlet: going home after the run did not work ("
@@ -16473,6 +16574,13 @@ __moduleSources["Game/TaskManager"] = function(...)
                 running.waiting = isWaiting == true
             end
         end
+        -- v2.1.20: the step the task is on (status line / Farm card); at = server time it waits for (a round start)
+        function context.phase(text, at)
+            if running then
+                running.phase = type(text) == "string" and text or nil
+                running.phaseAt = tonumber(at)
+            end
+        end
         function context.currentGroup(kind)
             return self:_group(kind)
         end
@@ -16782,7 +16890,9 @@ __moduleSources["Game/TaskManager"] = function(...)
         return { idle = idle, busyMinutes = math.floor((self._busy or 0) / 6 + 0.5) / 10, disabled = disabled,
             restMinutes = restMinutes, running = self._running and self._running.label or nil,
             side = self._side and self._side.label or nil, quick = self._quick and self._quick.label or nil,
-            wait = self:waitText() }
+            wait = self:waitText(), phase = self._running and self._running.phase or nil,
+            phaseIn = (self._running and self._running.phaseAt) and math.floor(self._running.phaseAt - Minigame.serverNow())
+                or nil }
     end
     function TaskManager:_hasWork()
         for _, entry in ipairs(self._state:get("ailments.active", {})) do
@@ -16873,21 +16983,21 @@ __moduleSources["Game/TaskManager"] = function(...)
         if now - self._voidSince < VOID_SECONDS or now - (self._voidRecoveredAt or -math.huge) < 60 then
             return false
         end
-        local p = root.Position
-        self._logger:warn("Tasks", string.format("Void: no floor under me for %d s at (%.0f, %.0f, %.0f) in %s: going home",
-            math.floor(now - self._voidSince), p.X, p.Y, p.Z, tostring(place)))
-        self._voidSince, self._voidRecoveredAt = nil, now
         local key = self._running and self._running.key
         if key and (not NEVER_INTERRUPT[key] or MINIGAME_TASKS[key]) then
             self:_finish("INTERRUPTED", "void recovery")
+        end
+        if self._running then
+            return false -- a task that must not be cut finishes first; the next check (2 s) tries again
         end
         self:_finish("INTERRUPTED", "void recovery", "_side")
         if self._quick and not NEVER_INTERRUPT[self._quick.key] then
             self:_finish("INTERRUPTED", "void recovery", "_quick")
         end
-        if self._running then
-            return false -- a task that must not be cut finishes first; the next check tries again
-        end
+        local p = root.Position
+        self._logger:warn("Tasks", string.format("Void: no floor under me for %d s at (%.0f, %.0f, %.0f) in %s: going home",
+            math.floor(now - self._voidSince), p.X, p.Y, p.Z, tostring(place)))
+        self._voidSince, self._voidRecoveredAt = nil, now
         self:_start("recover", "recover: void, go home", VOID_RECOVER, nil)
         return true
     end
@@ -17197,7 +17307,7 @@ __moduleSources["Game/TaskManager"] = function(...)
             -- Mega a Pet with an egg: one of that egg is always on hand, so the hatching never stops
             if focusNow and focusNow.kind == "egg" and known and self._gameData:petInventoryKnown()
                 and self._gameData:growingCopies(focusNow.id) == 0 and not (lastAgeUnknown and not current)
-                and not self:_isBlocked("buy_egg") and not Tasks.eggPaused(focusNow.id) then
+                and not self:_isBlocked("buy_egg") and Tasks.eggBuyable(self._gameData, self._farmConfig) then
                 local max = tonumber(self._farmConfig.MaxEggBuysPerSession) or 0
                 self._eggBuys = self._eggBuys or 0
                 if max <= 0 or self._eggBuys < max then
@@ -17209,7 +17319,8 @@ __moduleSources["Game/TaskManager"] = function(...)
             end
             if (self._farmConfig.BuyEgg or (focusNow and focusNow.kind == "egg")) and known
                 and self._gameData:petInventoryKnown() and not pickGrowable()
-                and not (lastAgeUnknown and not current) and not self:_isBlocked("buy_egg") then
+                and not (lastAgeUnknown and not current) and not self:_isBlocked("buy_egg")
+                and Tasks.eggBuyable(self._gameData, self._farmConfig) then
                 local max = tonumber(self._farmConfig.MaxEggBuysPerSession) or 0
                 self._eggBuys = self._eggBuys or 0
                 if max <= 0 or self._eggBuys < max then
@@ -17762,7 +17873,8 @@ __moduleSources["Game/TaskManager"] = function(...)
         local penByEggs = not focus or focusEgg -- a pet focus fills the pen with its own copies, not with eggs
         -- v2.1.12: "Buy eggs" also keeps the Pet Pen full (Farm.Event.PetPenStock is not read: one setting)
         if event.PetPen and (self._farmConfig.BuyEgg or focusEgg) and penByEggs and due("pen_stock")
-            and not self:_isBlocked("buy_egg") and data:get(KEYS.PetPen) ~= nil and data:petInventoryKnown()
+            and not self:_isBlocked("buy_egg") and Tasks.eggBuyable(data, self._farmConfig)
+            and data:get(KEYS.PetPen) ~= nil and data:petInventoryKnown()
             and (tonumber(data:get(KEYS.Money)) or 0) >= (tonumber(event.PetPenStockMinBucks) or 750)
             and self._travel and self._travel:isAt(GameConstants.HouseInteriorName) then
             local wanted = (tonumber(event.PetPenSlots) or E.PetPenSlots) + 1
@@ -18902,7 +19014,7 @@ __moduleSources["main"] = function(...)
                         label.AnchorPoint = Vector2.new(0.5, 0)
                         label.Position = UDim2.new(0.5, 0, 0, 4)
                         label.Size = UDim2.new(0, 0, 0, 20)
-                        label.AutomaticSize = Enum.AutomaticSize.X
+                        label.AutomaticSize = Enum.AutomaticSize.XY -- v2.1.20: a second line for the task's step
                         label.BackgroundColor3 = Color3.fromRGB(18, 12, 26)
                         label.BackgroundTransparency = 0.25
                         label.TextColor3 = Color3.fromRGB(255, 196, 120)
@@ -18918,7 +19030,7 @@ __moduleSources["main"] = function(...)
                         label.Parent = gui
                         gui.Parent = (type(gethui) == "function" and gethui()) or game:GetService("CoreGui")
                     end
-                    local text
+                    local text, step
                     if config.Farm.Enabled == false then
                         text = "paused (Pause all is on)"
                     elseif state:get("game.ready") ~= true then
@@ -18927,6 +19039,15 @@ __moduleSources["main"] = function(...)
                         local d = taskManager:getDiagnostics()
                         if d.running then
                             text = "doing: " .. tostring(d.running)
+                            -- v2.1.20 (user screenshot: 4 accounts at home with "doing: Ghost Gallery round" looked
+                            -- stuck): the step on a second line (at home waiting for the game's prompt, in the join
+                            -- circle...) with the time to the start (the minigame timers on the right stop during it)
+                            if d.phase then
+                                step = tostring(d.phase)
+                                if d.phaseIn and d.phaseIn >= 0 then
+                                    step = step .. " (starts in " .. clock(d.phaseIn) .. ")"
+                                end
+                            end
                         elseif d.quick then
                             text = "doing: " .. (string.gsub(tostring(d.quick), "^%(also%) ", ""))
                         else
@@ -18946,7 +19067,7 @@ __moduleSources["main"] = function(...)
                     else
                         text = "starting"
                     end
-                    label.Text = Lang.tr("Adopt Victims") .. "  •  " .. Lang.tr(text)
+                    label.Text = Lang.tr("Adopt Victims") .. "  •  " .. Lang.tr(text) .. (step and ("\n" .. Lang.tr(step)) or "")
                 end)
             end)
         end
@@ -19144,6 +19265,7 @@ __moduleSources["main"] = function(...)
                 sideTask = diagnostics.side,
                 quickTask = diagnostics.quick,
                 waitFor = diagnostics.wait,
+                taskPhase = diagnostics.phase,
                 minutes = started and math.floor((Util.now() - started) / 60) or 0,
                 needsDone = state:get("stats.needsCompleted", 0),
                 bucksEarned = state:get("stats.bucksEarned", 0),
