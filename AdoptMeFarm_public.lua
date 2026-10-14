@@ -1297,7 +1297,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.27 (Adopt Victims - UI Remastered Edition, Mega presets)"
+    Disclosure.VERSION = "2.1.28 (Adopt Victims - UI Remastered Edition, Mega presets)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -3324,6 +3324,8 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     Interface.CHANGELOG = {
+        "v2.1.28 (14 Oct 2026)",
+        "In a minigame room (also when the game's prompt or you took me in): every other task waits until 20 s after it",
         "v2.1.27 (14 Oct 2026)",
         "Start: no screen tap on a window that already closed (it opened the Buy Candy Corn shop under it)",
         "v2.1.26 (14 Oct 2026)",
@@ -17732,6 +17734,20 @@ __moduleSources["Game/TaskManager"] = function(...)
     function TaskManager:_minigameFreeze()
         if self._running and MINIGAME_TASKS[self._running.key] then
             return "a minigame is running (" .. self._running.label .. ")"
+        end
+        -- v2.1.28 (user screenshot: in a Ghost Gallery round, "doing: feed the Stray Cat"): I am in a minigame room
+        -- (the game's prompt or a manual join took me in, no minigame task of the farm) = nothing else runs either;
+        -- the 20 s after it count from when I left the room
+        local place = self._state:get("player.interior")
+        local E = GameConstants.Event
+        local inRoom = type(place) == "string" and (string.sub(place, 1, #E.MinigameInteriorPrefix) == E.MinigameInteriorPrefix
+            or string.sub(place, 1, #E.HauntletInteriorPrefix) == E.HauntletInteriorPrefix)
+        if inRoom then
+            self._inMinigameRoom = true
+            return "in a minigame room (" .. place .. ")"
+        elseif self._inMinigameRoom then
+            self._inMinigameRoom = false
+            self._minigameEndedAt = Util.now()
         end
         local endedAgo = Util.now() - (self._minigameEndedAt or -math.huge)
         if endedAgo < MINIGAME_RESUME_AFTER_SECONDS then
