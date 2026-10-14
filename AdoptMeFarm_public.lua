@@ -425,6 +425,7 @@ __moduleSources["Core/Config"] = function(...)
             KeepPetEquipped = false,
             GameTravel = true,
             HomeByRespawn = true,
+            IdleHome = true, -- v2.1.18: nothing to do away from home -> wait at home (no trip when the next need comes)
             HouseDoorExit = false,
             FoodBowlTrip = false,
             SkipFullGrown = true,
@@ -514,6 +515,7 @@ __moduleSources["Core/Config"] = function(...)
             Descriptions = false,
             Autoload = "",
             StartHidden = false,
+            StatusLine = true, -- v2.1.18: a small line at the top of the screen: what the farm does / waits for
             UIScale = "Auto",
             Language = "Auto",
         },
@@ -1295,7 +1297,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.16 (Adopt Victims - UI Remastered Edition, Mega presets)"
+    Disclosure.VERSION = "2.1.18 (Adopt Victims - UI Remastered Edition, Mega presets)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -1340,6 +1342,8 @@ __moduleSources["Services/Disclosure"] = function(...)
                 .. " from home)",
             "stuck in one place (not moving, tasks failing) for Farm.StuckRecovery.Seconds: goes home by respawn",
             "no floor under the character for 20 s (the void; never inside a minigame): goes home by respawn",
+            "nothing to do away from home: waits at home for the next need (Farm.IdleHome; never near a minigame)",
+            "a small line at the top of YOUR screen (Interface.StatusLine) shows what the farm does / waits for (local only)",
             "a task that failed 3 times in a row rests Farm.DisableMinutes, then is tried again",
             "window quick actions (only when you press them): pause / resume, go home, skip the running task, claim the"
                 .. " Pet Pen now, retry tasks that rest",
@@ -2948,6 +2952,7 @@ __moduleSources["Services/Lang"] = function(...)
     template("Doing: %s", "Yapılan: %s", "Haciendo: %s", "Fazendo: %s")
     template("Doing: nothing (stopped)", "Yapılan: hiçbir şey (durdu)", "Haciendo: nada (detenida)", "Fazendo: nada (parada)")
     template("Doing: nothing (paused)", "Yapılan: hiçbir şey (duraklatıldı)", "Haciendo: nada (en pausa)", "Fazendo: nada (pausada)")
+    template("Waiting: %s", "Bekliyor: %s", "Esperando: %s", "Aguardando: %s")
     template("Doing: nothing to do right now", "Yapılan: şu an iş yok", "Haciendo: nada por ahora", "Fazendo: nada por agora")
     template("Needs: %s", "İhtiyaçlar: %s", "Necesidades: %s", "Necessidades: %s")
     template("Needs: none", "İhtiyaçlar: yok", "Necesidades: ninguna", "Necessidades: nenhuma")
@@ -3319,6 +3324,15 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     Interface.CHANGELOG = {
+        "v2.1.18 (14 Oct 2026)",
+        "A small line at the top of the screen says what the farm does or waits for (next need, Hauntlet, Ghost Gallery)",
+        "The farm learns how often the game gives needs and shows the wait (Doing -> Waiting: next need in ~40 s)",
+        "Nothing to do away from home: waits at home, so the next need starts without a trip",
+        "v2.1.17 (14 Oct 2026)",
+        "Every trip checks the place is really drawn on the device (also 'already there'); not drawn: the game's way in",
+        "Void / white screen checks no longer switch themselves off after one miss (they did, so bugs grew with play time)",
+        "Teleport prompts: Yes only for the minigame being played now (a Ghost Gallery Yes took Hauntlet runs to the Manor)",
+        "Hauntlet: join circle missing -> the Hotel is loaded again; void rescue also after a run / round is over",
         "v2.1.16 (14 Oct 2026)",
         "Trips by the remote route check that the place is really drawn (house too); if not, the game's own way in loads it",
         "Void rescue also works on the way to the Hotel / Manor (not only between tasks)",
@@ -4194,7 +4208,7 @@ __moduleSources["Services/Interface"] = function(...)
         ["Notifications.Enabled"] = true, ["Notifications.Webhooks.Summary"] = true, ["Notifications.Webhooks.Alerts"] = true,
         ["Notifications.PingDiscordUserId"] = true, ["Notifications.Ping"] = true, ["Notifications.SendSummary"] = true,
         ["Notifications.SummaryIntervalMinutes"] = true,
-        ["Interface.RememberSettings"] = true, ["Interface.Autoload"] = true, ["Interface.StartHidden"] = true,
+        ["Interface.RememberSettings"] = true, ["Interface.Autoload"] = true, ["Interface.StartHidden"] = true, ["Interface.StatusLine"] = true,
         ["Interface.Language"] = true, ["Interface.UIScale"] = true }
     Interface.META_KEYS = { ["Interface.RememberSettings"] = true, ["Interface.Autoload"] = true }
     Interface.PRIVATE_KEYS = { ["Notifications.Webhooks.Summary"] = true, ["Notifications.Webhooks.Alerts"] = true,
@@ -4474,6 +4488,8 @@ __moduleSources["Services/Interface"] = function(...)
             doing, doingState = T(s.stopped and "Doing: nothing (stopped)" or "Doing: nothing (paused)"), "off"
         elseif task == "none" and quick then
             doing, doingState, quick = T("Doing: %s", quick), "on", nil
+        elseif task == "none" and s.waitFor then
+            doing, doingState = T("Waiting: %s", Lang.tr(tostring(s.waitFor))), "wait"
         elseif task == "none" then
             doing, doingState = T("Doing: nothing to do right now"), "wait"
         else
@@ -9541,9 +9557,9 @@ __moduleSources["Game/Travel"] = function(...)
         draw the place. After such a trip the place must show up under workspace.Interiors; if it does not within
         4 s, the game's own way in (InteriorsM.enter) is run once so the device builds it.
     ]]
-    function Travel:_ensureDrawn(destination, recipe)
+    function Travel:_ensureDrawn(destination, recipe, force)
         self._drawCheckOff = self._drawCheckOff or {}
-        if destination == "MainMap" or self._drawCheckOff[destination] then
+        if destination == "MainMap" or (not force and Util.now() < (self._drawCheckOff[destination] or 0)) then
             return true
         end
         local me = Players.LocalPlayer
@@ -9569,6 +9585,8 @@ __moduleSources["Game/Travel"] = function(...)
         local untilAt = Util.now() + 4
         while Util.now() < untilAt do
             if drawn() then
+                self._drawMiss = self._drawMiss or {}
+                self._drawMiss[destination] = 0
                 return true
             end
             task.wait(0.25)
@@ -9577,8 +9595,8 @@ __moduleSources["Game/Travel"] = function(...)
         if not module then
             return false
         end
-        self._logger:info("Travel", destination .. " is not drawn on this device after the remote route: entering it the"
-            .. " game's way so it loads (white screen fix)")
+        self._logger:info("Travel", destination .. " is not drawn on this device: entering it the game's way so it loads"
+            .. " (void / white screen fix)")
         task.spawn(pcall, module.enter, destination, gameDoorId(recipe), recipe.ownHouse and { house_owner = me } or {})
         untilAt = Util.now() + 10
         while Util.now() < untilAt do
@@ -9588,14 +9606,25 @@ __moduleSources["Game/Travel"] = function(...)
             end
             task.wait(0.25)
         end
-        -- never seen under that name even after the game's way in: the name differs, no more checks for this place
-        -- (my own house has a known place: always checked)
-        if not recipe.ownHouse then
-            self._drawCheckOff[destination] = true
+        -- v2.1.17 (reports: voids and "join zone not found" grew with play time): a miss used to switch the check off
+        -- for the whole session. Now: 3 misses in a row -> no check for this place for 10 min, then again.
+        self._drawMiss = self._drawMiss or {}
+        self._drawMiss[destination] = (self._drawMiss[destination] or 0) + 1
+        if self._drawMiss[destination] >= 3 then
+            self._drawMiss[destination] = 0
+            self._drawCheckOff[destination] = Util.now() + 600
         end
-        self._logger:warn("Travel", destination .. " not found under workspace.Interiors (white screen, or another name):"
-            .. " not checked again this session")
+        self._logger:warn("Travel", destination .. " is still not drawn on this device (void / white screen)")
         return false
+    end
+    -- v2.1.17: the place I am in, drawn again (the Hauntlet join circle is missing = the Hotel is not on this device)
+    function Travel:redraw(destination)
+        local recipe = GameConstants.Travel[destination]
+        if not recipe then
+            return false
+        end
+        local ok, drawn = pcall(self._ensureDrawn, self, destination, recipe, true)
+        return ok and drawn == true
     end
     function Travel:visitHouse(player)
         local module = self:_interiorsModule()
@@ -9611,7 +9640,33 @@ __moduleSources["Game/Travel"] = function(...)
         end)
         return true
     end
+    -- v2.1.17 (reports: "Hauntlet join zone not found (interiors loaded: School / HauntedManor / none)" while my data
+    -- said HauntedHotel; voids at (-5989, 2160, -9030) "in Hospital / Salon"): my data can say "there" while this
+    -- device still shows the last place or nothing. Every arrival, by any route (also "already there"), is checked.
     function Travel:goTo(destination)
+        local arrived, why = self:_goToRoute(destination)
+        if arrived and destination ~= "MainMap" then
+            local recipe = GameConstants.Travel[destination]
+            local okDrawn, drawn = pcall(self._ensureDrawn, self, destination, recipe)
+            if okDrawn and drawn == false then
+                -- a floor under me = the place is there under another name: the trip counts
+                local floor = false
+                pcall(function()
+                    local character = Players.LocalPlayer.Character
+                    local root = character and character:FindFirstChild("HumanoidRootPart")
+                    local params = RaycastParams.new()
+                    params.FilterType = Enum.RaycastFilterType.Exclude
+                    params.FilterDescendantsInstances = { character }
+                    floor = root ~= nil and workspace:Raycast(root.Position, Vector3.new(0, -300, 0), params) ~= nil
+                end)
+                if not floor then
+                    return false, destination .. " is not drawn on this device (void)"
+                end
+            end
+        end
+        return arrived, why
+    end
+    function Travel:_goToRoute(destination)
         local recipe = GameConstants.Travel[destination]
         if not recipe then
             return false, "no known route to " .. tostring(destination)
@@ -9690,13 +9745,6 @@ __moduleSources["Game/Travel"] = function(...)
                 self._logger:info("Travel", "Arrived: " .. tostring(now))
                 if destination == "MainMap" then
                     return self:_checkPlacedOnMainMap(recipe, me)
-                end
-                -- v2.1.16 (user: voids + "Hauntlet join zone not found (interiors loaded: none)" after remote trips):
-                -- the remote route moves me on the server only; the place must also be drawn on this device
-                -- (_ensureDrawn existed since 2.1.6 but was no longer called)
-                local okDrawn, drawnNow = pcall(self._ensureDrawn, self, destination, recipe)
-                if okDrawn and drawnNow == false then
-                    return false, destination .. " is not drawn on this device (void)"
                 end
                 return true
             end
@@ -14764,8 +14812,11 @@ __moduleSources["Game/EventTasks"] = function(...)
                         if attempt == 1 then
                             -- v2.1.5: not in the hotel (or it did not load): the trip again, then look again
                             ctx.logger:info("Event", "Hauntlet: join circle not found (" .. tostring(zoneInfo)
-                                .. "): going to the hotel again")
-                            ctx.travel:goTo("HauntedHotel")
+                                .. "): loading the hotel again")
+                            -- v2.1.17: "already at HauntedHotel" in my data, but not drawn here: the game's way in
+                            if not ctx.travel:redraw("HauntedHotel") then
+                                ctx.travel:goTo("HauntedHotel")
+                            end
                         end
                         task.wait(1)
                     end
@@ -16558,19 +16609,119 @@ __moduleSources["Game/TaskManager"] = function(...)
             end
         end
     end
+    -- v2.1.18 (user: "why does my character stand idle? users think the script is not working"): the game hands out
+    -- needs on its own clock; the farm learns that rhythm (time between new needs) to say how long the wait is
+    function TaskManager:_trackNeedRhythm()
+        local seen = self._needSeen or {}
+        self._needSeen = seen
+        local now = Util.now()
+        local fresh = false
+        for _, entry in ipairs(self._state:get("ailments.active", {}) or {}) do
+            local id = tostring(entry.owner or entry.petUnique or "?") .. "|" .. tostring(entry.kind) .. "|"
+                .. tostring(entry.createdAt or "")
+            if not seen[id] then
+                seen[id] = now
+                fresh = true
+            end
+        end
+        for id, at in pairs(seen) do -- forget old ones (bounded memory)
+            if now - at > 1800 then
+                seen[id] = nil
+            end
+        end
+        if fresh then
+            local times = self._needTimes or {}
+            self._needTimes = times
+            if not times[#times] or now - times[#times] > 5 then -- a batch counts once
+                table.insert(times, now)
+                if #times > 12 then
+                    table.remove(times, 1)
+                end
+            end
+        end
+    end
+    -- seconds until the next need is expected (nil = not learned yet), from the median gap of the last batches
+    function TaskManager:nextNeedIn()
+        local times = self._needTimes or {}
+        if #times < 3 then
+            return nil
+        end
+        local gaps = {}
+        for i = 2, #times do
+            table.insert(gaps, times[i] - times[i - 1])
+        end
+        table.sort(gaps)
+        local gap = gaps[math.ceil(#gaps / 2)]
+        return math.max(0, math.floor(times[#times] + gap - Util.now())), math.floor(gap)
+    end
+    -- what the farm waits for, in words (shown on screen so users see it is working)
+    function TaskManager:waitText()
+        if self._running then
+            return nil
+        end
+        local why = self._lastWhy
+        if why and why ~= "nothing to do (no need / job due)" then
+            return (string.gsub(why, "^waiting: ", ""))
+        end
+        local left, gap = self:nextNeedIn()
+        if left then
+            return string.format("next need in ~%d s (the game gives needs every ~%d s)", left, gap)
+        end
+        return "the game's next need"
+    end
+    -- v2.1.18: nothing to do away from home -> wait at home (bed, shower, toilet, food bowl and the Pet Pen are there:
+    -- the next need starts without a trip). Not near a minigame.
+    local IDLE_HOME = {
+        id = "idle_home",
+        handles = function()
+            return false
+        end,
+        timeoutSeconds = 45,
+        run = function(ctx)
+            ctx.logger:info("Tasks", "Nothing to do here: waiting at home for the next need")
+            local ok, why = ctx.travel:goTo(GameConstants.HouseInteriorName)
+            return ok, ok and nil or ("idle home: " .. tostring(why))
+        end,
+    }
+    function TaskManager:_maybeIdleHome(idleFor)
+        local farm = self._farmConfig
+        if farm.IdleHome == false or not (type(farm.AutoNeeds) == "table" and farm.AutoNeeds.Enabled) then
+            return
+        end
+        if self._running or self._side or self._quick or idleFor < 8 or self:_isBlocked("idle_home")
+            or Util.now() < (self._idleHomeNextAt or 0) or self._state:get("game.ready") ~= true
+            or self._state:get("player.team") == "Choosing" or self._state:get("player.interior") == nil
+            or self:_minigameFreeze() or self:_minigameSoon() then
+            return
+        end
+        if self._travel and self._travel:isAt(GameConstants.HouseInteriorName) then
+            return
+        end
+        self._idleHomeNextAt = Util.now() + 60
+        self:_start("idle_home", "wait at home", IDLE_HOME, nil)
+    end
     function TaskManager:tick()
         local now = Util.now()
         local dt = math.min(now - (self._lastTickAt or now), 5)
         self._lastTickAt = now
         self._why = nil
+        pcall(self._trackNeedRhythm, self)
         self:_tickInner()
         self:_tickQuick()
         self._idle = self._idle or {}
         if self._running then
             self._busy = (self._busy or 0) + dt
+            self._idleSince = nil
         else
             local why = self._why or "nothing to do (no need / job due)"
             self._idle[why] = (self._idle[why] or 0) + dt
+            self._lastWhy = why
+            if not self._why then
+                self._idleSince = self._idleSince or now
+                pcall(self._maybeIdleHome, self, now - self._idleSince)
+            else
+                self._idleSince = nil
+            end
         end
     end
     function TaskManager:getDiagnostics()
@@ -16591,7 +16742,8 @@ __moduleSources["Game/TaskManager"] = function(...)
         end
         return { idle = idle, busyMinutes = math.floor((self._busy or 0) / 6 + 0.5) / 10, disabled = disabled,
             restMinutes = restMinutes, running = self._running and self._running.label or nil,
-            side = self._side and self._side.label or nil, quick = self._quick and self._quick.label or nil }
+            side = self._side and self._side.label or nil, quick = self._quick and self._quick.label or nil,
+            wait = self:waitText() }
     end
     function TaskManager:_hasWork()
         for _, entry in ipairs(self._state:get("ailments.active", {})) do
@@ -16655,9 +16807,14 @@ __moduleSources["Game/TaskManager"] = function(...)
         local running = self._running and self._running.key
         -- v2.1.16: only a real minigame room / an accepted join counts (the Hotel / Manor trip before a run does not:
         -- reports showed a void there with "interiors loaded: none" for minutes)
+        -- v2.1.17: a minigame room counts only while its game is on (a run that ended / a round that is over and I
+        -- am still there in the void = rescued too)
+        local h = self._hauntlet
+        local runOn = h ~= nil and h.join ~= nil and not h.leave and not h.kicked
         local inMinigame = self:_hauntletPending()
-            or (type(place) == "string" and (string.find(place, GameConstants.Event.HauntletInteriorPrefix, 1, true) == 1
-                or string.find(place, GameConstants.Event.MinigameInteriorPrefix, 1, true) == 1))
+            or (type(place) == "string" and ((string.find(place, GameConstants.Event.HauntletInteriorPrefix, 1, true) == 1
+                and runOn) or (string.find(place, GameConstants.Event.MinigameInteriorPrefix, 1, true) == 1
+                and running == "ghost_gallery")))
         if inMinigame or running == "recover" or place == nil or self._state:get("game.ready") ~= true
             or self._state:get("session.disconnectReason") ~= nil or self._state:get("player.team") == "Choosing" then
             self._voidSince = nil
@@ -18411,8 +18568,13 @@ __moduleSources["main"] = function(...)
                                             local all = string.lower(table.concat(seen, " | "))
                                             promptKind = string.find(all, "hauntlet", 1, true) and "hauntlet" or "ghost"
                                             local event = config.Farm.Event or {}
-                                            local wanted = event.UsePrompt ~= false and ((promptKind == "hauntlet" and event.Hauntlet)
-                                                or (promptKind == "ghost" and event.GhostGallery))
+                                            -- v2.1.17 (reports: "join zone not found (interiors loaded: HauntedManor)"
+                                            -- during a Hauntlet task): a Ghost Gallery prompt answered Yes took me to the
+                                            -- Manor. Yes only for the minigame the farm is going to right now.
+                                            local doing = state:get("farm.currentTask")
+                                            local wanted = event.UsePrompt ~= false
+                                                and ((promptKind == "hauntlet" and event.Hauntlet and doing == "hauntlet")
+                                                    or (promptKind == "ghost" and event.GhostGallery and doing == "ghost_gallery"))
                                             pattern = wanted and "^%s*yes%s*$" or "^%s*no%s*$"
                                             label = (promptKind == "hauntlet" and "Hauntlet" or "Ghost Gallery")
                                                 .. " teleport prompt (" .. (wanted and "Yes" or "No") .. ")"
@@ -18664,6 +18826,92 @@ __moduleSources["main"] = function(...)
             end
         end
         do
+            -- v2.1.18 (user: "the character stands idle, users think the script is not working"): one small line at the
+            -- top of the screen, also when the window is hidden: what the farm does now, or what it waits for and
+            -- when. Local only (this device's screen), no game action. Interface.StatusLine = false: none.
+            local gui, label
+            local Lang = import("Services/Lang")
+            maid:Give(function()
+                if gui then
+                    pcall(function()
+                        gui:Destroy()
+                    end)
+                end
+            end)
+            local function clock(seconds)
+                seconds = math.max(0, math.floor(tonumber(seconds) or 0))
+                return string.format("%d:%02d", seconds // 60, seconds % 60)
+            end
+            scheduler:addJob("StatusLine", 1, function()
+                if config.Interface.StatusLine == false then
+                    if gui then
+                        pcall(function()
+                            gui:Destroy()
+                        end)
+                        gui, label = nil, nil
+                    end
+                    return
+                end
+                pcall(function()
+                    if not (gui and gui.Parent) then
+                        gui = Instance.new("ScreenGui")
+                        gui.Name = "AVStatus"
+                        gui.ResetOnSpawn = false
+                        gui.IgnoreGuiInset = true
+                        gui.DisplayOrder = 50
+                        label = Instance.new("TextLabel")
+                        label.AnchorPoint = Vector2.new(0.5, 0)
+                        label.Position = UDim2.new(0.5, 0, 0, 4)
+                        label.Size = UDim2.new(0, 0, 0, 20)
+                        label.AutomaticSize = Enum.AutomaticSize.X
+                        label.BackgroundColor3 = Color3.fromRGB(18, 12, 26)
+                        label.BackgroundTransparency = 0.25
+                        label.TextColor3 = Color3.fromRGB(255, 196, 120)
+                        label.TextSize = 13
+                        label.Font = Enum.Font.GothamMedium
+                        label.Text = ""
+                        local pad = Instance.new("UIPadding")
+                        pad.PaddingLeft, pad.PaddingRight = UDim.new(0, 10), UDim.new(0, 10)
+                        pad.Parent = label
+                        local corner = Instance.new("UICorner")
+                        corner.CornerRadius = UDim.new(0, 8)
+                        corner.Parent = label
+                        label.Parent = gui
+                        gui.Parent = (type(gethui) == "function" and gethui()) or game:GetService("CoreGui")
+                    end
+                    local text
+                    if config.Farm.Enabled == false then
+                        text = "paused (Pause all is on)"
+                    elseif state:get("game.ready") ~= true then
+                        text = "waiting for the game to load"
+                    elseif taskManager then
+                        local d = taskManager:getDiagnostics()
+                        if d.running then
+                            text = "doing: " .. tostring(d.running)
+                        elseif d.quick then
+                            text = "doing: " .. (string.gsub(tostring(d.quick), "^%(also%) ", ""))
+                        else
+                            text = "waiting: " .. tostring(d.wait or "the next need")
+                        end
+                        local okT, t = pcall(taskManager.eventTimers, taskManager)
+                        if okT and type(t) == "table" then
+                            if t.haunt == "run" then
+                                text = text .. "  |  Hauntlet room " .. tostring(t.hauntRoom or "?")
+                            elseif t.hauntIn and not t.hauntResting then
+                                text = text .. "  |  Hauntlet " .. clock(t.hauntIn)
+                            end
+                            if t.ghost == "next" and t.ghostIn and not t.ghostSkipped then
+                                text = text .. "  |  Ghost Gallery " .. clock(t.ghostIn)
+                            end
+                        end
+                    else
+                        text = "starting"
+                    end
+                    label.Text = Lang.tr("Adopt Victims") .. "  •  " .. Lang.tr(text)
+                end)
+            end)
+        end
+        do
             -- v2.1.10 (user: "the camera guard does not work: use Roblox's own min / max zoom, fixed between 5 and 20"):
             -- CameraMinZoomDistance = CameraMaxZoomDistance = Farm.CameraZoom (5-20), set again every second (the game
             -- changes them in some places); the player's own zoom limits come back when the guard is turned off
@@ -18856,6 +19104,7 @@ __moduleSources["main"] = function(...)
                 task = state:get("farm.currentTask", "none"),
                 sideTask = diagnostics.side,
                 quickTask = diagnostics.quick,
+                waitFor = diagnostics.wait,
                 minutes = started and math.floor((Util.now() - started) / 60) or 0,
                 needsDone = state:get("stats.needsCompleted", 0),
                 bucksEarned = state:get("stats.bucksEarned", 0),
