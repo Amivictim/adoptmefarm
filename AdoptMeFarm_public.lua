@@ -1297,7 +1297,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.25 (Adopt Victims - UI Remastered Edition, Mega presets)"
+    Disclosure.VERSION = "2.1.26 (Adopt Victims - UI Remastered Edition, Mega presets)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -3324,6 +3324,8 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     Interface.CHANGELOG = {
+        "v2.1.26 (14 Oct 2026)",
+        "Join circles: back to the teleport that worked up to 2.1.20 (no more roof / under the ring); not moved at all when already in the circle",
         "v2.1.25 (14 Oct 2026)",
         "Hauntlet runs every 20 min (was counted every 10 min: every other 'Hauntlet' was the Ghost Gallery's time and never started)",
         "In the queue = the game's own hint 'You are in the queue for ...': then the farm never moves me (it read only the start messages)",
@@ -8341,20 +8343,26 @@ __moduleSources["Game/Interaction"] = function(...)
         end
         self._sent += 1
         self._state:set("farm.actionsSent", self._sent, "Interaction")
-        -- v2.1.21: on the floor found there, held still while it loads (was: 1.5 studs over the spot, falling through
-        -- a floor that was still loading)
-        local stood, standWhy = self:standOnCircle(spot.Position + Vector3.new(0, 1.5, 0), 8)
-        character = game:GetService("Players").LocalPlayer.Character
-        root = character and character:FindFirstChild("HumanoidRootPart") or root
+        -- v2.1.26: already standing in the circle (the game's prompt put me there) = not moved
+        local here = root.Position
+        local hx, hz = here.X - spot.Position.X, here.Z - spot.Position.Z
+        local humanoidHere = character:FindFirstChildOfClass("Humanoid")
+        if math.sqrt(hx * hx + hz * hz) <= E.JoinZoneRadius - 3 and math.abs(here.Y - spot.Position.Y) <= 8
+            and humanoidHere and humanoidHere.FloorMaterial ~= Enum.Material.Air then
+            return true, "already standing in it"
+        end
+        -- v2.1.26: the teleport that worked up to 2.1.20 (1.5 studs over the game's own spot) + settle
+        local ok, err = pcall(function()
+            local p = spot.Position
+            character:PivotTo(CFrame.new(p.X, p.Y + 1.5, p.Z))
+        end)
+        if not ok then
+            return false, tostring(err)
+        end
+        pcall(Interaction.settle, 2)
         local now = root.Position
         local dx, dz = now.X - spot.Position.X, now.Z - spot.Position.Z
-        if math.sqrt(dx * dx + dz * dz) > E.JoinZoneRadius then
-            return false, "not in the circle after the teleport"
-        end
-        if not stood then
-            return false, tostring(standWhy)
-        end
-        return true, "on the floor"
+        return math.sqrt(dx * dx + dz * dz) <= E.JoinZoneRadius, "not in the circle after the teleport"
     end
     function Interaction:teleportToHauntletJoinZone()
         local Players = game:GetService("Players")
@@ -8431,15 +8439,18 @@ __moduleSources["Game/Interaction"] = function(...)
             and humanoidHere and humanoidHere.FloorMaterial ~= Enum.Material.Air then
             return true, target:GetFullName() .. " (already standing in it)"
         end
-        -- v2.1.24: the floor is looked for from the BOTTOM of the circle's part (from its top + 2.5 the ray found the
-        -- roof beams over a tall zone part and I was put up there)
-        local destination = target.Position + Vector3.new(0, -halfHeight + 3, 0)
-        -- v2.1.21: on the floor found there, held still up to 8 s while it loads (was: a fixed height, 2 s held by
-        -- settle, then a fall through a floor that was not there yet = "pushed out of the join circle", never queued)
-        local stood, standWhy = self:standOnCircle(destination, 8)
+        -- v2.1.26 (user screenshots: 2.1.21-2.1.25 put me on the roof beams, then under the ring): back to the teleport
+        -- that worked up to 2.1.20 (over the ring, settle holds me while the floor loads)
+        local destination = target.Position + Vector3.new(0, halfHeight + 2.5, 0)
+        local ok, err = pcall(function()
+            character:PivotTo(CFrame.new(destination) * CFrame.Angles(0, math.rad(root.Orientation.Y), 0))
+        end)
+        if not ok then
+            return false, tostring(err)
+        end
         self._sent += 1
         self._state:set("farm.actionsSent", self._sent, "Interaction")
-        pcall(Interaction.settle, 0) -- v2.1.6: never left inside the lobby floor
+        pcall(Interaction.settle, 2) -- v2.1.6: never left inside the lobby floor
         task.wait(0.6)
         character = player.Character
         root = character and character:FindFirstChild("HumanoidRootPart") or root
@@ -8448,9 +8459,6 @@ __moduleSources["Game/Interaction"] = function(...)
         local dist = math.sqrt(dx * dx + dz * dz)
         if dist > 18 then
             return false, "not in the join circle after teleport (dist " .. string.format("%.1f", dist) .. ")"
-        end
-        if not stood then
-            return false, "join circle: " .. tostring(standWhy)
         end
         return true, target:GetFullName()
     end
