@@ -52,6 +52,7 @@ local UserConfig = {
             Crypt = false,
             CryptOpen = { "ladder" },
             PigeonNest = false,
+            AutoLever = false, -- v2.1.32: put the Lightning Lever from your backpack into the machine (no Skelicorn buy)
             CandyPets = {
                 Enabled = false,
                 Pick = {}, -- what to buy (Skelicorn too): one every 0.5 s until the candy runs out
@@ -478,6 +479,7 @@ __moduleSources["Core/Config"] = function(...)
                 CryptOpen = { "ladder" },
                 Quests = false,
                 PigeonNest = false,
+                AutoLever = false,
                 AutoNest = false,
                 StrayCat = false,
                 PetPen = false,
@@ -594,6 +596,7 @@ __moduleSources["Core/Config"] = function(...)
         { "Farm", "Event", "Crypt" },
         { "Farm", "Event", "Quests" },
         { "Farm", "Event", "PigeonNest" },
+        { "Farm", "Event", "AutoLever" },
         { "Farm", "Event", "StrayCat" },
         { "Farm", "Event", "PetPen" },
         { "Farm", "Event", "CandyPets", "Enabled" },
@@ -704,6 +707,22 @@ __moduleSources["Core/Config"] = function(...)
         { { "Farm", "Event", "Hauntlet" }, true },
         { { "Farm", "Event", "GhostGallery" }, true },
     })
+    -- v2.1.32 (user: "a Potion Farm preset, potions at their peak"): friendship only grows on a full grown pet with
+    -- its needs, so every second goes to the pet's needs: the highest friendship pet stays equipped, baby needs,
+    -- minigames, eggs, neon fusing and the potions themselves (the harvest) stay off
+    local POTION_ON = {
+        { { "Farm", "AutoNeeds", "Enabled" }, true },
+        { { "Farm", "BabyMode" }, false },
+        { { "Farm", "KeepPetEquipped" }, true },
+        { { "Farm", "PetOrder" }, "potion" },
+        { { "Farm", "BuyEgg" }, false },
+        { { "Farm", "AutoPotions", "Enabled" }, false },
+        { { "Farm", "AutoNeon", "Enabled" }, false },
+        { { "Farm", "AutoNeon", "Mega" }, false },
+        { { "Farm", "CollectCashback" }, true },
+        { { "Farm", "AutoOpen", "Enabled" }, true },
+        { { "Farm", "Event", "Quests" }, true },
+    }
     Config.Presets = {
         { id = "Off", name = "Everything Off", icon = "power",
             about = "Every feature off (the defaults). Anti-AFK and the Play button stay on.",
@@ -719,6 +738,10 @@ __moduleSources["Core/Config"] = function(...)
             about = "Skelicorns only: candy from the whole event, Lightning Lever from the Crypt, a Skelicorn every "
                 .. "120k candy (up to 5 growing), grown + neon + mega neon.",
             set = join(NEEDS_ON, EXTRAS_ON, EVENT_CORE_ON, Config.SKELICORN_CHANGES) },
+        { id = "PotionFarm", name = "Potion Farm", icon = "flask-conical",
+            about = "Age Potions at their peak: your full grown pet with the highest friendship stays equipped and gets "
+                .. "every pet need (each friendship level = 1 Age Potion). No baby needs, minigames, eggs, neon or potion use.",
+            set = POTION_ON },
         { id = "Focus", name = "Mega a Pet", icon = "crosshair", pick = true,
             about = "Pick one pet or egg below. Egg: bought and hatched on repeat. Candy pet: 5 bought (1 raised, 4 in "
                 .. "the Pet Pen). Any pet: grown, neon, mega neon on repeat, its copies in the Pet Pen.",
@@ -1297,7 +1320,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.30 (Adopt Victims - UI Remastered Edition, Mega presets)"
+    Disclosure.VERSION = "2.1.32 (Adopt Victims - UI Remastered Edition, Mega presets)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -2406,6 +2429,20 @@ __moduleSources["Services/Lang"] = function(...)
     add("Skip these needs", "Bu ihtiyaçları atla", "Saltar estas necesidades", "Pular estas necessidades")
     add("Keep growing pet equipped", "Büyüyen pet hep elde", "Mascota en crecimiento equipada", "Manter pet crescendo equipado")
     add("Farm first", "Önce bunları besle", "Primero estas", "Primeiro estes")
+    add("Pet Farm", "Pet Farm", "Granja de mascotas", "Farm de pets")
+    add("Auto Farm", "Auto Farm", "Auto Farm", "Auto Farm")
+    add("Claimables", "Toplananlar", "Recompensas", "Recompensas")
+    add("Eggs", "Yumurtalar", "Huevos", "Ovos")
+    add("Minigames", "Minigameler", "Minijuegos", "Minijogos")
+    add("Halloween world", "Halloween dünyası", "Mundo Halloween", "Mundo Halloween")
+    add("Auto pull lever", "Kolu otomatik çek", "Tirar la palanca", "Puxar a alavanca")
+    add("Close game pop-ups", "Oyun pencerelerini kapat", "Cerrar ventanas del juego", "Fechar janelas do jogo")
+    add("Potion Farm", "Potion Farm", "Granja de pociones", "Farm de poções")
+    add("Pet to farm", "Kasılacak pet", "Mascota a cultivar", "Pet para farmar")
+    add("On: the pet picked below is equipped and farmed (2 when your account can hold 2)",
+        "Açık: aşağıda seçilen pet takılır ve kasılır (hesabın 2 taşıyabiliyorsa 2)",
+        "Activado: la mascota elegida abajo se equipa y se cultiva (2 si tu cuenta puede)",
+        "Ligado: o pet escolhido abaixo é equipado e farmado (2 se a conta puder)")
     add("Buy an egg if none grows", "Büyüyen yoksa yumurta al", "Comprar huevo si nada crece", "Comprar ovo se nada cresce")
     add("Egg to buy", "Alınacak yumurta", "Huevo a comprar", "Ovo para comprar")
     add("Use potions", "İksir kullan", "Usar pociones", "Usar poções")
@@ -3326,6 +3363,12 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     Interface.CHANGELOG = {
+        "v2.1.32 (14 Oct 2026)",
+        "Preset Potion Farm: the highest friendship pet gets every pet need; nothing else takes time",
+        "Event: Auto pull lever (the Lightning Lever into the machine, no Skelicorn bought)",
+        "Window regrouped: Auto Farm, Claimables, Eggs, Potions & neon, Pet Pen | Minigames, Halloween world, Candy Shop | Close game pop-ups in Settings",
+        "v2.1.31 (14 Oct 2026)",
+        "Pets: 'Keep a growing pet equipped' is now 'Pet Farm'; the 'Pet to farm' dropdown under it picks which pet",
         "v2.1.30 (14 Oct 2026)",
         "Farm first: one choice; 'Oldest pets' is now Potion farm: your full grown pet with the highest friendship stays equipped (never fused)",
         "v2.1.29 (14 Oct 2026)",
@@ -5584,22 +5627,25 @@ __moduleSources["Services/Interface"] = function(...)
                     end)
             end,
         }, "stop")
-        local needsBox = mainTab:CreateGroupbox({ Name = "Auto needs", Icon = I("list-checks"), Column = 1 }, "needs")
+        -- v2.1.32 (user: "group everything professionally"): Auto Farm (needs + the pet), Claimables, Eggs, Potions &
+        -- neon, Pet Pen; Event tab: Minigames, Halloween world, Candy Shop; Settings: the game windows
+        local needsBox = mainTab:CreateGroupbox({ Name = "Auto Farm", Icon = I("list-checks"), Column = 1 }, "needs")
         bindToggle(needsBox, "autoNeeds", "list-checks", "Auto needs", { "Farm", "AutoNeeds", "Enabled" },
             "Does your pet's needs (food, drink, bed, shower, places...). Buys 1 food / water only when you have none")
         bindToggle(needsBox, "babyMode", "baby", "Baby needs too", { "Farm", "BabyMode" })
         bindPick(needsBox, "needSkip", "octagon-x", "Skip these needs", { "Farm", "AutoNeeds", "Skip" }, Interface.NEED_NAMES,
             { multi = true, placeholder = "Nothing skipped: every need", tooltip = "Needs picked here are NOT done" })
-        local tasksBox = mainTab:CreateGroupbox({ Name = "Collect", Icon = I("gift"), Column = 1 }, "tasks")
+        local tasksBox = mainTab:CreateGroupbox({ Name = "Claimables", Icon = I("gift"), Column = 1 }, "tasks")
         bindToggle(tasksBox, "autoOpen", "gift", "Open gifts & boxes", { "Farm", "AutoOpen", "Enabled" },
             "Equips and opens every gift, chest and box in your backpack (Poltergeist Box too), next to the other tasks")
         bindToggle(tasksBox, "quests", "scroll-text", "Claim quests", { "Farm", "Event", "Quests" },
             "Claims finished quests and board rewards; visits homes when a quest asks for it")
         bindToggle(tasksBox, "cashback", "game:bucks", "Collect cashback", { "Farm", "CollectCashback" },
             "Collects your cashback Bucks every 10 minutes")
-        local petsBox = mainTab:CreateGroupbox({ Name = "Pets", Icon = I("paw-print"), Column = col(2) }, "pets")
-        bindToggle(petsBox, "autoPet", "link", "Keep a growing pet equipped", { "Farm", "KeepPetEquipped" },
-            "Keeps a pet that still grows out (2 when your account can hold 2); a full grown one is swapped")
+        local petsBox = mainTab:CreateGroupbox({ Name = "Eggs", Icon = I("paw-print"), Column = col(2) }, "pets")
+        -- v2.1.31 (user): one switch "Pet Farm" + the dropdown under it says WHICH pet (v2.1.32: in Auto Farm)
+        bindToggle(needsBox, "autoPet", "paw-print", "Pet Farm", { "Farm", "KeepPetEquipped" },
+            "On: the pet picked below is equipped and farmed (2 when your account can hold 2)")
         -- v2.1.30 (user): one choice; "oldest" became the Potion farm (highest friendship full grown pet)
         local firstChoices = { { "@any", "Growing pets (youngest first)" }, { "@neon", "Neon pets first" },
             { "@potion", "Potion farm (highest friendship pet)" } }
@@ -5616,7 +5662,7 @@ __moduleSources["Services/Interface"] = function(...)
                 table.insert(firstChoices, { kind, prettyKind(kind) })
             end
         end
-        bindPick(petsBox, "farmFirst", "list-ordered", "Farm first", nil, firstChoices, {
+        bindPick(needsBox, "farmFirst", "list-ordered", "Pet to farm", nil, firstChoices, {
             tooltip = "Which pet gets the needs: growing pets, neon first, one pet kind, or the Potion farm (your full grown"
                 .. " pet with the highest friendship stays equipped: its friendship level-ups give Age Potions)",
             keys = { "Farm.PreferNeon", "Farm.PetOrder", "Farm.FarmPetKinds" },
@@ -5665,21 +5711,23 @@ __moduleSources["Services/Interface"] = function(...)
                 return callApi("ClaimPetPen")
             end)
         local eventTab = track(farmSection:CreateTab({ Name = "Event", Icon = I("ghost"), Columns = columns }, "event"))
-        local halloweenBox = eventTab:CreateGroupbox({ Name = "Halloween 2026", Icon = I("ghost"), Column = 1 }, "halloween")
+        local halloweenBox = eventTab:CreateGroupbox({ Name = "Minigames", Icon = I("ghost"), Column = 1 }, "halloween")
         bindToggle(halloweenBox, "ghostOn", "crosshair", "Ghost Gallery", { "Farm", "Event", "GhostGallery" },
             "Joins every round and vacuums the ghosts (Rusty Keys)")
         bindToggle(halloweenBox, "hauntlet", "key-round", "Hauntlet", { "Farm", "Event", "Hauntlet" },
             "Joins every run and picks the safer doors (a run always comes before a Ghost Gallery round)")
-        bindToggle(halloweenBox, "cat", "cat", "Feed the Stray Cat", { "Farm", "Event", "StrayCat" },
+        local cryptBox = eventTab:CreateGroupbox({ Name = "Halloween world", Icon = I("item:halloween_2026_tomb_spider|skull"),
+            Column = 1 }, "crypt")
+        bindToggle(cryptBox, "cat", "cat", "Feed the Stray Cat", { "Farm", "Event", "StrayCat" },
             "1 water to the Stray Cat once a day (candy)")
-        local cryptBox = eventTab:CreateGroupbox({ Name = "Crypt", Icon = I("item:halloween_2026_tomb_spider|skull"), Column = 1 },
-            "crypt")
         bindToggle(cryptBox, "crypt", "item:halloween_2026_rusty_key|key-round", "Use Rusty Keys", { "Farm", "Event", "Crypt" },
             "Opens Crypt graves with your Rusty Keys; pick below what to open")
         bindPick(cryptBox, "cryptOpen", "item:halloween_2026_rusty_key|key-round", "Open", { "Farm", "Event", "CryptOpen" }, Interface.CRYPT_NAMES,
             { multi = true, placeholder = "Next floor (Mummy Spider)", tooltip = "What a Rusty Key opens, in this order" })
         bindToggle(cryptBox, "nest", "item:halloween_2026_twig|bird", "Give twigs to the nest", { "Farm", "Event", "PigeonNest" },
             "Has a Crypt Twig: takes it to the Hotel nest")
+        bindToggle(cryptBox, "lever", "zap", "Auto pull lever", { "Farm", "Event", "AutoLever" },
+            "Has the Lightning Lever (from the Crypt): puts it into the machine by the Manor (no Skelicorn is bought)")
         local candy = event.CandyPets
         if type(candy) == "table" then
             local shopBox = eventTab:CreateGroupbox({ Name = "Candy Shop", Icon = I("game:candy"), Column = col(2) }, "shop")
@@ -5970,6 +6018,8 @@ __moduleSources["Services/Interface"] = function(...)
         local look = configTab:CreateGroupbox({ Name = "Settings", Icon = I("settings"), Column = 1 }, "settings")
         bindToggle(look, "antiAfk", "shield-check", "Anti-AFK", { "Farm", "AntiAfk" }, "Clicks on Roblox's idle warning (no idle kick)")
         bindToggle(look, "autoMenu", "mouse-pointer-click", "Auto click Play (menu)", { "Farm", "AutoAcceptMenu" })
+        bindToggle(look, "autoDialogs", "octagon-x", "Close game pop-ups", { "Farm", "AutoCloseDialogs" },
+            "Answers the game's windows (Okay / Nice / Done, cash out; minigame teleport: Yes only for the minigame being played)")
         bindToggle(look, "cameraGuard", "camera", "Camera fix (fixcam + zoom)", { "Farm", "CameraGuard" },
             "fixcam + min = max zoom: 10 times at start, again whenever the zoom or the camera changes")
         bindSlider(look, "cameraZoom", "camera", "Camera distance", { "Farm", "CameraZoom" }, 5, 20, 1, " studs",
@@ -14264,6 +14314,13 @@ __moduleSources["Game/EventTasks"] = function(...)
     function EventTasks.skelicornOn(farm)
         local focus = GameConstants.focusOf(farm)
         return (focus ~= nil and focus.kind == "skelicorn") or EventTasks.skelicornShop(farm) ~= nil
+            or EventTasks.leverOnly(farm)
+    end
+    -- v2.1.32 Auto pull lever (user): only the lever goes into the machine; no Skelicorn is bought for it
+    function EventTasks.leverOnly(farm)
+        local focus = GameConstants.focusOf(farm)
+        return type(farm) == "table" and type(farm.Event) == "table" and farm.Event.AutoLever == true
+            and not (focus ~= nil and focus.kind == "skelicorn") and EventTasks.skelicornShop(farm) == nil
     end
     function EventTasks.skelicornStep(gameData, farm)
         local state = EventTasks._skelicorn
@@ -14275,6 +14332,14 @@ __moduleSources["Game/EventTasks"] = function(...)
             if growing >= wanted then
                 return nil, string.format("%d Skelicorns still grow (%d wanted): idle", growing, wanted)
             end
+        elseif EventTasks.leverOnly(farm) then
+            local installed = EventTasks.leverState(gameData:get(KEYS.LightningLever)) or state.delivered
+            if installed then
+                return nil, "Auto pull lever: the lever is in the machine"
+            elseif EventTasks.findLever(gameData) then
+                return "install"
+            end
+            return nil, "Auto pull lever: no lever in the backpack yet (the Crypt gives it)"
         elseif EventTasks.skelicornShop(farm) then
             local shop = EventTasks.skelicornShop(farm)
             local candy = tonumber(gameData:get(KEYS.Candy)) or 0
@@ -14795,7 +14860,8 @@ __moduleSources["Game/EventTasks"] = function(...)
                     -- user 2026-10-11: "Pull -> Buy -> failed -> the Crypt for the lever -> 120k candy -> again": the game
                     -- confirms a working pull with its own events, not always in my data, so the buy decides
                     state.leverRequired = false
-                    if (tonumber(ctx.gameData:get(KEYS.Candy)) or 0) >= EventTasks.skelicornPrice() then
+                    if not EventTasks.leverOnly(ctx.farmConfig)
+                        and (tonumber(ctx.gameData:get(KEYS.Candy)) or 0) >= EventTasks.skelicornPrice() then
                         task.wait(1)
                         local bought = buyOne()
                         if EventTasks._skelicorn.bought then
@@ -14807,7 +14873,8 @@ __moduleSources["Game/EventTasks"] = function(...)
                 end
                 state.leverRequired = false
                 state.delivered = true
-                if (tonumber(ctx.gameData:get(KEYS.Candy)) or 0) >= EventTasks.skelicornPrice() then
+                if not EventTasks.leverOnly(ctx.farmConfig)
+                    and (tonumber(ctx.gameData:get(KEYS.Candy)) or 0) >= EventTasks.skelicornPrice() then
                     -- (user: "one of them pulled but did not buy"): the buy right away, not at the next check
                     task.wait(1)
                     ctx.logger:success("Skelicorn", "Lightning Lever pulled: buying the Skelicorn now")
