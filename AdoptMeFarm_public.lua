@@ -1,4 +1,4 @@
--- AdoptMe Farm  v3.0.1 | Adopt Victims v3 | settings: the window
+-- AdoptMe Farm  v3.0.2 | Adopt Victims v3 | settings: the window
 local UserConfig = {
     Farm = {
         Enabled = true, -- false = everything paused ("Pause all" in the window); each feature has its own switch
@@ -1311,7 +1311,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "3.0.1 (Adopt Victims v3)"
+    Disclosure.VERSION = "3.0.2 (Adopt Victims v3)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -1357,7 +1357,8 @@ __moduleSources["Services/Disclosure"] = function(...)
             "stuck in one place (not moving, tasks failing) for Farm.StuckRecovery.Seconds: goes home by respawn",
             "no floor under the character for 20 s (the void; never inside a minigame): goes home by respawn",
             "nothing to do away from home: waits at home for the next need (Farm.IdleHome; never near a minigame)",
-            "a small line at the top of YOUR screen (Interface.StatusLine) shows what the farm does / waits for (local only)",
+            "a small line at the top of YOUR screen (Interface.StatusLine) shows what the farm does / waits for, and a round"
+                .. " AV button on the left opens / closes the window (local only)",
             "a task that failed 3 times in a row rests Farm.DisableMinutes, then is tried again",
             "window quick actions (only when you press them): pause / resume, go home, skip the running task, claim the"
                 .. " Pet Pen now, retry tasks that rest",
@@ -3444,6 +3445,7 @@ __moduleSources["Services/Interface"] = function(...)
         { "Window", "sparkles", {
             "Cleaner layout: Auto Farm, Claimables, Pets, Potions & neon, Pet Pen; Minigames, Halloween world, Candy Shop",
             "A line on top of the screen says what the farm does and when the next minigame starts; tap it to open or close the window",
+            "Round AV button on the left of the screen: opens / closes the window (a closed window opens again)",
             "Presets: Everything Off, Full AutoFarm, Mega Skelicorn, Potion Farm, Mega a Pet",
             "Type any number on a slider; 'Close game pop-ups' switch in Settings",
         } },
@@ -5941,19 +5943,22 @@ __moduleSources["Services/Interface"] = function(...)
             uiScale.Parent = main
         end)
         local Window = Starlight:CreateWindow(windowSettings)
-        -- v2.1.33 (user screenshot: hover texts stuck on screen over the dropdowns): a phone has no mouse to leave an
-        -- element, so Starlight's hover texts stay; on touch they are off (the help lines under the switches stay)
-        -- v3.0.0 (user: "the open / close button is gone" right after 2.1.33 hid that whole layer): the layer is
-        -- hidden only when the round toggle is not inside it
-        if touch then
+        -- v3.0.2 (user: "the open / close button does not show; it worked 2-3 versions ago"): the hover-text layer is
+        -- no longer touched (2.1.33 hid it on phones, the button went missing since then)
+        -- v3.0.2: a window that is not drawn (its container does not show; every size stays 0) moves to CoreGui
+        task.delay(2, function()
             pcall(function()
-                local tips = Starlight.Instance:FindFirstChild("Tooltips")
+                local main = Starlight.Instance:FindFirstChild("MainWindow")
                 local toggle = Starlight.Instance:FindFirstChild("MobileToggle", true)
-                if tips and tips:IsA("GuiObject") and not (toggle and toggle:IsDescendantOf(tips)) then
-                    tips.Visible = false
+                local probe = (main and main.Visible and main) or (toggle and toggle.Visible and toggle) or nil
+                if alive and probe and probe.AbsoluteSize.X == 0 then
+                    Starlight.Instance.Parent = game:GetService("CoreGui")
+                    if options.logger then
+                        options.logger:warn("Interface", "The window was not drawn in its place: moved to CoreGui")
+                    end
                 end
             end)
-        end
+        end)
         handle.scale = scale
         if scaled and windowWidth then
             local function place()
@@ -14400,6 +14405,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                 return false, "travel to the Halloween map failed: " .. tostring(why)
             end
             if spotName == "stray_cat" then
+                local catFound = false
                 -- user 2026-10-11: "the Stray Cat was moved next to the Hotel": its spot is read from the map
                 -- (MainMap > Event > Halloween > StrayCat) when it is there; the saved spot stays the fallback
                 pcall(function()
@@ -14417,6 +14423,11 @@ __moduleSources["Game/EventTasks"] = function(...)
                                     local part = catNode:FindFirstChildWhichIsA("BasePart", true)
                                     position = part and part.Position
                                 end
+                                -- v3.0.2: a "StrayCat" still standing at the OLD place (-243.6, -1118.2) is not the cat
+                                if position and math.abs(position.X + 243.6) + math.abs(position.Z + 1118.2) < 40 then
+                                    ctx.logger:info("Event", "Stray Cat: the one found is at the old place, not used")
+                                    position = nil
+                                end
                                 if position then
                                     local spot = GameConstants.Spots.stray_cat
                                     if math.abs(spot.x - position.X) + math.abs(spot.z - position.Z) > 15 then
@@ -14424,12 +14435,18 @@ __moduleSources["Game/EventTasks"] = function(...)
                                             position.X, position.Z, spot.x, spot.z))
                                     end
                                     spot.x, spot.y, spot.z = position.X + 4, position.Y + 3, position.Z + 4
+                                    catFound = true
                                 end
                                 return
                             end
                         end
                     end
                 end)
+                -- v3.0.2 (user: "it went to the OLD Stray Cat place again"): the old place is never used; no cat on
+                -- the map = no trip
+                if not catFound then
+                    return false, "the Stray Cat is not on the map here (it moved; its new place is not known yet)"
+                end
             end
             local moved, notMoved = ctx.interaction:teleportTo(spotName)
             task.wait(1.5)
@@ -19984,8 +20001,23 @@ __moduleSources["main"] = function(...)
             -- v2.1.18 (user: "the character stands idle, users think the script is not working"): one small line at the
             -- top of the screen, also when the window is hidden: what the farm does now, or what it waits for and
             -- when. Local only (this device's screen), no game action. Interface.StatusLine = false: none.
-            local gui, label
+            local gui, label, toggleButton
+            local createdAt, movedToCore = 0, false
             local Lang = import("Services/Lang")
+            -- v3.0.2 (user: "the open / close button does not show"): our own round "AV" button on the left opens /
+            -- closes the window (the library's button may be missing); no window (closed with X) = it opens a new one
+            local function toggleWindow()
+                local current = Interface.current
+                if current and type(current.Toggle) == "function" and current.Toggle() then
+                    return
+                end
+                local env = sharedEnvironment[GLOBAL_KEY]
+                if type(env) == "table" and type(env.OpenInterface) == "function" then
+                    task.spawn(function()
+                        pcall(env.OpenInterface)
+                    end)
+                end
+            end
             maid:Give(function()
                 if gui then
                     pcall(function()
@@ -19998,15 +20030,6 @@ __moduleSources["main"] = function(...)
                 return string.format("%d:%02d", seconds // 60, seconds % 60)
             end
             scheduler:addJob("StatusLine", 1, function()
-                if config.Interface.StatusLine == false then
-                    if gui then
-                        pcall(function()
-                            gui:Destroy()
-                        end)
-                        gui, label = nil, nil
-                    end
-                    return
-                end
                 pcall(function()
                     if not (gui and gui.Parent) then
                         gui = Instance.new("ScreenGui")
@@ -20019,12 +20042,7 @@ __moduleSources["main"] = function(...)
                         label = Instance.new("TextButton")
                         label.AutoButtonColor = false
                         label.Activated:Connect(function()
-                            pcall(function()
-                                local current = Interface.current
-                                if current and type(current.Toggle) == "function" then
-                                    current.Toggle()
-                                end
-                            end)
+                            pcall(toggleWindow)
                         end)
                         label.AnchorPoint = Vector2.new(0.5, 0)
                         label.Position = UDim2.new(0.5, 0, 0, 4)
@@ -20043,7 +20061,40 @@ __moduleSources["main"] = function(...)
                         corner.CornerRadius = UDim.new(0, 8)
                         corner.Parent = label
                         label.Parent = gui
+                        toggleButton = Instance.new("TextButton")
+                        toggleButton.Name = "AVToggle"
+                        toggleButton.AnchorPoint = Vector2.new(0, 0.5)
+                        toggleButton.Position = UDim2.new(0, 10, 0.3, 0)
+                        toggleButton.Size = UDim2.fromOffset(46, 46)
+                        toggleButton.BackgroundColor3 = Color3.fromRGB(18, 12, 26)
+                        toggleButton.BackgroundTransparency = 0.15
+                        toggleButton.Font = Enum.Font.GothamBlack
+                        toggleButton.TextSize = 16
+                        toggleButton.TextColor3 = Color3.fromRGB(255, 128, 24)
+                        toggleButton.Text = "AV"
+                        local round = Instance.new("UICorner")
+                        round.CornerRadius = UDim.new(0.5, 0)
+                        round.Parent = toggleButton
+                        local ring = Instance.new("UIStroke")
+                        ring.Color = Color3.fromRGB(255, 128, 24)
+                        ring.Thickness = 2
+                        ring.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+                        ring.Parent = toggleButton
+                        toggleButton.Activated:Connect(function()
+                            pcall(toggleWindow)
+                        end)
+                        toggleButton.Parent = gui
                         gui.Parent = (type(gethui) == "function" and gethui()) or game:GetService("CoreGui")
+                        createdAt = os.clock()
+                    elseif not movedToCore and os.clock() - createdAt > 2 and toggleButton.AbsoluteSize.X == 0 then
+                        -- v3.0.2: not drawn where it is (every size stays 0): CoreGui instead
+                        movedToCore = true
+                        gui.Parent = game:GetService("CoreGui")
+                        logger:warn("Interface", "The status line / AV button were not drawn in their place: moved to CoreGui")
+                    end
+                    label.Visible = config.Interface.StatusLine ~= false
+                    if not label.Visible then
+                        return
                     end
                     local text, step
                     if config.Farm.Enabled == false then
