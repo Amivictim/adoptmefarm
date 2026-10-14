@@ -1297,7 +1297,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.29 (Adopt Victims - UI Remastered Edition, Mega presets)"
+    Disclosure.VERSION = "2.1.30 (Adopt Victims - UI Remastered Edition, Mega presets)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -2506,7 +2506,9 @@ __moduleSources["Services/Lang"] = function(...)
     add("Stopped", "Durduruldu", "Detenido", "Parado")
     add("Last run ended badly", "Son çalışma kötü bitti", "La última sesión terminó mal", "A última sessão terminou mal")
     add("Neon pets", "Neon petler", "Mascotas neón", "Pets neon")
-    add("Oldest pets (closest to grown)", "En yaşlı petler (büyümeye yakın)", "Las más viejas (casi adultas)", "Os mais velhos (quase adultos)")
+    add("Growing pets (youngest first)", "Büyüyen petler (en küçük önce)", "Mascotas que crecen (la más joven primero)", "Pets crescendo (o mais novo primeiro)")
+    add("Neon pets first", "Önce neon petler", "Primero las neón", "Neon primeiro")
+    add("Potion farm (highest friendship pet)", "Potion farm (en yüksek friendship pet)", "Granja de pociones (mayor amistad)", "Farm de poções (maior amizade)")
     add("Teleport", "Işınlan", "Teletransporte", "Teleporte")
     add("Shop door", "Dükkan kapısı", "Puerta de la tienda", "Porta da loja")
     add("Nothing skipped: every need", "Hiçbiri atlanmıyor: her ihtiyaç", "Nada saltado: todas", "Nada pulado: todas")
@@ -3324,6 +3326,8 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     Interface.CHANGELOG = {
+        "v2.1.30 (14 Oct 2026)",
+        "Farm first: one choice; 'Oldest pets' is now Potion farm: your full grown pet with the highest friendship stays equipped (never fused)",
         "v2.1.29 (14 Oct 2026)",
         "Minigame prompt: Yes is pressed once (a 2nd click hit the button while the game was already teleporting)",
         "After the game's own teleport to the Hotel / Manor: no extra trip or 'load again' on top of it (runs that never took the device in)",
@@ -3534,7 +3538,7 @@ __moduleSources["Services/Interface"] = function(...)
         ["Farm.HomeByRespawn"] = "Goes home by respawn (fastest)",
         ["Farm.SpotTravel"] = "Route to camping / beach / playground",
         ["Farm.FoodBowlTrip"] = "Goes home for the free bowl even with food",
-        ["Farm.PetOrder"] = "Which growing pet first: youngest / oldest",
+        ["Farm.PetOrder"] = "youngest = growing pets, youngest first; potion = Potion farm (full grown pet with the highest friendship)",
         ["Farm.EggToBuy"] = "Egg bought with Bucks (never Robux)",
         ["Farm.FarmPetKinds"] = "Pet kinds farmed first, comma separated",
         ["Farm.AutoPotions.PetKinds"] = "Potions only on these kinds (empty = any)",
@@ -5596,7 +5600,9 @@ __moduleSources["Services/Interface"] = function(...)
         local petsBox = mainTab:CreateGroupbox({ Name = "Pets", Icon = I("paw-print"), Column = col(2) }, "pets")
         bindToggle(petsBox, "autoPet", "link", "Keep a growing pet equipped", { "Farm", "KeepPetEquipped" },
             "Keeps a pet that still grows out (2 when your account can hold 2); a full grown one is swapped")
-        local firstChoices = { { "@neon", "Neon pets" }, { "@oldest", "Oldest pets (closest to grown)" } }
+        -- v2.1.30 (user): one choice; "oldest" became the Potion farm (highest friendship full grown pet)
+        local firstChoices = { { "@any", "Growing pets (youngest first)" }, { "@neon", "Neon pets first" },
+            { "@potion", "Potion farm (highest friendship pet)" } }
         local kindsShown = {}
         for _, kind in ipairs(type(farm.FarmPetKinds) == "table" and farm.FarmPetKinds or {}) do
             if not kindsShown[kind] then
@@ -5611,33 +5617,25 @@ __moduleSources["Services/Interface"] = function(...)
             end
         end
         bindPick(petsBox, "farmFirst", "list-ordered", "Farm first", nil, firstChoices, {
-            multi = true,
-            placeholder = "Any growing pet (youngest first)",
-            tooltip = "These pets get the needs, potions and Pet Pen first",
+            tooltip = "Which pet gets the needs: growing pets, neon first, one pet kind, or the Potion farm (your full grown"
+                .. " pet with the highest friendship stays equipped: its friendship level-ups give Age Potions)",
             keys = { "Farm.PreferNeon", "Farm.PetOrder", "Farm.FarmPetKinds" },
             get = function()
-                local values = {}
-                if farm.PreferNeon then
-                    table.insert(values, "@neon")
+                local kinds = type(farm.FarmPetKinds) == "table" and farm.FarmPetKinds or {}
+                if farm.PetOrder == "potion" then
+                    return "@potion"
+                elseif type(kinds[1]) == "string" then
+                    return kinds[1]
+                elseif farm.PreferNeon then
+                    return "@neon"
                 end
-                if farm.PetOrder == "oldest" then
-                    table.insert(values, "@oldest")
-                end
-                for _, kind in ipairs(type(farm.FarmPetKinds) == "table" and farm.FarmPetKinds or {}) do
-                    table.insert(values, kind)
-                end
-                return values
+                return "@any"
             end,
-            set = function(values)
-                local kinds = {}
-                for _, value in ipairs(values) do
-                    if string.sub(value, 1, 1) ~= "@" then
-                        table.insert(kinds, value)
-                    end
-                end
-                write({ "Farm", "PreferNeon" }, table.find(values, "@neon") ~= nil)
-                write({ "Farm", "PetOrder" }, table.find(values, "@oldest") and "oldest" or "youngest")
-                write({ "Farm", "FarmPetKinds" }, kinds)
+            set = function(value)
+                local isKind = type(value) == "string" and string.sub(value, 1, 1) ~= "@"
+                write({ "Farm", "PreferNeon" }, value == "@neon" or isKind)
+                write({ "Farm", "PetOrder" }, value == "@potion" and "potion" or "youngest")
+                write({ "Farm", "FarmPetKinds" }, isKind and { value } or {})
             end,
         })
         local eggIcon = "item:" .. tostring(farm.EggToBuy or "cracked_egg") .. "|egg"
@@ -7390,6 +7388,29 @@ __moduleSources["Game/GameData"] = function(...)
             return a.unique < b.unique
         end)
         return result
+    end
+    -- v2.1.30 Potion farm (user: "a full grown pet earns friendship; the higher it is, the better the rewards"): my
+    -- full grown pet with the highest friendship (then the most xp), not in the Pet Pen
+    function GameData:potionFarmPet()
+        local inventory = self._data[GameConstants.DataKeys.Inventory]
+        local pets = type(inventory) == "table" and inventory.pets
+        local inPen = self:petPenPets()
+        local best, bestLevel, bestXp = nil, -1, -1
+        for key, pet in pairs(type(pets) == "table" and pets or {}) do
+            local properties = type(pet) == "table" and type(pet.properties) == "table" and pet.properties or nil
+            local unique = type(pet) == "table" and tostring(pet.unique or key) or nil
+            local kind = type(pet) == "table" and tostring(pet.kind or pet.id or "?") or "?"
+            local age = properties and tonumber(properties.age)
+            if properties and age and age >= GameConstants.FullGrownAge and not inPen[unique]
+                and not GameConstants.NotFarmablePets[kind] then
+                local level = tonumber(properties.friendship_level) or 0
+                local xp = tonumber(properties.xp) or 0
+                if level > bestLevel or (level == bestLevel and (xp > bestXp or (xp == bestXp and unique < best))) then
+                    best, bestLevel, bestXp = unique, level, xp
+                end
+            end
+        end
+        return best, best and bestLevel or nil
     end
     function GameData:neonFusionGroups(exclude, mega)
         local inventory = self._data[GameConstants.DataKeys.Inventory]
@@ -16255,6 +16276,15 @@ __moduleSources["Game/EventTasks"] = function(...)
         end
         local bestKind, bestList
         local groups = gameData:neonFusionGroups(exclude, mega)
+        if farm.PetOrder == "potion" then -- v2.1.30: the potion farm pet is never fused
+            local keep = gameData:potionFarmPet()
+            for _, list in pairs(groups) do
+                local at = keep and table.find(list, keep)
+                if at then
+                    table.remove(list, at)
+                end
+            end
+        end
         local focus = GameConstants.focusKind(farm)
         if focus and type(groups[focus]) == "table" and #groups[focus] >= 4 then -- Mega a Pet: the focus pet first
             local list = groups[focus]
@@ -17533,7 +17563,28 @@ __moduleSources["Game/TaskManager"] = function(...)
         -- v2.1.12 (user: "each switch does what its name says"): "Buy eggs" works on its own; equipping / swapping pets
         -- is only done by "Keep a growing pet equipped"
         local keepPet = self._farmConfig.KeepPetEquipped == true
-        if self._gameData and (keepPet or self._farmConfig.BuyEgg or GameConstants.focusOf(self._farmConfig)) and not petHold then
+        if self._gameData and keepPet and self._farmConfig.PetOrder == "potion" and not petHold then
+            -- v2.1.30 Potion farm: the full grown pet with the highest friendship stays equipped (no growing-pet swaps,
+            -- no egg buying for it); friendship level-ups give the Age Potions
+            self._badPets = self._badPets or {}
+            local best, level = nil, nil
+            if self._gameData:petInventoryKnown() then
+                best, level = self._gameData:potionFarmPet()
+            end
+            if best and (self._badPets[best] or 0) < 2 and not self._gameData:isPetEquipped(best)
+                and not self:_isBlocked("keep_pet") then
+                self._logger:info("Tasks", string.format("Potion farm: equipping %s (friendship %s)",
+                    tostring(self._gameData:getPetKind(best)), tostring(level)))
+                self:_start("keep_pet", "potion farm: equip the highest friendship pet", Tasks.equipPet, { petUnique = best,
+                    onFail = function()
+                        self._badPets[best] = (self._badPets[best] or 0) + 1
+                    end })
+                return
+            elseif not best and not self._announcedNoPotionPet and self._gameData:petInventoryKnown() then
+                self._announcedNoPotionPet = true
+                self._logger:warn("Tasks", "Potion farm: no full grown pet in your backpack: farming the equipped one")
+            end
+        elseif self._gameData and (keepPet or self._farmConfig.BuyEgg or GameConstants.focusOf(self._farmConfig)) and not petHold then
             local current = self._gameData:firstEquippedPet()
             local count, known = self._gameData:equippedPetCount()
             local skipGrown = self._farmConfig.SkipFullGrown
