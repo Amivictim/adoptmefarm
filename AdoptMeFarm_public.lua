@@ -1297,7 +1297,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.21 (Adopt Victims - UI Remastered Edition, Mega presets)"
+    Disclosure.VERSION = "2.1.22 (Adopt Victims - UI Remastered Edition, Mega presets)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -3324,6 +3324,8 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     Interface.CHANGELOG = {
+        "v2.1.22 (14 Oct 2026)",
+        "Minigame teleport prompt: a Yes counts only when the click really closed it (no 15 s wait for a teleport that never came)",
         "v2.1.21 (14 Oct 2026)",
         "Join circles (Hauntlet, Ghost Gallery): the floor is loaded first and I am put on it, held still while it loads (no fall under the map)",
         "In the circle: checked every second until the game queues me; fell through or pushed out -> back in at once (was every 20 s)",
@@ -18936,12 +18938,16 @@ __moduleSources["main"] = function(...)
                                             if not rule.prompt then
                                                 tickDontShowAgain(dialogGui)
                                             end
-                                            if promptKind then
-                                                Interaction.promptTeleport = { kind = promptKind, at = Util.now() }
-                                            end
                                             if quickClose(label, button, function()
                                                 return isOnScreen(marker)
                                             end) then
+                                                -- v2.1.22 (2.1.20 reports: "Minigame starting soon: could not be closed
+                                                -- twice (hidden)"): a Yes counts only when the click really closed the
+                                                -- prompt (it was noted before the click: the farm then waited for a game
+                                                -- teleport that never came)
+                                                if promptKind then
+                                                    Interaction.promptTeleport = { kind = promptKind, at = Util.now() }
+                                                end
                                                 logger:info("Game", label .. ": closed")
                                                 fails[rule.label] = 0
                                             else
