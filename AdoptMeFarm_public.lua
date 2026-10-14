@@ -1,4 +1,4 @@
--- AdoptMe Farm  v3.0.2 | Adopt Victims v3 | settings: the window
+-- AdoptMe Farm  v3.0.3 | Adopt Victims v3 | settings: the window
 local UserConfig = {
     Farm = {
         Enabled = true, -- false = everything paused ("Pause all" in the window); each feature has its own switch
@@ -1311,7 +1311,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "3.0.2 (Adopt Victims v3)"
+    Disclosure.VERSION = "3.0.3 (Adopt Victims v3)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -1357,9 +1357,7 @@ __moduleSources["Services/Disclosure"] = function(...)
             "stuck in one place (not moving, tasks failing) for Farm.StuckRecovery.Seconds: goes home by respawn",
             "no floor under the character for 20 s (the void; never inside a minigame): goes home by respawn",
             "nothing to do away from home: waits at home for the next need (Farm.IdleHome; never near a minigame)",
-            "a small line at the top of YOUR screen (Interface.StatusLine) shows what the farm does / waits for, and a round"
-                .. " AV button on the left opens / closes the window (local only); AdoptMeFarm/ui_check.txt (written 20 s and"
-                .. " 90 s after start) lists what the screen has: input type, screen size, the window's parts (for bug reports)",
+            "a small line at the top of YOUR screen (Interface.StatusLine) shows what the farm does / waits for (local only)",
             "a task that failed 3 times in a row rests Farm.DisableMinutes, then is tried again",
             "window quick actions (only when you press them): pause / resume, go home, skip the running task, claim the"
                 .. " Pet Pen now, retry tasks that rest",
@@ -2967,6 +2965,17 @@ __moduleSources["Services/Lang"] = function(...)
     add("Join my Discord server", "Discord sunucuma katıl", "Únete a mi servidor de Discord", "Entre no meu servidor do Discord")
     add("tap to copy", "kopyalamak için dokun", "toca para copiar", "toque para copiar")
     add("%s members", "%s üye", "%s miembros", "%s membros")
+    add("LIVE", "CANLI", "EN VIVO", "AO VIVO")
+    add("BUCKS", "BUCKS", "BUCKS", "BUCKS")
+    add("CANDY", "ŞEKER", "DULCES", "DOCES")
+    add("NEEDS DONE", "İHTİYAÇLAR", "NECESIDADES", "NECESSIDADES")
+    add("SESSION", "OTURUM", "SESIÓN", "SESSÃO")
+    add("%s this session", "bu oturum %s", "%s esta sesión", "%s nesta sessão")
+    add("%s tasks • %s failed", "%s görev • %s hata", "%s tareas • %s fallos", "%s tarefas • %s falhas")
+    add("hours : minutes", "saat : dakika", "horas : minutos", "horas : minutos")
+    add("CPU saver on", "CPU tasarrufu açık", "Ahorro de CPU activo", "Economia de CPU ligada")
+    add("3D off • %d FPS", "3D kapalı • %d FPS", "3D apagado • %d FPS", "3D desligado • %d FPS")
+    add("3D off", "3D kapalı", "3D apagado", "3D desligado")
     add("%s online", "%s çevrimiçi", "%s en línea", "%s online")
     add("Config > CPU saver: only your farm stats on a black screen, like the webhook",
         "Ayarlar > CPU tasarrufu: siyah ekranda sadece farm istatistiklerin, webhook gibi",
@@ -3446,7 +3455,6 @@ __moduleSources["Services/Interface"] = function(...)
         { "Window", "sparkles", {
             "Cleaner layout: Auto Farm, Claimables, Pets, Potions & neon, Pet Pen; Minigames, Halloween world, Candy Shop",
             "A line on top of the screen says what the farm does and when the next minigame starts; tap it to open or close the window",
-            "Round AV button on the left of the screen: opens / closes the window (a closed window opens again)",
             "Presets: Everything Off, Full AutoFarm, Mega Skelicorn, Potion Farm, Mega a Pet",
             "Type any number on a slider; 'Close game pop-ups' switch in Settings",
         } },
@@ -4664,7 +4672,7 @@ __moduleSources["Services/Interface"] = function(...)
                 text = #off > 0 and T("Resting: %s", table.concat(off, ", ")) or T("Resting: none") },
         }
         for _, row in ipairs(rows) do
-            row.text = fit(row.text, width or 64)
+            row.text = fit((string.gsub(row.text, "%(%+%-", "(-")), width or 64) -- v3.0.2: spent = "(-599,950)", not "(+-"
         end
         return rows
     end
@@ -4674,7 +4682,7 @@ __moduleSources["Services/Interface"] = function(...)
     -- the game's 3D drawing is off (RunService:Set3dRenderingEnabled) and the frame rate is capped (setfpscap, only when
     -- the executor has it; more frames inside a minigame); both are put back when it closes. Local only: no game action,
     -- no remote. Discord's public invite info (server name, member count) is read once.
-    Interface.BLACK = { fps = 15, minigameFps = 30, width = 680, height = 340 }
+    Interface.BLACK = { fps = 15, minigameFps = 30, width = 760, height = 350 }
     Interface.BLACK_ORDER = { "session", "doing", "bucks", "needs", "candy", "ghost", "tasks", "hauntlet", "pet", "pen",
         "last", "off" }
     Interface.BLACK_EMOJI = { session = "⏱️", doing = "⚡", bucks = "💵", needs = "📝", candy = "🍬", ghost = "👻",
@@ -4755,6 +4763,78 @@ __moduleSources["Services/Interface"] = function(...)
                 displayOrder = math.max(displayOrder, math.min(other.DisplayOrder + 1, 2147483000))
             end
         end
+        -- v3.0.2 look (user: "make it look professional, our own style, but it must still save CPU"): a static dark
+        -- dashboard: header with chips, 4 number tiles, a live panel, the developer card. No animation, no tween:
+        -- texts change only every 2 s with the status refresh.
+        local C = {
+            text = Color3.fromRGB(238, 234, 246), muted = Color3.fromRGB(150, 140, 172), panel = Color3.fromRGB(17, 12, 27),
+            line = Color3.fromRGB(48, 36, 70), orange = Color3.fromRGB(255, 128, 24), pink = Color3.fromRGB(236, 72, 153),
+            purple = Color3.fromRGB(147, 51, 234), green = Color3.fromRGB(74, 222, 128), red = Color3.fromRGB(248, 113, 113),
+            blurple = Color3.fromRGB(88, 101, 242),
+        }
+        local function corner(object, radius)
+            local item = Instance.new("UICorner")
+            item.CornerRadius = radius or UDim.new(0, 10)
+            item.Parent = object
+        end
+        local function stroke(object, color, transparency, thickness)
+            local item = Instance.new("UIStroke")
+            item.Color = color
+            item.Transparency = transparency or 0
+            item.Thickness = thickness or 1
+            item.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+            item.Parent = object
+        end
+        local function gradient(object, from, to, rotation)
+            local item = Instance.new("UIGradient")
+            item.Color = ColorSequence.new(from, to)
+            item.Rotation = rotation or 0
+            item.Parent = object
+        end
+        local function box(holder, name, x, y, w, h, color, transparency)
+            local item = Instance.new("Frame")
+            item.Name = name
+            item.BorderSizePixel = 0
+            item.Position = UDim2.fromOffset(x, y)
+            item.Size = UDim2.fromOffset(w, h)
+            item.BackgroundColor3 = color or C.panel
+            item.BackgroundTransparency = transparency or 0
+            item.Parent = holder
+            return item
+        end
+        local function label(holder, name, x, y, w, h, size, font, color, align)
+            local item = Instance.new("TextLabel")
+            item.Name = name
+            item.BackgroundTransparency = 1
+            item.Position = UDim2.fromOffset(x, y)
+            item.Size = UDim2.fromOffset(w, h)
+            item.Font = font or Enum.Font.Gotham
+            item.TextSize = size
+            item.TextColor3 = color or C.text
+            item.TextXAlignment = align or Enum.TextXAlignment.Left
+            item.TextTruncate = Enum.TextTruncate.AtEnd
+            item.Text = ""
+            item.Parent = holder
+            return item
+        end
+        local function chip(holder, order, color)
+            local item = Instance.new("TextLabel")
+            item.LayoutOrder = order
+            item.AutomaticSize = Enum.AutomaticSize.X
+            item.Size = UDim2.fromOffset(0, 24)
+            item.BackgroundColor3 = C.panel
+            item.Font = Enum.Font.GothamBold
+            item.TextSize = 12
+            item.TextColor3 = color or C.text
+            item.Text = ""
+            local pad = Instance.new("UIPadding")
+            pad.PaddingLeft, pad.PaddingRight = UDim.new(0, 10), UDim.new(0, 10)
+            pad.Parent = item
+            corner(item, UDim.new(1, 0))
+            stroke(item, color or C.line, 0.35)
+            item.Parent = holder
+            return item
+        end
         local gui = Instance.new("ScreenGui")
         gui.Name = "AVBlackScreen"
         gui.ResetOnSpawn = false
@@ -4773,9 +4853,10 @@ __moduleSources["Services/Interface"] = function(...)
         back.AutoButtonColor = false
         back.Text = ""
         back.BorderSizePixel = 0
-        back.BackgroundColor3 = Color3.new(0, 0, 0)
+        back.BackgroundColor3 = Color3.new(1, 1, 1)
         back.Position = UDim2.fromOffset(-100, -100)
         back.Size = UDim2.new(1, 200, 1, 200)
+        gradient(back, Color3.fromRGB(14, 8, 24), Color3.fromRGB(2, 1, 4), 90)
         back.Parent = gui
         local body = Instance.new("Frame")
         body.Name = "Body"
@@ -4786,123 +4867,120 @@ __moduleSources["Services/Interface"] = function(...)
         body.Parent = gui
         local scale = Instance.new("UIScale")
         scale.Parent = body
-        local column = Instance.new("UIListLayout")
-        column.SortOrder = Enum.SortOrder.LayoutOrder
-        column.HorizontalAlignment = Enum.HorizontalAlignment.Center
-        column.VerticalAlignment = Enum.VerticalAlignment.Center
-        column.Padding = UDim.new(0, 6)
-        column.Parent = body
-        local function label(holder, name, layout, size, font, color, height)
-            local item = Instance.new("TextLabel")
-            item.Name = name
-            item.LayoutOrder = layout
-            item.BackgroundTransparency = 1
-            item.Size = UDim2.new(1, 0, 0, height or (size + 6))
-            item.Font = font or Enum.Font.Gotham
-            item.TextSize = size
-            item.TextColor3 = color or BLACK_TEXT.on
-            item.TextTruncate = Enum.TextTruncate.AtEnd
-            item.Text = ""
-            item.Parent = holder
-            return item
-        end
-        local title = label(body, "Title", 1, 26, Enum.Font.GothamBlack, Color3.fromRGB(255, 128, 24), 30)
-        title.Text = string.upper(Interface.TITLE) .. "  " .. Interface.EDITION
-        local mode = label(body, "Mode", 2, 13, Enum.Font.GothamMedium, Color3.fromRGB(150, 150, 165))
-        local head = label(body, "State", 3, 15, Enum.Font.GothamBold, nil, 22)
-        local grid = Instance.new("Frame")
-        grid.Name = "Stats"
-        grid.LayoutOrder = 4
-        grid.BackgroundTransparency = 1
-        grid.Size = UDim2.new(1, 0, 0, 6 * 22)
-        grid.Parent = body
-        local cells = Instance.new("UIGridLayout")
-        cells.SortOrder = Enum.SortOrder.LayoutOrder
-        cells.CellSize = UDim2.new(0.5, -8, 0, 20)
-        cells.CellPadding = UDim2.fromOffset(16, 2)
-        cells.Parent = grid
-        local rows = {}
-        for index, key in ipairs(Interface.BLACK_ORDER) do
-            local row = label(grid, key, index, 14)
-            row.TextXAlignment = Enum.TextXAlignment.Left
-            rows[key] = row
-        end
-        local line = Instance.new("Frame")
-        line.Name = "Line"
-        line.LayoutOrder = 5
-        line.BorderSizePixel = 0
-        line.BackgroundColor3 = Color3.fromRGB(70, 45, 100)
-        line.Size = UDim2.new(0.92, 0, 0, 1)
-        line.Parent = body
-        -- the developer: his picture (a tap closes the black screen) and his Discord server
-        local card = Instance.new("Frame")
-        card.Name = "Developer"
-        card.LayoutOrder = 6
-        card.BackgroundTransparency = 1
-        card.Size = UDim2.new(1, 0, 0, 72)
-        card.Parent = body
+        -- header: title + edition badge on the left, chips on the right
+        local brand = box(body, "Brand", 0, 0, 400, 34, nil, 1)
         local across = Instance.new("UIListLayout")
         across.FillDirection = Enum.FillDirection.Horizontal
-        across.HorizontalAlignment = Enum.HorizontalAlignment.Center
         across.VerticalAlignment = Enum.VerticalAlignment.Center
         across.SortOrder = Enum.SortOrder.LayoutOrder
-        across.Padding = UDim.new(0, 14)
-        across.Parent = card
+        across.Padding = UDim.new(0, 8)
+        across.Parent = brand
+        local title = Instance.new("TextLabel")
+        title.Name = "Title"
+        title.LayoutOrder = 1
+        title.BackgroundTransparency = 1
+        title.AutomaticSize = Enum.AutomaticSize.X
+        title.Size = UDim2.fromOffset(0, 34)
+        title.Font = Enum.Font.GothamBlack
+        title.TextSize = 27
+        title.TextColor3 = Color3.new(1, 1, 1)
+        title.Text = string.upper(Interface.TITLE)
+        gradient(title, C.orange, C.pink, 0)
+        title.Parent = brand
+        local badge = chip(brand, 2, C.orange)
+        badge.Text = Interface.EDITION
+        local chips = box(body, "Chips", 400, 5, B.width - 400, 24, nil, 1)
+        local row = Instance.new("UIListLayout")
+        row.FillDirection = Enum.FillDirection.Horizontal
+        row.HorizontalAlignment = Enum.HorizontalAlignment.Right
+        row.SortOrder = Enum.SortOrder.LayoutOrder
+        row.Padding = UDim.new(0, 6)
+        row.Parent = chips
+        local saverChip = chip(chips, 1, C.green)
+        local fpsChip = chip(chips, 2, C.muted)
+        local clockChip = chip(chips, 3, C.muted)
+        local head = label(body, "State", 0, 40, 560, 22, 15, Enum.Font.GothamBold)
+        local who = label(body, "Player", 560, 40, B.width - 560, 22, 13, Enum.Font.GothamMedium, C.muted,
+            Enum.TextXAlignment.Right)
+        local rule = box(body, "Rule", 0, 68, B.width, 1, Color3.new(1, 1, 1))
+        gradient(rule, C.orange, C.purple, 0)
+        -- four number tiles
+        local tiles = {}
+        local accents = { C.orange, C.pink, C.green, C.purple }
+        local tileWidth = math.floor((B.width - 30) / 4)
+        for index, key in ipairs({ "bucks", "candy", "needs", "session" }) do
+            local tile = box(body, "Tile_" .. key, (index - 1) * (tileWidth + 10), 78, tileWidth, 72)
+            corner(tile)
+            stroke(tile, C.line, 0)
+            local bar = box(tile, "Accent", 0, 12, 3, 48, accents[index])
+            corner(bar, UDim.new(1, 0))
+            tiles[key] = {
+                name = label(tile, "Name", 14, 8, tileWidth - 22, 14, 11, Enum.Font.GothamBold, C.muted),
+                value = label(tile, "Value", 14, 23, tileWidth - 22, 28, 23, Enum.Font.GothamBlack),
+                sub = label(tile, "Sub", 14, 51, tileWidth - 22, 14, 11, Enum.Font.GothamMedium, C.muted),
+            }
+        end
+        -- live panel: what the farm does, minigame timers, Pet Pen
+        local live = box(body, "Live", 0, 160, B.width, 104)
+        corner(live)
+        stroke(live, C.line, 0)
+        local pulse = box(live, "Pulse", 14, 12, 8, 8, C.green)
+        corner(pulse, UDim.new(1, 0))
+        local liveTitle = label(live, "LiveTitle", 28, 8, 300, 16, 11, Enum.Font.GothamBold, C.muted)
+        liveTitle.Text = T("LIVE")
+        local rows = {}
+        local columnWidth = math.floor((B.width - 40) / 2)
+        for index, key in ipairs({ "doing", "needs", "pet", "last", "ghost", "hauntlet", "pen", "off" }) do
+            local column = index <= 4 and 0 or 1
+            rows[key] = label(live, key, 14 + column * (columnWidth + 12), 28 + ((index - 1) % 4) * 18, columnWidth, 18, 13)
+        end
+        -- the developer: his picture (a tap closes the black screen) and his Discord server
+        local card = box(body, "Developer", 0, 274, B.width, 76)
+        corner(card)
+        stroke(card, C.line, 0)
+        card.BackgroundColor3 = Color3.new(1, 1, 1)
+        gradient(card, Color3.fromRGB(30, 16, 46), Color3.fromRGB(14, 10, 22), 0)
         local logo = Instance.new("ImageButton")
         logo.Name = "Logo"
-        logo.LayoutOrder = 1
         logo.AutoButtonColor = false
         logo.BackgroundColor3 = Color3.fromRGB(30, 20, 45)
-        logo.Size = UDim2.fromOffset(68, 68)
+        logo.Position = UDim2.fromOffset(12, 9)
+        logo.Size = UDim2.fromOffset(58, 58)
         logo.ScaleType = Enum.ScaleType.Crop
         logo.Image = ""
         logo.Parent = card
-        local round = Instance.new("UICorner")
-        round.CornerRadius = UDim.new(0.5, 0)
-        round.Parent = logo
-        local ring = Instance.new("UIStroke")
-        ring.Color = Color3.fromRGB(255, 128, 24)
-        ring.Thickness = 2
-        ring.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-        ring.Parent = logo
-        local initials = label(logo, "Initials", 1, 22, Enum.Font.GothamBlack, Color3.fromRGB(255, 128, 24))
-        initials.Size = UDim2.fromScale(1, 1)
+        corner(logo, UDim.new(1, 0))
+        stroke(logo, C.orange, 0, 2)
+        local initials = label(logo, "Initials", 0, 0, 58, 58, 20, Enum.Font.GothamBlack, C.orange, Enum.TextXAlignment.Center)
         initials.Text = "AV"
-        local info = Instance.new("Frame")
-        info.Name = "Info"
-        info.LayoutOrder = 2
-        info.BackgroundTransparency = 1
-        info.Size = UDim2.fromOffset(440, 68)
-        info.Parent = card
-        local stack = Instance.new("UIListLayout")
-        stack.SortOrder = Enum.SortOrder.LayoutOrder
-        stack.VerticalAlignment = Enum.VerticalAlignment.Center
-        stack.Padding = UDim.new(0, 2)
-        stack.Parent = info
         local dev = Interface.DEVELOPER
-        local who = label(info, "Name", 1, 16, Enum.Font.GothamBold, nil, 20)
-        who.TextXAlignment = Enum.TextXAlignment.Left
-        who.Text = dev.name .. "  •  @" .. dev.user .. "  •  " .. Interface.TITLE .. " " .. Interface.EDITION
-        local server = label(info, "Server", 2, 13, Enum.Font.GothamMedium, Color3.fromRGB(190, 195, 255), 18)
-        server.TextXAlignment = Enum.TextXAlignment.Left
+        local devName = label(card, "Name", 84, 9, 420, 20, 16, Enum.Font.GothamBold)
+        devName.Text = dev.name .. "  •  @" .. dev.user
+        local server = label(card, "Server", 84, 30, 420, 16, 12, Enum.Font.GothamMedium, Color3.fromRGB(190, 195, 255))
         server.Text = "💬 " .. T("Join my Discord server")
         local link = "https://discord.gg/" .. Interface.DISCORD_INVITE
         local inviteText = "discord.gg/" .. Interface.DISCORD_INVITE .. "  •  " .. T("tap to copy")
         local invite = Instance.new("TextButton")
         invite.Name = "Invite"
-        invite.LayoutOrder = 3
         invite.AutoButtonColor = false
-        invite.BackgroundTransparency = 1
-        invite.Size = UDim2.new(1, 0, 0, 20)
+        invite.AutomaticSize = Enum.AutomaticSize.X
+        invite.Position = UDim2.fromOffset(84, 50)
+        invite.Size = UDim2.fromOffset(0, 20)
+        invite.BackgroundColor3 = C.blurple
         invite.Font = Enum.Font.GothamBold
-        invite.TextSize = 14
-        invite.TextColor3 = Color3.fromRGB(114, 137, 255)
-        invite.TextXAlignment = Enum.TextXAlignment.Left
-        invite.TextTruncate = Enum.TextTruncate.AtEnd
+        invite.TextSize = 12
+        invite.TextColor3 = Color3.new(1, 1, 1)
         invite.Text = inviteText
-        invite.Parent = info
-        local hint = label(body, "Hint", 7, 12, Enum.Font.GothamMedium, Color3.fromRGB(150, 150, 165))
-        hint.Text = "👆 " .. T("Tap my picture to close the black screen")
+        local invitePad = Instance.new("UIPadding")
+        invitePad.PaddingLeft, invitePad.PaddingRight = UDim.new(0, 10), UDim.new(0, 10)
+        invitePad.Parent = invite
+        corner(invite, UDim.new(1, 0))
+        invite.Parent = card
+        local hint = label(card, "Hint", B.width - 250, 9, 236, 58, 12, Enum.Font.GothamMedium, C.muted,
+            Enum.TextXAlignment.Right)
+        hint.TextWrapped = true
+        hint.TextTruncate = Enum.TextTruncate.None
+        hint.Text = "👈 " .. T("Tap my picture to close the black screen")
         -- CPU / GPU saving: 3D drawing off + a frame rate cap (put back by destroy)
         local RunService = game:GetService("RunService")
         local function save(inGame)
@@ -4972,28 +5050,64 @@ __moduleSources["Services/Interface"] = function(...)
         local function fitScale()
             pcall(function()
                 local size = workspace.CurrentCamera.ViewportSize
-                scale.Scale = math.clamp(math.min(size.Y / (B.height + 16), size.X / (B.width + 32)), 0.55, 1.6)
+                scale.Scale = math.clamp(math.min(size.Y / (B.height + 24), size.X / (B.width + 32)), 0.5, 1.6)
             end)
         end
+        local function signed(value)
+            local number = tonumber(value) or 0
+            return (number < 0 and "-" or "+") .. commas(math.abs(number))
+        end
+        local function setText(item, text, color)
+            if item.Text ~= text then
+                item.Text = text
+            end
+            if color and item.TextColor3 ~= color then
+                item.TextColor3 = color
+            end
+        end
         local player = game:GetService("Players").LocalPlayer
+        local beat = false
         function screen.update(status)
             if not alive or suspended then
                 return
             end
+            local s = type(status) == "table" and status or {}
             save(Interface.inMinigame(status))
             fitScale()
-            local modeText = capped and T("CPU saver on • 3D off • %d FPS", capped) or T("CPU saver on • 3D off")
-            mode.Text = (player and ("@" .. player.Name .. "  •  ") or "") .. modeText
+            setText(saverChip, "● " .. T("CPU saver on"))
+            setText(fpsChip, capped and T("3D off • %d FPS", capped) or T("3D off"))
+            setText(clockChip, os.date("%H:%M"))
+            setText(who, player and ("@" .. player.Name) or "")
             local headTitle, headText, state = Interface.stateHeader(status)
-            head.Text = fit((DOT[state] or DOT.off) .. " " .. headTitle .. "  —  " .. headText, 96)
-            head.TextColor3 = BLACK_TEXT[state] or BLACK_TEXT.on
-            for _, row in ipairs(Interface.statusRows(status, 44)) do
-                local item = rows[row.key]
-                if item then
-                    item.Text = (Interface.BLACK_EMOJI[row.key] or "•") .. "  " .. row.text
-                    item.TextColor3 = row.dot and BLACK_TEXT[row.state] or BLACK_TEXT.on
+            setText(head, fit((DOT[state] or DOT.off) .. " " .. headTitle .. "  —  " .. headText, 80),
+                BLACK_TEXT[state] or BLACK_TEXT.on)
+            local bucksEarned, candyEarned = tonumber(s.bucksEarned) or 0, tonumber(s.candyEarned) or 0
+            local t = tiles
+            setText(t.bucks.name, "💵  " .. T("BUCKS"))
+            setText(t.bucks.value, commas(s.bucks))
+            setText(t.bucks.sub, T("%s this session", signed(bucksEarned)), bucksEarned > 0 and C.green
+                or bucksEarned < 0 and C.red or C.muted)
+            setText(t.candy.name, "🍬  " .. T("CANDY"))
+            setText(t.candy.value, commas(s.candy))
+            setText(t.candy.sub, T("%s this session", signed(candyEarned)), candyEarned > 0 and C.green
+                or candyEarned < 0 and C.red or C.muted)
+            setText(t.needs.name, "✅  " .. T("NEEDS DONE"))
+            setText(t.needs.value, commas(s.needsDone or 0))
+            setText(t.needs.sub, T("%s tasks • %s failed", commas(s.tasksSucceeded or 0), commas(s.tasksFailed or 0)),
+                (tonumber(s.tasksFailed) or 0) > 0 and C.orange or C.muted)
+            local minutes = tonumber(s.minutes) or 0
+            setText(t.session.name, "⏱️  " .. T("SESSION"))
+            setText(t.session.value, string.format("%d:%02d", minutes // 60, minutes % 60))
+            setText(t.session.sub, T("hours : minutes"))
+            for _, item in ipairs(Interface.statusRows(status, 46)) do
+                local target = rows[item.key]
+                if target then
+                    setText(target, (Interface.BLACK_EMOJI[item.key] or "•") .. "  " .. item.text,
+                        item.dot and BLACK_TEXT[item.state] or BLACK_TEXT.on)
                 end
             end
+            beat = not beat -- the dot blinks once per refresh: the farm is alive
+            pulse.BackgroundTransparency = beat and 0 or 0.6
         end
         function screen.destroy()
             if not alive then
@@ -5059,7 +5173,7 @@ __moduleSources["Services/Interface"] = function(...)
                         table.insert(parts, T("%s members", commas(found.members)))
                     end
                     if found.online then
-                        table.insert(parts, T("%s online", commas(found.online)))
+                        table.insert(parts, "🟢 " .. T("%s online", commas(found.online)))
                     end
                     server.Text = table.concat(parts, "  •  ")
                 end
@@ -20003,7 +20117,7 @@ __moduleSources["main"] = function(...)
             -- v2.1.18 (user: "the character stands idle, users think the script is not working"): one small line at the
             -- top of the screen, also when the window is hidden: what the farm does now, or what it waits for and
             -- when. Local only (this device's screen), no game action. Interface.StatusLine = false: none.
-            local gui, label, toggleButton
+            local gui, label
             local createdAt, movedToCore = 0, false
             local Lang = import("Services/Lang")
             -- v3.0.2 (user: "the open / close button does not show"): our own round "AV" button on the left opens /
@@ -20031,8 +20145,7 @@ __moduleSources["main"] = function(...)
                 seconds = math.max(0, math.floor(tonumber(seconds) or 0))
                 return string.format("%d:%02d", seconds // 60, seconds % 60)
             end
-            -- v3.0.2: the status line / AV button are made by their own loop too (not only by the scheduler job), and
-            -- AdoptMeFarm/ui_check.txt tells what the screen has (for the developer; nothing in the console)
+            -- v3.0.2: the status line is made by its own loop too (not only by the scheduler job)
             local function ensureGui()
                 if not (gui and gui.Parent) then
                     gui = Instance.new("ScreenGui")
@@ -20064,36 +20177,13 @@ __moduleSources["main"] = function(...)
                     corner.CornerRadius = UDim.new(0, 8)
                     corner.Parent = label
                     label.Parent = gui
-                    toggleButton = Instance.new("TextButton")
-                    toggleButton.Name = "AVToggle"
-                    toggleButton.AnchorPoint = Vector2.new(0, 0.5)
-                    toggleButton.Position = UDim2.new(0, 10, 0.3, 0)
-                    toggleButton.Size = UDim2.fromOffset(46, 46)
-                    toggleButton.BackgroundColor3 = Color3.fromRGB(18, 12, 26)
-                    toggleButton.BackgroundTransparency = 0.15
-                    toggleButton.Font = Enum.Font.GothamBlack
-                    toggleButton.TextSize = 16
-                    toggleButton.TextColor3 = Color3.fromRGB(255, 128, 24)
-                    toggleButton.Text = "AV"
-                    local round = Instance.new("UICorner")
-                    round.CornerRadius = UDim.new(0.5, 0)
-                    round.Parent = toggleButton
-                    local ring = Instance.new("UIStroke")
-                    ring.Color = Color3.fromRGB(255, 128, 24)
-                    ring.Thickness = 2
-                    ring.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-                    ring.Parent = toggleButton
-                    toggleButton.Activated:Connect(function()
-                        pcall(toggleWindow)
-                    end)
-                    toggleButton.Parent = gui
                     gui.Parent = (type(gethui) == "function" and gethui()) or game:GetService("CoreGui")
                     createdAt = os.clock()
-                elseif not movedToCore and os.clock() - createdAt > 2 and toggleButton.AbsoluteSize.X == 0 then
+                elseif not movedToCore and os.clock() - createdAt > 2 and label.AbsoluteSize.X == 0 then
                     -- v3.0.2: not drawn where it is (every size stays 0): CoreGui instead
                     movedToCore = true
                     gui.Parent = game:GetService("CoreGui")
-                    logger:warn("Interface", "The status line / AV button were not drawn in their place: moved to CoreGui")
+                    logger:warn("Interface", "The status line was not drawn in its place: moved to CoreGui")
                 end
             end
             scheduler:addJob("StatusLine", 1, function()
@@ -20143,66 +20233,9 @@ __moduleSources["main"] = function(...)
                     label.Text = Lang.tr("Adopt Victims") .. "  •  " .. Lang.tr(text) .. (step and ("\n" .. Lang.tr(step)) or "")
                 end)
             end)
-            local function uiCheck(when)
-                pcall(function()
-                    local lines = { "Adopt Victims " .. Disclosure.VERSION .. " ui check at " .. when .. " s", os.date("%Y-%m-%d %H:%M:%S") }
-                    local function add(name, value)
-                        table.insert(lines, name .. " = " .. tostring(value))
-                    end
-                    pcall(function()
-                        local uis = game:GetService("UserInputService")
-                        add("TouchEnabled", uis.TouchEnabled)
-                        add("KeyboardEnabled", uis.KeyboardEnabled)
-                        add("MouseEnabled", uis.MouseEnabled)
-                    end)
-                    pcall(function()
-                        add("viewport", workspace.CurrentCamera.ViewportSize)
-                    end)
-                    add("gethui", type(gethui) == "function" and (pcall(function()
-                        return gethui():GetFullName()
-                    end) and gethui():GetFullName() or "error") or "none")
-                    add("scheduler ticks", scheduler.TickCount)
-                    pcall(function()
-                        add("StatusLine job runs", scheduler:getJob("StatusLine").runs)
-                    end)
-                    add("AVStatus parent", gui and gui.Parent and gui.Parent:GetFullName() or "none")
-                    pcall(function()
-                        add("AV button", tostring(toggleButton.AbsolutePosition) .. " size " .. tostring(toggleButton.AbsoluteSize)
-                            .. " visible " .. tostring(toggleButton.Visible) .. " enabled " .. tostring(gui.Enabled))
-                    end)
-                    local current = Interface.current
-                    add("window handle", current ~= nil)
-                    pcall(function()
-                        local root = (type(gethui) == "function" and gethui()) or game:GetService("CoreGui")
-                        for _, child in ipairs(root:GetChildren()) do
-                            if child:IsA("ScreenGui") then
-                                add("screen " .. child.Name, "enabled " .. tostring(child.Enabled) .. " order " .. child.DisplayOrder)
-                                local toggle = child:FindFirstChild("MobileToggle")
-                                if toggle then
-                                    add("  MobileToggle", "visible " .. tostring(toggle.Visible) .. " pos " .. tostring(toggle.AbsolutePosition)
-                                        .. " size " .. tostring(toggle.AbsoluteSize))
-                                end
-                                local main = child:FindFirstChild("MainWindow")
-                                if main then
-                                    add("  MainWindow", "visible " .. tostring(main.Visible) .. " size " .. tostring(main.AbsoluteSize))
-                                end
-                            end
-                        end
-                    end)
-                    if type(makefolder) == "function" and type(isfolder) == "function" and not isfolder("AdoptMeFarm") then
-                        makefolder("AdoptMeFarm")
-                    end
-                    writefile("AdoptMeFarm/ui_check.txt", table.concat(lines, "\n"))
-                end)
-            end
             maid:Give(task.spawn(function()
-                local started = os.clock()
-                local checks = { 20, 90 }
                 while true do
                     pcall(ensureGui)
-                    if checks[1] and os.clock() - started >= checks[1] then
-                        uiCheck(table.remove(checks, 1))
-                    end
                     task.wait(3)
                 end
             end))
