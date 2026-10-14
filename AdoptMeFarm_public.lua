@@ -1358,7 +1358,8 @@ __moduleSources["Services/Disclosure"] = function(...)
             "no floor under the character for 20 s (the void; never inside a minigame): goes home by respawn",
             "nothing to do away from home: waits at home for the next need (Farm.IdleHome; never near a minigame)",
             "a small line at the top of YOUR screen (Interface.StatusLine) shows what the farm does / waits for, and a round"
-                .. " AV button on the left opens / closes the window (local only)",
+                .. " AV button on the left opens / closes the window (local only); AdoptMeFarm/ui_check.txt (written 20 s and"
+                .. " 90 s after start) lists what the screen has: input type, screen size, the window's parts (for bug reports)",
             "a task that failed 3 times in a row rests Farm.DisableMinutes, then is tried again",
             "window quick actions (only when you press them): pause / resume, go home, skip the running task, claim the"
                 .. " Pet Pen now, retry tasks that rest",
@@ -7351,7 +7352,9 @@ __moduleSources["Game/GameConstants"] = function(...)
         camping = { x = -18.443, y = 37.204, z = -1046.005, purpose = "camping: the camp site in the neighborhood" },
         beach_party = { x = -579.456, y = 25.634, z = -1496.408, purpose = "beach_party: the beach in the neighborhood" },
         bored = { x = -401.629, y = 29.779, z = -1760.047, purpose = "bored: the playground in the neighborhood" },
-        stray_cat = { x = -243.6, y = 87.0, z = -1118.2, purpose = "Halloween: next to the Stray Cat" },
+        -- v3.0.2: the cat's new place by the Haunted Hotel (user's cat_probe 2026-10-14: StrayCat_W2 at -317.5, 27.8,
+        -- -1445.7; the player stood at this spot next to it). Old place: -243.6, 87.0, -1118.2
+        stray_cat = { x = -311.9, y = 29.5, z = -1444.5, purpose = "Halloween: next to the Stray Cat (by the Haunted Hotel)" },
     }
     GameConstants.SpotForAilment = {
         camping = "camping",
@@ -14442,10 +14445,9 @@ __moduleSources["Game/EventTasks"] = function(...)
                         end
                     end
                 end)
-                -- v3.0.2 (user: "it went to the OLD Stray Cat place again"): the old place is never used; no cat on
-                -- the map = no trip
+                -- v3.0.2: the cat not drawn yet (far away) = the saved spot, which is its new place by the Hotel
                 if not catFound then
-                    return false, "the Stray Cat is not on the map here (it moved; its new place is not known yet)"
+                    ctx.logger:info("Event", "Stray Cat: not drawn yet, going to its saved place by the Hotel")
                 end
             end
             local moved, notMoved = ctx.interaction:teleportTo(spotName)
@@ -20029,69 +20031,74 @@ __moduleSources["main"] = function(...)
                 seconds = math.max(0, math.floor(tonumber(seconds) or 0))
                 return string.format("%d:%02d", seconds // 60, seconds % 60)
             end
+            -- v3.0.2: the status line / AV button are made by their own loop too (not only by the scheduler job), and
+            -- AdoptMeFarm/ui_check.txt tells what the screen has (for the developer; nothing in the console)
+            local function ensureGui()
+                if not (gui and gui.Parent) then
+                    gui = Instance.new("ScreenGui")
+                    gui.Name = "AVStatus"
+                    gui.ResetOnSpawn = false
+                    gui.IgnoreGuiInset = true
+                    gui.DisplayOrder = 50
+                    -- v3.0.0: a button: tapping the line opens / closes the window (a second way next to the round
+                    -- paw button)
+                    label = Instance.new("TextButton")
+                    label.AutoButtonColor = false
+                    label.Activated:Connect(function()
+                        pcall(toggleWindow)
+                    end)
+                    label.AnchorPoint = Vector2.new(0.5, 0)
+                    label.Position = UDim2.new(0.5, 0, 0, 4)
+                    label.Size = UDim2.new(0, 0, 0, 20)
+                    label.AutomaticSize = Enum.AutomaticSize.XY -- v2.1.20: a second line for the task's step
+                    label.BackgroundColor3 = Color3.fromRGB(18, 12, 26)
+                    label.BackgroundTransparency = 0.25
+                    label.TextColor3 = Color3.fromRGB(255, 196, 120)
+                    label.TextSize = 13
+                    label.Font = Enum.Font.GothamMedium
+                    label.Text = ""
+                    local pad = Instance.new("UIPadding")
+                    pad.PaddingLeft, pad.PaddingRight = UDim.new(0, 10), UDim.new(0, 10)
+                    pad.Parent = label
+                    local corner = Instance.new("UICorner")
+                    corner.CornerRadius = UDim.new(0, 8)
+                    corner.Parent = label
+                    label.Parent = gui
+                    toggleButton = Instance.new("TextButton")
+                    toggleButton.Name = "AVToggle"
+                    toggleButton.AnchorPoint = Vector2.new(0, 0.5)
+                    toggleButton.Position = UDim2.new(0, 10, 0.3, 0)
+                    toggleButton.Size = UDim2.fromOffset(46, 46)
+                    toggleButton.BackgroundColor3 = Color3.fromRGB(18, 12, 26)
+                    toggleButton.BackgroundTransparency = 0.15
+                    toggleButton.Font = Enum.Font.GothamBlack
+                    toggleButton.TextSize = 16
+                    toggleButton.TextColor3 = Color3.fromRGB(255, 128, 24)
+                    toggleButton.Text = "AV"
+                    local round = Instance.new("UICorner")
+                    round.CornerRadius = UDim.new(0.5, 0)
+                    round.Parent = toggleButton
+                    local ring = Instance.new("UIStroke")
+                    ring.Color = Color3.fromRGB(255, 128, 24)
+                    ring.Thickness = 2
+                    ring.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+                    ring.Parent = toggleButton
+                    toggleButton.Activated:Connect(function()
+                        pcall(toggleWindow)
+                    end)
+                    toggleButton.Parent = gui
+                    gui.Parent = (type(gethui) == "function" and gethui()) or game:GetService("CoreGui")
+                    createdAt = os.clock()
+                elseif not movedToCore and os.clock() - createdAt > 2 and toggleButton.AbsoluteSize.X == 0 then
+                    -- v3.0.2: not drawn where it is (every size stays 0): CoreGui instead
+                    movedToCore = true
+                    gui.Parent = game:GetService("CoreGui")
+                    logger:warn("Interface", "The status line / AV button were not drawn in their place: moved to CoreGui")
+                end
+            end
             scheduler:addJob("StatusLine", 1, function()
                 pcall(function()
-                    if not (gui and gui.Parent) then
-                        gui = Instance.new("ScreenGui")
-                        gui.Name = "AVStatus"
-                        gui.ResetOnSpawn = false
-                        gui.IgnoreGuiInset = true
-                        gui.DisplayOrder = 50
-                        -- v3.0.0: a button: tapping the line opens / closes the window (a second way next to the round
-                        -- paw button)
-                        label = Instance.new("TextButton")
-                        label.AutoButtonColor = false
-                        label.Activated:Connect(function()
-                            pcall(toggleWindow)
-                        end)
-                        label.AnchorPoint = Vector2.new(0.5, 0)
-                        label.Position = UDim2.new(0.5, 0, 0, 4)
-                        label.Size = UDim2.new(0, 0, 0, 20)
-                        label.AutomaticSize = Enum.AutomaticSize.XY -- v2.1.20: a second line for the task's step
-                        label.BackgroundColor3 = Color3.fromRGB(18, 12, 26)
-                        label.BackgroundTransparency = 0.25
-                        label.TextColor3 = Color3.fromRGB(255, 196, 120)
-                        label.TextSize = 13
-                        label.Font = Enum.Font.GothamMedium
-                        label.Text = ""
-                        local pad = Instance.new("UIPadding")
-                        pad.PaddingLeft, pad.PaddingRight = UDim.new(0, 10), UDim.new(0, 10)
-                        pad.Parent = label
-                        local corner = Instance.new("UICorner")
-                        corner.CornerRadius = UDim.new(0, 8)
-                        corner.Parent = label
-                        label.Parent = gui
-                        toggleButton = Instance.new("TextButton")
-                        toggleButton.Name = "AVToggle"
-                        toggleButton.AnchorPoint = Vector2.new(0, 0.5)
-                        toggleButton.Position = UDim2.new(0, 10, 0.3, 0)
-                        toggleButton.Size = UDim2.fromOffset(46, 46)
-                        toggleButton.BackgroundColor3 = Color3.fromRGB(18, 12, 26)
-                        toggleButton.BackgroundTransparency = 0.15
-                        toggleButton.Font = Enum.Font.GothamBlack
-                        toggleButton.TextSize = 16
-                        toggleButton.TextColor3 = Color3.fromRGB(255, 128, 24)
-                        toggleButton.Text = "AV"
-                        local round = Instance.new("UICorner")
-                        round.CornerRadius = UDim.new(0.5, 0)
-                        round.Parent = toggleButton
-                        local ring = Instance.new("UIStroke")
-                        ring.Color = Color3.fromRGB(255, 128, 24)
-                        ring.Thickness = 2
-                        ring.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-                        ring.Parent = toggleButton
-                        toggleButton.Activated:Connect(function()
-                            pcall(toggleWindow)
-                        end)
-                        toggleButton.Parent = gui
-                        gui.Parent = (type(gethui) == "function" and gethui()) or game:GetService("CoreGui")
-                        createdAt = os.clock()
-                    elseif not movedToCore and os.clock() - createdAt > 2 and toggleButton.AbsoluteSize.X == 0 then
-                        -- v3.0.2: not drawn where it is (every size stays 0): CoreGui instead
-                        movedToCore = true
-                        gui.Parent = game:GetService("CoreGui")
-                        logger:warn("Interface", "The status line / AV button were not drawn in their place: moved to CoreGui")
-                    end
+                    ensureGui()
                     label.Visible = config.Interface.StatusLine ~= false
                     if not label.Visible then
                         return
@@ -20136,6 +20143,69 @@ __moduleSources["main"] = function(...)
                     label.Text = Lang.tr("Adopt Victims") .. "  •  " .. Lang.tr(text) .. (step and ("\n" .. Lang.tr(step)) or "")
                 end)
             end)
+            local function uiCheck(when)
+                pcall(function()
+                    local lines = { "Adopt Victims " .. Disclosure.VERSION .. " ui check at " .. when .. " s", os.date("%Y-%m-%d %H:%M:%S") }
+                    local function add(name, value)
+                        table.insert(lines, name .. " = " .. tostring(value))
+                    end
+                    pcall(function()
+                        local uis = game:GetService("UserInputService")
+                        add("TouchEnabled", uis.TouchEnabled)
+                        add("KeyboardEnabled", uis.KeyboardEnabled)
+                        add("MouseEnabled", uis.MouseEnabled)
+                    end)
+                    pcall(function()
+                        add("viewport", workspace.CurrentCamera.ViewportSize)
+                    end)
+                    add("gethui", type(gethui) == "function" and (pcall(function()
+                        return gethui():GetFullName()
+                    end) and gethui():GetFullName() or "error") or "none")
+                    add("scheduler ticks", scheduler.TickCount)
+                    pcall(function()
+                        add("StatusLine job runs", scheduler:getJob("StatusLine").runs)
+                    end)
+                    add("AVStatus parent", gui and gui.Parent and gui.Parent:GetFullName() or "none")
+                    pcall(function()
+                        add("AV button", tostring(toggleButton.AbsolutePosition) .. " size " .. tostring(toggleButton.AbsoluteSize)
+                            .. " visible " .. tostring(toggleButton.Visible) .. " enabled " .. tostring(gui.Enabled))
+                    end)
+                    local current = Interface.current
+                    add("window handle", current ~= nil)
+                    pcall(function()
+                        local root = (type(gethui) == "function" and gethui()) or game:GetService("CoreGui")
+                        for _, child in ipairs(root:GetChildren()) do
+                            if child:IsA("ScreenGui") then
+                                add("screen " .. child.Name, "enabled " .. tostring(child.Enabled) .. " order " .. child.DisplayOrder)
+                                local toggle = child:FindFirstChild("MobileToggle")
+                                if toggle then
+                                    add("  MobileToggle", "visible " .. tostring(toggle.Visible) .. " pos " .. tostring(toggle.AbsolutePosition)
+                                        .. " size " .. tostring(toggle.AbsoluteSize))
+                                end
+                                local main = child:FindFirstChild("MainWindow")
+                                if main then
+                                    add("  MainWindow", "visible " .. tostring(main.Visible) .. " size " .. tostring(main.AbsoluteSize))
+                                end
+                            end
+                        end
+                    end)
+                    if type(makefolder) == "function" and type(isfolder) == "function" and not isfolder("AdoptMeFarm") then
+                        makefolder("AdoptMeFarm")
+                    end
+                    writefile("AdoptMeFarm/ui_check.txt", table.concat(lines, "\n"))
+                end)
+            end
+            maid:Give(task.spawn(function()
+                local started = os.clock()
+                local checks = { 20, 90 }
+                while true do
+                    pcall(ensureGui)
+                    if checks[1] and os.clock() - started >= checks[1] then
+                        uiCheck(table.remove(checks, 1))
+                    end
+                    task.wait(3)
+                end
+            end))
         end
         do
             -- v2.1.10 (user: "the camera guard does not work: use Roblox's own min / max zoom, fixed between 5 and 20"):
