@@ -1297,7 +1297,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.18 (Adopt Victims - UI Remastered Edition, Mega presets)"
+    Disclosure.VERSION = "2.1.19 (Adopt Victims - UI Remastered Edition, Mega presets)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -3324,6 +3324,10 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     Interface.CHANGELOG = {
+        "v2.1.19 (14 Oct 2026)",
+        "Hauntlet: when the Hotel does not load, it goes via the main map and in again (the 'not auto-queued' runs)",
+        "Eggs: no buy (and no Nursery trip) when the Bucks are too few; 10 min rest instead of a try every minute",
+        "Game dialogs that did not close: tried again after 5 min (was 30; the next minigame prompt was missed)",
         "v2.1.18 (14 Oct 2026)",
         "A small line at the top of the screen says what the farm does or waits for (next need, Hauntlet, Ghost Gallery)",
         "The farm learns how often the game gives needs and shows the wait (Doing -> Waiting: next need in ~40 s)",
@@ -6730,6 +6734,9 @@ __moduleSources["Game/GameConstants"] = function(...)
         HauntedHotel = { door = "MainDoor", spawn = nil },
     }
     GameConstants.CharWrapperPlaces = { TheCrypt = true }
+    -- v2.1.19 egg prices in Bucks (fairytale: report "Bought ... for 750 Bucks"; cracked / pet egg: the egg list names);
+    -- a purchase updates them (Tasks._eggPrice)
+    GameConstants.EggPrices = { cracked_egg = 350, pet_egg = 600, fairytale_egg_2026_fairytale_egg = 750 }
     GameConstants.InteriorTalkForAilment = {
         sick = { furniture = "doctor", use = "UseBlock", choice = "Yes" },
     }
@@ -9659,6 +9666,23 @@ __moduleSources["Game/Travel"] = function(...)
                     params.FilterDescendantsInstances = { character }
                     floor = root ~= nil and workspace:Raycast(root.Position, Vector3.new(0, -300, 0), params) ~= nil
                 end)
+                if not floor and not recipe.ownHouse and not self._redrawViaMap then
+                    -- v2.1.19 (2.1.18 reports: "HauntedHotel is still not drawn" x3 then "join zone not found (interiors
+                    -- loaded: Neighborhood!Halloween / HauntedManor)"): the game's way in does not open the Hotel from
+                    -- there; it opens from the main map. Once: main map, then the place again.
+                    self._redrawViaMap = true
+                    self._logger:info("Travel", destination .. " not drawn here: going via the main map, then again")
+                    local okMap, again = pcall(function()
+                        return self:goTo("MainMap") and self:_goToRoute(destination)
+                    end)
+                    self._redrawViaMap = nil
+                    if okMap and again then
+                        local okD, drawnNow = pcall(self._ensureDrawn, self, destination, recipe, true)
+                        if okD and drawnNow then
+                            return true
+                        end
+                    end
+                end
                 if not floor then
                     return false, destination .. " is not drawn on this device (void)"
                 end
@@ -11412,6 +11436,15 @@ __moduleSources["Game/Tasks"] = function(...)
             if not known then
                 ctx.logger:warn("Tasks", "Farm.EggToBuy = " .. tostring(id) .. " is not in the egg list: trying it anyway")
             end
+            -- v2.1.19 (2.1.18 reports: "no fairytale_egg arrived (not enough Bucks...)" every minute with 197-203 Bucks):
+            -- the price is known (or learned from the last purchase): too few Bucks -> no call, no Nursery trip, 10 min rest
+            Tasks._eggPrice = Tasks._eggPrice or {}
+            local price = Tasks._eggPrice[id] or (GameConstants.EggPrices and GameConstants.EggPrices[id])
+            local bucksNow = tonumber(ctx.gameData:get(GameConstants.DataKeys.Money))
+            if price and bucksNow and bucksNow < price then
+                Tasks._eggMiss[id] = { count = 6, untilAt = Util.now() + 600 }
+                return false, string.format("not enough Bucks for %s (%d of %d): tried again in 10 min", id, bucksNow, price)
+            end
             local function tryBuy(where)
                 local before = ctx.gameData:petUniquesOfKind(id)
                 local bucks = ctx.gameData:get(GameConstants.DataKeys.Money)
@@ -11432,6 +11465,9 @@ __moduleSources["Game/Tasks"] = function(...)
                 end, 8)
                 if newUnique then
                     local after = ctx.gameData:get(GameConstants.DataKeys.Money)
+                    if tonumber(bucks) and tonumber(after) and bucks - after > 0 then
+                        Tasks._eggPrice[id] = bucks - after
+                    end
                     ctx.logger:info("Tasks", string.format("Bought %s%s", id, (tonumber(bucks) and tonumber(after))
                         and string.format(" for %d Bucks", bucks - after) or ""))
                 end
@@ -14815,7 +14851,10 @@ __moduleSources["Game/EventTasks"] = function(...)
                                 .. "): loading the hotel again")
                             -- v2.1.17: "already at HauntedHotel" in my data, but not drawn here: the game's way in
                             if not ctx.travel:redraw("HauntedHotel") then
-                                ctx.travel:goTo("HauntedHotel")
+                                -- v2.1.19: the Hotel opens from the main map
+                                if ctx.travel:goTo("MainMap") then
+                                    ctx.travel:goTo("HauntedHotel")
+                                end
                             end
                         end
                         task.wait(1)
@@ -18599,9 +18638,9 @@ __moduleSources["main"] = function(...)
                                                 fails[rule.label] = (fails[rule.label] or 0) + 1
                                                 local hidden = hideDialog(marker, dialogGui)
                                                 if fails[rule.label] >= 2 then
-                                                    misses[rule.label] = Util.now() + 1800
+                                                    misses[rule.label] = Util.now() + 300
                                                     logger:warn("Game", rule.label .. ": could not be closed twice"
-                                                        .. (hidden and " (hidden)" or "") .. ": left alone for 30 min")
+                                                        .. (hidden and " (hidden)" or "") .. ": left alone for 5 min")
                                                 else
                                                     misses[rule.label] = Util.now() + 60
                                                 end
