@@ -730,10 +730,6 @@ __moduleSources["Core/Config"] = function(...)
         { id = "Balanced", name = "Full AutoFarm", icon = "circle-gauge",
             about = "Everything: every need, eggs, potions, neon + mega neon, gifts, cashback, quests and the whole event.",
             set = join(NEEDS_ON, EXTRAS_ON, EVENT_CORE_ON, EVENT_EXTRAS_ON) },
-        { id = "Speedrun", name = "Mega Mummy Spider's", icon = "rocket",
-            about = "Mummy Spiders only: keys straight down the Crypt, every spider grown (needs, potions, Pet Pen), "
-                .. "then neon + mega neon. No eggs, no candy pets, no nest / Stray Cat.",
-            set = join(NEEDS_ON, EXTRAS_ON, EVENT_CORE_ON, EVENT_EXTRAS_ON, Config.SPEEDRUN_CHANGES) },
         { id = "Skelicorn", name = "Mega Skelicorn", icon = "sparkles",
             about = "Skelicorns only: candy from the whole event, Lightning Lever from the Crypt, a Skelicorn every "
                 .. "120k candy (up to 5 growing), grown + neon + mega neon.",
@@ -746,12 +742,6 @@ __moduleSources["Core/Config"] = function(...)
             about = "Pick one pet or egg below. Egg: bought and hatched on repeat. Candy pet: 5 bought (1 raised, 4 in "
                 .. "the Pet Pen). Any pet: grown, neon, mega neon on repeat, its copies in the Pet Pen.",
             set = join(NEEDS_ON, EXTRAS_ON, EVENT_CORE_ON, focusChanges("")) },
-        { id = "EventOnly", name = "Event Only", icon = "ghost",
-            about = "Only Halloween: Ghost Gallery, Crypt + Mummy Spider, quests, Pet Pen. No pet / baby needs.",
-            set = EVENT_CORE_ON },
-        { id = "NeedsOnly", name = "Needs Only", icon = "list-checks",
-            about = "Only pet + baby needs (with eggs when nothing grows). The event stays off.",
-            set = NEEDS_ON },
     }
     function Config.findPreset(name)
         if type(name) ~= "string" then
@@ -1320,7 +1310,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.32 (Adopt Victims - UI Remastered Edition, Mega presets)"
+    Disclosure.VERSION = "2.1.33 (Adopt Victims - UI Remastered Edition, Mega presets)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -3363,6 +3353,10 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     Interface.CHANGELOG = {
+        "v2.1.33 (14 Oct 2026)",
+        "Pet Farm + Pet to farm back in the Pets box (the dropdown could not be tapped in the left column)",
+        "Phones: hover texts off (they stayed on the screen over the menus); help lines stay",
+        "Presets: Everything Off, Full AutoFarm, Mega Skelicorn, Potion Farm, Mega a Pet (Mummy Spider: pick it in Mega a Pet)",
         "v2.1.32 (14 Oct 2026)",
         "Preset Potion Farm: the highest friendship pet gets every pet need; nothing else takes time",
         "Event: Auto pull lever (the Lightning Lever into the machine, no Skelicorn bought)",
@@ -5508,6 +5502,13 @@ __moduleSources["Services/Interface"] = function(...)
             uiScale.Parent = main
         end)
         local Window = Starlight:CreateWindow(windowSettings)
+        -- v2.1.33 (user screenshot: hover texts stuck on screen over the dropdowns): a phone has no mouse to leave an
+        -- element, so Starlight's hover texts stay; on touch they are off (the help lines under the switches stay)
+        if touch then
+            pcall(function()
+                Starlight.Instance.Tooltips.Visible = false
+            end)
+        end
         handle.scale = scale
         if scaled and windowWidth then
             local function place()
@@ -5642,9 +5643,11 @@ __moduleSources["Services/Interface"] = function(...)
             "Claims finished quests and board rewards; visits homes when a quest asks for it")
         bindToggle(tasksBox, "cashback", "game:bucks", "Collect cashback", { "Farm", "CollectCashback" },
             "Collects your cashback Bucks every 10 minutes")
-        local petsBox = mainTab:CreateGroupbox({ Name = "Eggs", Icon = I("paw-print"), Column = col(2) }, "pets")
-        -- v2.1.31 (user): one switch "Pet Farm" + the dropdown under it says WHICH pet (v2.1.32: in Auto Farm)
-        bindToggle(needsBox, "autoPet", "paw-print", "Pet Farm", { "Farm", "KeepPetEquipped" },
+        -- v2.1.33 (user: "I cannot tap the Pet to farm dropdown" since 2.1.32 moved it to the left column): back in
+        -- the Pets box on the right, where it worked
+        local petsBox = mainTab:CreateGroupbox({ Name = "Pets", Icon = I("paw-print"), Column = col(2) }, "pets")
+        -- v2.1.31 (user): one switch "Pet Farm" + the dropdown under it says WHICH pet
+        bindToggle(petsBox, "autoPet", "paw-print", "Pet Farm", { "Farm", "KeepPetEquipped" },
             "On: the pet picked below is equipped and farmed (2 when your account can hold 2)")
         -- v2.1.30 (user): one choice; "oldest" became the Potion farm (highest friendship full grown pet)
         local firstChoices = { { "@any", "Growing pets (youngest first)" }, { "@neon", "Neon pets first" },
@@ -5662,7 +5665,7 @@ __moduleSources["Services/Interface"] = function(...)
                 table.insert(firstChoices, { kind, prettyKind(kind) })
             end
         end
-        bindPick(needsBox, "farmFirst", "list-ordered", "Pet to farm", nil, firstChoices, {
+        bindPick(petsBox, "farmFirst", "list-ordered", "Pet to farm", nil, firstChoices, {
             tooltip = "Which pet gets the needs: growing pets, neon first, one pet kind, or the Potion farm (your full grown"
                 .. " pet with the highest friendship stays equipped: its friendship level-ups give Age Potions)",
             keys = { "Farm.PreferNeon", "Farm.PetOrder", "Farm.FarmPetKinds" },
