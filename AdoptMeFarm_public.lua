@@ -1297,7 +1297,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.26 (Adopt Victims - UI Remastered Edition, Mega presets)"
+    Disclosure.VERSION = "2.1.27 (Adopt Victims - UI Remastered Edition, Mega presets)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -3324,6 +3324,8 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     Interface.CHANGELOG = {
+        "v2.1.27 (14 Oct 2026)",
+        "Start: no screen tap on a window that already closed (it opened the Buy Candy Corn shop under it)",
         "v2.1.26 (14 Oct 2026)",
         "Join circles: back to the teleport that worked up to 2.1.20 (no more roof / under the ring); not moved at all when already in the circle",
         "v2.1.25 (14 Oct 2026)",
@@ -18574,9 +18576,36 @@ __moduleSources["main"] = function(...)
                 end)
                 return ok and open == true
             end
+            -- v2.1.27: the button is still drawn (its ScreenGui on, it and its parents visible)
+            local function visibleNow(object)
+                local ok, visible = pcall(function()
+                    local screenGui = object:FindFirstAncestorOfClass("ScreenGui")
+                    if not screenGui or not screenGui.Enabled then
+                        return false
+                    end
+                    local node = object
+                    while node and node ~= screenGui do
+                        if node:IsA("GuiObject") and node.Visible == false then
+                            return false
+                        end
+                        node = node.Parent
+                    end
+                    return true
+                end)
+                return ok and visible == true
+            end
             local function clickUntilClosed(label, button, isOpen)
                 logger:info("Game", label .. " is open: clicking")
                 for _, method in ipairs(Interaction.CLICK_METHODS) do
+                    -- v2.1.27 (user: at game start the Buy Candy Corn shop opened by itself): closed late by the last
+                    -- way = done; a screen tap on a closed window hit what was under it (the candy counter)
+                    if not isOpen() then
+                        logger:success("Game", label .. ": closed")
+                        return true
+                    end
+                    if (method == "touch" or method == "mouse") and not (button.Parent and visibleNow(button)) then
+                        break
+                    end
                     local ran, detail = Interaction.clickButton(button, method)
                     if ran then
                         local waited = 0
@@ -18855,6 +18884,12 @@ __moduleSources["main"] = function(...)
             -- (was 8 s), its misses are debug lines, and a dialog that cannot be closed twice is left alone 30 min
             local function quickClose(label, button, isOpen)
                 for _, method in ipairs(Interaction.CLICK_METHODS) do
+                    if not isOpen() then -- v2.1.27: closed late = no screen tap on what is under it
+                        return true
+                    end
+                    if (method == "touch" or method == "mouse") and not (button.Parent and visibleNow(button)) then
+                        return false
+                    end
                     local ran = Interaction.clickButton(button, method)
                     if ran then
                         local untilAt = os.clock() + 2
