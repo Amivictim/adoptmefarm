@@ -1,4 +1,4 @@
--- AdoptMe Farm  v3.0.3 | Adopt Victims v3 | settings: the window
+-- AdoptMe Farm  v3.0.5 | Adopt Victims v3 | settings: the window
 local UserConfig = {
     Farm = {
         Enabled = true, -- false = everything paused ("Pause all" in the window); each feature has its own switch
@@ -1311,7 +1311,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "3.0.3 (Adopt Victims v3)"
+    Disclosure.VERSION = "3.0.5 (Adopt Victims v3)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -1396,7 +1396,7 @@ __moduleSources["Services/Disclosure"] = function(...)
             "clicks any buy / purchase / Robux button (on popups it only clicks the close X)",
             "uses items other than: sandwich / cheese / hotdog (hungry), water / chocolate milk (thirsty), squeaky bone (play);"
                 .. " buys nothing except 1 water or 1 hotdog when a need has nothing to use (limit: Farm.MaxBuysPerSession, 0 = none),"
-                .. " and 1 egg (Farm.EggToBuy, Bucks only) when you have no pet that still grows (Farm.BuyEgg, limit Farm.MaxEggBuysPerSession);"
+                .. " and Farm.EggToBuy eggs (Bucks only, Farm.BuyEgg 'Repeat buy & hatch': the next one when the last one hatched; limit Farm.MaxEggBuysPerSession);"
                 .. " Halloween (Farm.Event): 1 water a day for the Stray Cat, your Rusty Keys, Crypt Twigs and the loaned Ghost Vacuum;"
                 .. " spends candy only on the Halloween pets and boxes you pick (Farm.Event.CandyPets, Keep candy / Keep Bucks kept back), Skelicorns (Candy Shop pick) and, with Mega a Pet (Farm.Focus), copies of the picked candy pet / Skelicorn until Pet Pen slots + 1 grow (Bucks: the picked egg); age / bucks potions on the farmed pet"
                 .. " that still grows (Farm.AutoPotions; never fly / ride potions); opens gifts, chests and boxes (Farm.AutoOpen);"
@@ -2965,6 +2965,14 @@ __moduleSources["Services/Lang"] = function(...)
     add("Join my Discord server", "Discord sunucuma katıl", "Únete a mi servidor de Discord", "Entre no meu servidor do Discord")
     add("tap to copy", "kopyalamak için dokun", "toca para copiar", "toque para copiar")
     add("%s members", "%s üye", "%s miembros", "%s membros")
+    add("Repeat buy & hatch", "Sürekli al & çıkar", "Comprar y eclosionar sin parar", "Comprar e chocar sem parar")
+    add("Bucks only: buys the egg below, keeps it equipped until it hatches, then buys the next one (with Auto Pet Pen"
+        .. " it also keeps the pen full)",
+        "Sadece Bucks: alttaki yumurtayı alır, çıkana kadar elde tutar, sonra yenisini alır (Otomatik Pet Ağılı açıksa ağılı"
+            .. " da doldurur)",
+        "Solo Bucks: compra el huevo de abajo, lo lleva hasta que eclosiona y compra otro (con Corral automático también lo"
+            .. " llena)",
+        "Só Bucks: compra o ovo abaixo, segura até chocar e compra outro (com Cercadinho automático também o enche)")
     add("LIVE", "CANLI", "EN VIVO", "AO VIVO")
     add("BUCKS", "BUCKS", "BUCKS", "BUCKS")
     add("CANDY", "ŞEKER", "DULCES", "DOCES")
@@ -4817,6 +4825,24 @@ __moduleSources["Services/Interface"] = function(...)
             item.Parent = holder
             return item
         end
+        -- v3.0.3 (user: "use the game's own icons, not emoji"): game pictures (Bucks, candy, the pet) and the window's
+        -- line icons, tinted
+        local function imageOf(name)
+            local id = I(name)
+            return id and ("rbxassetid://" .. tostring(id)) or ""
+        end
+        local function icon(holder, name, x, y, size, tint)
+            local item = Instance.new("ImageLabel")
+            item.Name = "Icon"
+            item.BackgroundTransparency = 1
+            item.Position = UDim2.fromOffset(x, y)
+            item.Size = UDim2.fromOffset(size, size)
+            item.ScaleType = Enum.ScaleType.Fit
+            item.Image = imageOf(name)
+            item.ImageColor3 = tint or Color3.new(1, 1, 1)
+            item.Parent = holder
+            return item
+        end
         local function chip(holder, order, color)
             local item = Instance.new("TextLabel")
             item.LayoutOrder = order
@@ -4899,7 +4925,9 @@ __moduleSources["Services/Interface"] = function(...)
         local saverChip = chip(chips, 1, C.green)
         local fpsChip = chip(chips, 2, C.muted)
         local clockChip = chip(chips, 3, C.muted)
-        local head = label(body, "State", 0, 40, 560, 22, 15, Enum.Font.GothamBold)
+        local stateDot = box(body, "StateDot", 0, 46, 10, 10, C.green)
+        corner(stateDot, UDim.new(1, 0))
+        local head = label(body, "State", 18, 40, 542, 22, 15, Enum.Font.GothamBold)
         local who = label(body, "Player", 560, 40, B.width - 560, 22, 13, Enum.Font.GothamMedium, C.muted,
             Enum.TextXAlignment.Right)
         local rule = box(body, "Rule", 0, 68, B.width, 1, Color3.new(1, 1, 1))
@@ -4907,6 +4935,7 @@ __moduleSources["Services/Interface"] = function(...)
         -- four number tiles
         local tiles = {}
         local accents = { C.orange, C.pink, C.green, C.purple }
+        local TILE_ICONS = { bucks = "game:bucks", candy = "game:candy", needs = "badge-check", session = "timer" }
         local tileWidth = math.floor((B.width - 30) / 4)
         for index, key in ipairs({ "bucks", "candy", "needs", "session" }) do
             local tile = box(body, "Tile_" .. key, (index - 1) * (tileWidth + 10), 78, tileWidth, 72)
@@ -4914,8 +4943,11 @@ __moduleSources["Services/Interface"] = function(...)
             stroke(tile, C.line, 0)
             local bar = box(tile, "Accent", 0, 12, 3, 48, accents[index])
             corner(bar, UDim.new(1, 0))
+            local game = string.sub(TILE_ICONS[key], 1, 5) == "game:"
             tiles[key] = {
-                name = label(tile, "Name", 14, 8, tileWidth - 22, 14, 11, Enum.Font.GothamBold, C.muted),
+                icon = icon(tile, TILE_ICONS[key], 14, 6, 17, not game and accents[index] or nil),
+                iconName = TILE_ICONS[key],
+                name = label(tile, "Name", 36, 8, tileWidth - 44, 14, 11, Enum.Font.GothamBold, C.muted),
                 value = label(tile, "Value", 14, 23, tileWidth - 22, 28, 23, Enum.Font.GothamBlack),
                 sub = label(tile, "Sub", 14, 51, tileWidth - 22, 14, 11, Enum.Font.GothamMedium, C.muted),
             }
@@ -4928,11 +4960,12 @@ __moduleSources["Services/Interface"] = function(...)
         corner(pulse, UDim.new(1, 0))
         local liveTitle = label(live, "LiveTitle", 28, 8, 300, 16, 11, Enum.Font.GothamBold, C.muted)
         liveTitle.Text = T("LIVE")
-        local rows = {}
+        local rows, rowIcons = {}, {}
         local columnWidth = math.floor((B.width - 40) / 2)
         for index, key in ipairs({ "doing", "needs", "pet", "last", "ghost", "hauntlet", "pen", "off" }) do
-            local column = index <= 4 and 0 or 1
-            rows[key] = label(live, key, 14 + column * (columnWidth + 12), 28 + ((index - 1) % 4) * 18, columnWidth, 18, 13)
+            local x, y = 14 + (index <= 4 and 0 or 1) * (columnWidth + 12), 28 + ((index - 1) % 4) * 18
+            rowIcons[key] = icon(live, "circle-dot", x, y + 2, 14, C.muted)
+            rows[key] = label(live, key, x + 20, y, columnWidth - 20, 18, 13)
         end
         -- the developer: his picture (a tap closes the black screen) and his Discord server
         local card = box(body, "Developer", 0, 274, B.width, 76)
@@ -4956,8 +4989,9 @@ __moduleSources["Services/Interface"] = function(...)
         local dev = Interface.DEVELOPER
         local devName = label(card, "Name", 84, 9, 420, 20, 16, Enum.Font.GothamBold)
         devName.Text = dev.name .. "  •  @" .. dev.user
-        local server = label(card, "Server", 84, 30, 420, 16, 12, Enum.Font.GothamMedium, Color3.fromRGB(190, 195, 255))
-        server.Text = "💬 " .. T("Join my Discord server")
+        icon(card, "users", 84, 31, 14, Color3.fromRGB(190, 195, 255))
+        local server = label(card, "Server", 103, 30, 400, 16, 12, Enum.Font.GothamMedium, Color3.fromRGB(190, 195, 255))
+        server.Text = T("Join my Discord server")
         local link = "https://discord.gg/" .. Interface.DISCORD_INVITE
         local inviteText = "discord.gg/" .. Interface.DISCORD_INVITE .. "  •  " .. T("tap to copy")
         local invite = Instance.new("TextButton")
@@ -4980,7 +5014,7 @@ __moduleSources["Services/Interface"] = function(...)
             Enum.TextXAlignment.Right)
         hint.TextWrapped = true
         hint.TextTruncate = Enum.TextTruncate.None
-        hint.Text = "👈 " .. T("Tap my picture to close the black screen")
+        hint.Text = T("Tap my picture to close the black screen")
         -- CPU / GPU saving: 3D drawing off + a frame rate cap (put back by destroy)
         local RunService = game:GetService("RunService")
         local function save(inGame)
@@ -5079,31 +5113,47 @@ __moduleSources["Services/Interface"] = function(...)
             setText(clockChip, os.date("%H:%M"))
             setText(who, player and ("@" .. player.Name) or "")
             local headTitle, headText, state = Interface.stateHeader(status)
-            setText(head, fit((DOT[state] or DOT.off) .. " " .. headTitle .. "  —  " .. headText, 80),
-                BLACK_TEXT[state] or BLACK_TEXT.on)
+            setText(head, fit(headTitle .. "  —  " .. headText, 80), BLACK_TEXT[state] or BLACK_TEXT.on)
+            stateDot.BackgroundColor3 = state == "on" and C.green or state == "bad" and C.red or state == "off" and C.muted
+                or C.orange
             local bucksEarned, candyEarned = tonumber(s.bucksEarned) or 0, tonumber(s.candyEarned) or 0
             local t = tiles
-            setText(t.bucks.name, "💵  " .. T("BUCKS"))
+            setText(t.bucks.name, T("BUCKS"))
             setText(t.bucks.value, commas(s.bucks))
             setText(t.bucks.sub, T("%s this session", signed(bucksEarned)), bucksEarned > 0 and C.green
                 or bucksEarned < 0 and C.red or C.muted)
-            setText(t.candy.name, "🍬  " .. T("CANDY"))
+            setText(t.candy.name, T("CANDY"))
             setText(t.candy.value, commas(s.candy))
             setText(t.candy.sub, T("%s this session", signed(candyEarned)), candyEarned > 0 and C.green
                 or candyEarned < 0 and C.red or C.muted)
-            setText(t.needs.name, "✅  " .. T("NEEDS DONE"))
+            setText(t.needs.name, T("NEEDS DONE"))
             setText(t.needs.value, commas(s.needsDone or 0))
             setText(t.needs.sub, T("%s tasks • %s failed", commas(s.tasksSucceeded or 0), commas(s.tasksFailed or 0)),
                 (tonumber(s.tasksFailed) or 0) > 0 and C.orange or C.muted)
             local minutes = tonumber(s.minutes) or 0
-            setText(t.session.name, "⏱️  " .. T("SESSION"))
+            setText(t.session.name, T("SESSION"))
             setText(t.session.value, string.format("%d:%02d", minutes // 60, minutes % 60))
             setText(t.session.sub, T("hours : minutes"))
+            for _, tile in pairs(tiles) do -- game pictures can arrive a little later
+                if tile.icon.Image == "" then
+                    tile.icon.Image = imageOf(tile.iconName)
+                end
+            end
+            local pet = type(s.pets) == "table" and s.pets[1]
             for _, item in ipairs(Interface.statusRows(status, 46)) do
                 local target = rows[item.key]
                 if target then
-                    setText(target, (Interface.BLACK_EMOJI[item.key] or "•") .. "  " .. item.text,
-                        item.dot and BLACK_TEXT[item.state] or BLACK_TEXT.on)
+                    local color = item.dot and BLACK_TEXT[item.state] or BLACK_TEXT.on
+                    setText(target, item.text, color)
+                    local name = item.key == "pet" and pet and pet.kind and ("item:" .. tostring(pet.kind) .. "|paw-print")
+                        or item.icon
+                    local picture = imageOf(name)
+                    local lineIcon = string.sub(name, 1, 5) ~= "item:" or picture == imageOf("paw-print")
+                    local image = rowIcons[item.key]
+                    if image.Image ~= picture then
+                        image.Image = picture
+                    end
+                    image.ImageColor3 = lineIcon and color or Color3.new(1, 1, 1)
                 end
             end
             beat = not beat -- the dot blinks once per refresh: the farm is alive
@@ -5145,7 +5195,7 @@ __moduleSources["Services/Interface"] = function(...)
                 local copied = pcall(function()
                     setclipboard(link)
                 end)
-                invite.Text = copied and ("✅ " .. T("Copied: %s", link)) or link
+                invite.Text = copied and T("Copied: %s", link) or link
                 task.delay(3, function()
                     pcall(function()
                         if alive then
@@ -5168,12 +5218,12 @@ __moduleSources["Services/Interface"] = function(...)
             pcall(function()
                 local found = Interface.discordInfo()
                 if alive and type(found) == "table" and found.name then
-                    local parts = { "💬 " .. found.name }
+                    local parts = { found.name }
                     if found.members then
                         table.insert(parts, T("%s members", commas(found.members)))
                     end
                     if found.online then
-                        table.insert(parts, "🟢 " .. T("%s online", commas(found.online)))
+                        table.insert(parts, T("%s online", commas(found.online)))
                     end
                     server.Text = table.concat(parts, "  •  ")
                 end
@@ -6253,8 +6303,9 @@ __moduleSources["Services/Interface"] = function(...)
             end,
         })
         local eggIcon = "item:" .. tostring(farm.EggToBuy or "cracked_egg") .. "|egg"
-        bindToggle(petsBox, "buyEgg", eggIcon, "Buy eggs", { "Farm", "BuyEgg" },
-            "Bucks only: 1 egg when no pet still grows, and eggs to keep the Pet Pen full when Auto Pet Pen is on")
+        bindToggle(petsBox, "buyEgg", eggIcon, "Repeat buy & hatch", { "Farm", "BuyEgg" },
+            "Bucks only: buys the egg below, keeps it equipped until it hatches, then buys the next one (with Auto Pet Pen"
+                .. " it also keeps the pen full)")
         bindPick(petsBox, "eggChoice", eggIcon, "Egg to buy", { "Farm", "EggToBuy" }, Interface.EGG_NAMES)
         local growthBox = mainTab:CreateGroupbox({ Name = "Potions & neon", Icon = I("flask-conical"), Column = col(2) }, "growth")
         bindToggle(growthBox, "potions", "item:pet_age_potion|flask-conical", "Use potions", { "Farm", "AutoPotions", "Enabled" },
@@ -7519,12 +7570,15 @@ __moduleSources["Game/GameConstants"] = function(...)
         local list = type(farm) == "table" and farm.FarmPetKinds
         local focusInfo = GameConstants.focusOf(farm)
         local focus = focusInfo and focusInfo.id -- an egg focus ranks the egg first: it is hatched before the rest grows
-        if (type(list) ~= "table" or #list == 0) and not focus then
+        -- v3.0.5 Repeat buy & hatch (Farm.BuyEgg): the bought egg is hatched first too
+        local hatch = not focus and type(farm) == "table" and farm.BuyEgg == true and type(farm.EggToBuy) == "string"
+            and farm.EggToBuy or nil
+        if (type(list) ~= "table" or #list == 0) and not focus and not hatch then
             return nil
         end
         local rank = {}
-        if focus then
-            rank[focus] = 0
+        if focus or hatch then
+            rank[focus or hatch] = 0
         end
         for index, kind in ipairs(type(list) == "table" and list or {}) do
             rank[kind] = rank[kind] or index
@@ -18280,6 +18334,22 @@ __moduleSources["Game/TaskManager"] = function(...)
         -- v2.1.12 (user: "each switch does what its name says"): "Buy eggs" works on its own; equipping / swapping pets
         -- is only done by "Keep a growing pet equipped"
         local keepPet = self._farmConfig.KeepPetEquipped == true
+        -- v3.0.5 Repeat buy & hatch (user: "buy the egg, when it hatches buy again"): Buy eggs keeps one Farm.EggToBuy
+        -- egg in the backpack and equips it until it hatches (also when Pet Farm is off)
+        local hatchEgg = self._farmConfig.BuyEgg == true and not GameConstants.focusOf(self._farmConfig)
+            and type(self._farmConfig.EggToBuy) == "string" and self._farmConfig.EggToBuy or nil
+        local waitingEggs = 0
+        if hatchEgg and self._gameData and self._gameData:petInventoryKnown() then
+            local inPen = self._gameData:petPenPets()
+            for unique in pairs(self._gameData:petUniquesOfKind(hatchEgg)) do
+                if not inPen[unique] then
+                    waitingEggs += 1
+                end
+            end
+        end
+        if hatchEgg and self._farmConfig.PetOrder ~= "potion" then
+            keepPet = true
+        end
         if self._gameData and keepPet and self._farmConfig.PetOrder == "potion" and not petHold then
             -- v2.1.30 Potion farm: the full grown pet with the highest friendship stays equipped (no growing-pet swaps,
             -- no egg buying for it); friendship level-ups give the Age Potions
@@ -18377,6 +18447,67 @@ __moduleSources["Game/TaskManager"] = function(...)
                     return
                 end
             end
+            if hatchEgg and waitingEggs == 0 and known and self._gameData:petInventoryKnown()
+                and not (lastAgeUnknown and not current) and not self:_isBlocked("buy_egg")
+                and Tasks.eggBuyable(self._gameData, self._farmConfig) then
+                local max = tonumber(self._farmConfig.MaxEggBuysPerSession) or 0
+                self._eggBuys = self._eggBuys or 0
+                if max <= 0 or self._eggBuys < max then
+                    self:_start("buy_egg", "repeat hatch: buy the next " .. hatchEgg, Tasks.buyEgg, { onBought = function()
+                        self._eggBuys += 1
+                    end })
+                    return
+                end
+            end
+            -- v3.0.5 (user: "Pet to farm does not equip the pet"): the picked pet kind is equipped, a growing copy first,
+            -- else a full grown one (it is still farmed); an egg waiting to hatch comes before it
+            local chosenKind = keepPet and self._farmConfig.PetOrder ~= "potion" and type(self._farmConfig.FarmPetKinds) == "table"
+                and self._farmConfig.FarmPetKinds[1] or nil
+            local chosenFull = false
+            if type(chosenKind) == "string" and chosenKind ~= "" and waitingEggs == 0 and known
+                and self._gameData:petInventoryKnown() then
+                local equippedKind, equippedGrows = false, false
+                for _, pet in ipairs(list) do
+                    if pet.unique and self._gameData:getPetKind(pet.unique) == chosenKind then
+                        equippedKind = true
+                        equippedGrows = equippedGrows or pet.age == nil or pet.age < GameConstants.FullGrownAge
+                    end
+                end
+                chosenFull = equippedKind and not equippedGrows
+                local growing
+                for _, candidate in ipairs(self._gameData:growablePets(preferNeon, kindRank, youngestFirst)) do
+                    if candidate.kind == chosenKind and usable(candidate.unique) then
+                        growing = candidate.unique
+                        break
+                    end
+                end
+                local target
+                if not equippedKind then
+                    target = growing
+                    if not target then
+                        local inPen = self._gameData:petPenPets()
+                        for unique in pairs(self._gameData:petUniquesOfKind(chosenKind)) do
+                            if not inPen[unique] and usable(unique) then
+                                target = unique
+                                break
+                            end
+                        end
+                    end
+                    if not target and self._noChosenKind ~= chosenKind then
+                        self._noChosenKind = chosenKind
+                        self._logger:warn("Tasks", "Pet to farm: no " .. chosenKind .. " in your backpack (not in the Pet Pen)")
+                    end
+                elseif not equippedGrows and growing then
+                    target = growing
+                end
+                if target and not petHold and not self:_isBlocked("keep_pet") then
+                    self._logger:info("Tasks", "Pet to farm: equipping " .. chosenKind)
+                    self._farmPet = target
+                    self:_start("keep_pet", "equip the picked pet", Tasks.equipPet, { petUnique = target,
+                        onFail = onEquipFail(target) })
+                    return
+                end
+            end
             if (self._farmConfig.BuyEgg or (focusNow and focusNow.kind == "egg")) and known
                 and self._gameData:petInventoryKnown() and not pickGrowable()
                 and not (lastAgeUnknown and not current) and not self:_isBlocked("buy_egg")
@@ -18424,7 +18555,7 @@ __moduleSources["Game/TaskManager"] = function(...)
                     return
                 end
             end
-            if keepPet and skipGrown and #list > 0 and not growableEquipped and not self:_isBlocked("keep_pet") then
+            if keepPet and skipGrown and #list > 0 and not growableEquipped and not chosenFull and not self:_isBlocked("keep_pet") then
                 local wanted = pickGrowable()
                 if wanted then
                     self._logger:info("Tasks", "Your equipped pet is full grown: equipping one that still grows (Farm.SkipFullGrown)")
@@ -18444,7 +18575,8 @@ __moduleSources["Game/TaskManager"] = function(...)
                 and not self:_isBlocked("second_pet") then
                 if count == 2 and skipGrown then
                     for _, pet in ipairs(list) do
-                        if pet.unique and pet.age and pet.age >= GameConstants.FullGrownAge then
+                        if pet.unique and pet.age and pet.age >= GameConstants.FullGrownAge
+                            and self._gameData:getPetKind(pet.unique) ~= chosenKind then
                             local spare
                             for _, candidate in ipairs(self._gameData:growablePets(preferNeon, kindRank, youngestFirst)) do
                                 if not self._gameData:isPetEquipped(candidate.unique) and usable(candidate.unique) then
