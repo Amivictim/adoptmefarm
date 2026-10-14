@@ -1297,7 +1297,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "2.1.20 (Adopt Victims - UI Remastered Edition, Mega presets)"
+    Disclosure.VERSION = "2.1.21 (Adopt Victims - UI Remastered Edition, Mega presets)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -3324,6 +3324,11 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     Interface.CHANGELOG = {
+        "v2.1.21 (14 Oct 2026)",
+        "Join circles (Hauntlet, Ghost Gallery): the floor is loaded first and I am put on it, held still while it loads (no fall under the map)",
+        "In the circle: checked every second until the game queues me; fell through or pushed out -> back in at once (was every 20 s)",
+        "Ghost Gallery: Manor loaded again when its circle has no floor; no extra move 3 s before the start when I already stand in it",
+        "Hauntlet: the run's join call is sent once when the run does not answer; a warning when the run never shows on this device",
         "v2.1.20 (14 Oct 2026)",
         "Hauntlet / Ghost Gallery: a queue the game gives on the way (its teleport prompt) is kept; no more moves out of it",
         "Top line: a second line says the step (at home waiting for the game's prompt, in the join circle) and the start time",
@@ -8209,6 +8214,103 @@ __moduleSources["Game/Interaction"] = function(...)
         task.wait(1)
         return (root.Position - part.Position).Magnitude < (studs or 6) + 15, "moved back by the game"
     end
+    --[[
+        v2.1.21 (user report on 2.1.16: "teleported to the Ghost Gallery circle I fall through the floor and stay under
+        the map, the script waits for nothing"; reports: "Hauntlet: pushed out of the join circle" again and again,
+        never queued): the floor at a join circle can still be loading when I get there (phones with several
+        accounts). The game is asked to stream it first, I am put ON the floor found under the circle (was: a fixed
+        height) and, while there is none yet, held still (anchored) up to holdSeconds instead of falling through it.
+        Only my own hold is undone (the game may move me meanwhile). Returns true when I stand on a floor there.
+    ]]
+    local function circleFloorY(point, character)
+        local y = nil
+        pcall(function()
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            -- not me, not the pets, not the other players crowding the circle (workspace.PlayerCharacters, D1)
+            local ignore = { character }
+            for _, folder in ipairs({ GameConstants.PetsFolderName or "Pets", "PlayerCharacters" }) do
+                local found = workspace:FindFirstChild(folder)
+                if found then
+                    table.insert(ignore, found)
+                end
+            end
+            params.FilterDescendantsInstances = ignore
+            pcall(function()
+                params.RespectCanCollide = true -- a floor I can stand on, not a ring / zone part I would fall through
+            end)
+            local hit = workspace:Raycast(point + Vector3.new(0, 4, 0), Vector3.new(0, -24, 0), params)
+            y = hit and hit.Position.Y or nil
+        end)
+        return y
+    end
+    function Interaction:standOnCircle(point, holdSeconds)
+        local player = game:GetService("Players").LocalPlayer
+        local character = player and player.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        if not (root and humanoid) then
+            return false, "no character"
+        end
+        local waited = 0
+        while root.Anchored and waited < 5 do -- the game's own trip still holds me: let it finish first
+            task.wait(0.25)
+            waited += 0.25
+        end
+        if not circleFloorY(point, character) then
+            local streamDone = false
+            task.spawn(function()
+                pcall(function()
+                    player:RequestStreamAroundAsync(point, 4)
+                end)
+                streamDone = true
+            end)
+            local streamUntil = os.clock() + 4
+            while not streamDone and os.clock() < streamUntil and not circleFloorY(point, character) do
+                task.wait(0.1)
+            end
+        end
+        local stand = math.max((humanoid.HipHeight or 2) + root.Size.Y * 0.5, 3) + 0.3 -- a little high: never in the floor
+        local yaw = CFrame.Angles(0, math.rad(root.Orientation.Y), 0)
+        local floor = circleFloorY(point, character)
+        local held = false
+        local ok, err = pcall(function()
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+            character:PivotTo(CFrame.new(point.X, floor and (floor + stand) or point.Y, point.Z) * yaw)
+            if not floor and not root.Anchored then
+                root.Anchored = true -- held still over the circle while its floor loads
+                held = true
+            end
+        end)
+        if not ok then
+            return false, tostring(err)
+        end
+        if not held then
+            return floor ~= nil or humanoid.FloorMaterial ~= Enum.Material.Air, floor and "on the floor" or "held by the game"
+        end
+        local untilAt = os.clock() + (tonumber(holdSeconds) or 8)
+        while not floor and os.clock() < untilAt and root.Parent and root.Anchored do
+            task.wait(0.2)
+            floor = circleFloorY(point, character)
+        end
+        pcall(function()
+            local p = root.Position
+            if root.Anchored and math.abs(p.X - point.X) < 6 and math.abs(p.Z - point.Z) < 6 then
+                if floor then
+                    character:PivotTo(CFrame.new(point.X, floor + stand, point.Z) * yaw)
+                end
+                root.Anchored = false
+            end
+        end)
+        if floor then
+            return true, "on the floor (it loaded while I was held)"
+        end
+        -- no floor the ray could see: standing on something still counts
+        task.wait(1)
+        local standing = humanoid.FloorMaterial ~= Enum.Material.Air
+        return standing, standing and "standing" or "no floor at the circle (still loading)"
+    end
     function Interaction:teleportToJoinZone()
         local E = GameConstants.Event
         local function find(path)
@@ -8226,16 +8328,20 @@ __moduleSources["Game/Interaction"] = function(...)
         end
         self._sent += 1
         self._state:set("farm.actionsSent", self._sent, "Interaction")
-        local ok, err = pcall(function()
-            local p = spot.Position
-            character:PivotTo(CFrame.new(p.X, p.Y + 1.5, p.Z))
-        end)
-        if not ok then
-            return false, tostring(err)
-        end
+        -- v2.1.21: on the floor found there, held still while it loads (was: 1.5 studs over the spot, falling through
+        -- a floor that was still loading)
+        local stood, standWhy = self:standOnCircle(spot.Position + Vector3.new(0, 1.5, 0), 8)
+        character = game:GetService("Players").LocalPlayer.Character
+        root = character and character:FindFirstChild("HumanoidRootPart") or root
         local now = root.Position
         local dx, dz = now.X - spot.Position.X, now.Z - spot.Position.Z
-        return math.sqrt(dx * dx + dz * dz) <= E.JoinZoneRadius, "not in the circle after the teleport"
+        if math.sqrt(dx * dx + dz * dz) > E.JoinZoneRadius then
+            return false, "not in the circle after the teleport"
+        end
+        if not stood then
+            return false, tostring(standWhy)
+        end
+        return true, "on the floor"
     end
     function Interaction:teleportToHauntletJoinZone()
         local Players = game:GetService("Players")
@@ -8302,21 +8408,23 @@ __moduleSources["Game/Interaction"] = function(...)
             return false, "Hauntlet join zone not found (interiors loaded: " .. (#names > 0 and table.concat(names, ", ") or "none") .. ")"
         end
         local destination = target.Position + Vector3.new(0, (target.Size and target.Size.Y or 2) * 0.5 + 2.5, 0)
-        local ok, err = pcall(function()
-            character:PivotTo(CFrame.new(destination) * CFrame.Angles(0, math.rad(root.Orientation.Y), 0))
-        end)
-        if not ok then
-            return false, tostring(err)
-        end
+        -- v2.1.21: on the floor found there, held still up to 8 s while it loads (was: a fixed height, 2 s held by
+        -- settle, then a fall through a floor that was not there yet = "pushed out of the join circle", never queued)
+        local stood, standWhy = self:standOnCircle(destination, 8)
         self._sent += 1
         self._state:set("farm.actionsSent", self._sent, "Interaction")
-        pcall(Interaction.settle, 2) -- v2.1.6: never left inside the lobby floor
+        pcall(Interaction.settle, 0) -- v2.1.6: never left inside the lobby floor
         task.wait(0.6)
+        character = player.Character
+        root = character and character:FindFirstChild("HumanoidRootPart") or root
         local now = root.Position
         local dx, dz = now.X - target.Position.X, now.Z - target.Position.Z
         local dist = math.sqrt(dx * dx + dz * dz)
         if dist > 18 then
             return false, "not in the join circle after teleport (dist " .. string.format("%.1f", dist) .. ")"
+        end
+        if not stood then
+            return false, "join circle: " .. tostring(standWhy)
         end
         return true, target:GetFullName()
     end
@@ -14651,13 +14759,55 @@ __moduleSources["Game/EventTasks"] = function(...)
             if byZone and not queued() then
                 local zoneWhy
                 inZone, zoneWhy = ctx.interaction:teleportToJoinZone()
+                if not inZone and not queued() then
+                    -- v2.1.21: no floor at the circle = the Manor is not drawn on this device: its way in, then again
+                    ctx.logger:info("Event", "Ghost Gallery: join circle not reached (" .. tostring(zoneWhy)
+                        .. "): loading the Manor again")
+                    if ctx.travel:redraw("HauntedManor") and not queued() then
+                        inZone, zoneWhy = ctx.interaction:teleportToJoinZone()
+                    end
+                end
                 ctx.logger:info("Event", "Ghost Gallery: standing in the join circle" .. (inZone and "" or (" failed (" .. tostring(zoneWhy) .. ")")))
             end
             phase(ctx, "in the join circle: the game queues me when the round starts", tonumber(start))
-            ctx.waitUntil(function()
-                return queued() or Minigame.serverNow() >= start - 3
-            end, math.max(0, start - Minigame.serverNow()) + 5)
-            if byZone and not queued() then
+            -- v2.1.21 (user report: "at the Ghost Gallery circle I fall through the floor, stay under the map and the
+            -- script waits for nothing"): until 3 s before the start, checked every second: fell through the floor or
+            -- pushed out of the circle -> back in (5 s apart at most; not reached yet: tried again every 10 s). Never
+            -- while the game holds or moves me itself (anchored, 150+ studs away).
+            local standAt = inZone and myRoot() and myRoot().Position or nil
+            local function outOfCircle()
+                local root = myRoot()
+                if not (byZone and root and standAt) or root.Anchored then
+                    return false, false
+                end
+                local p = root.Position
+                local aside = Vector3.new(p.X - standAt.X, 0, p.Z - standAt.Z).Magnitude
+                local fell = p.Y < standAt.Y - 8
+                return (aside > 10 or fell) and aside < 150, fell
+            end
+            local waitEndAt = Util.now() + math.max(0, start - Minigame.serverNow()) + 5
+            local nextBack, backLogAt = Util.now() + (inZone and 1 or 10), -math.huge
+            while not queued() and Minigame.serverNow() < start - 3 and Util.now() < waitEndAt do
+                local out, fell = outOfCircle()
+                if byZone and (out or not standAt) and Util.now() >= nextBack then
+                    if Util.now() - backLogAt >= 30 then
+                        backLogAt = Util.now()
+                        ctx.logger:info("Event", "Ghost Gallery: " .. (not standAt and "trying the join circle again"
+                            or ((fell and "fell through the floor" or "pushed out of the join circle") .. ": back into it")))
+                    end
+                    local moved = ctx.interaction:teleportToJoinZone()
+                    if moved then
+                        inZone = true
+                        standAt = myRoot() and myRoot().Position or standAt
+                    end
+                    nextBack = Util.now() + (moved and 5 or 10)
+                end
+                ctx.waitUntil(function()
+                    return queued() or Minigame.serverNow() >= start - 3
+                end, 1)
+            end
+            -- (was: always teleported again at T-3; now only when I am not standing in the circle)
+            if byZone and not queued() and (not inZone or (outOfCircle())) then
                 inZone = ctx.interaction:teleportToJoinZone()
             end
             ctx.logger:info("Event", "Ghost Gallery: joining the round" .. (inZone and " (join circle)" or ""))
@@ -14942,7 +15092,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                         end
                         if attempt == 1 and not queued() then
                             -- v2.1.5: not in the hotel (or it did not load): the trip again, then look again
-                            ctx.logger:info("Event", "Hauntlet: join circle not found (" .. tostring(zoneInfo)
+                            ctx.logger:info("Event", "Hauntlet: join circle not reached (" .. tostring(zoneInfo)
                                 .. "): loading the hotel again")
                             -- v2.1.17: "already at HauntedHotel" in my data, but not drawn here: the game's way in
                             if not ctx.travel:redraw("HauntedHotel") and not queued() then
@@ -14963,25 +15113,42 @@ __moduleSources["Game/EventTasks"] = function(...)
                     else
                         ctx.logger:warn("Event", "Hauntlet: join circle unavailable (" .. tostring(zoneInfo) .. ")")
                     end
-                    -- Stay until queued. Soft zone refresh only if still not accepted (every 20 s, max ~2 min).
+                    -- Stay until queued (max ~2 min).
+                    -- v2.1.16 (user: "it keeps teleporting me into the circle"): back in only when I am out of it.
+                    -- v2.1.21 (2.1.16 report: "pushed out of the join circle: back into it" x2, never queued; user:
+                    -- "it falls through the floor"): checked every second (was every 20 s: a fall lost the start), out =
+                    -- 12+ studs aside or 8+ studs under where I stood; back in 5 s apart at most, by the safe teleport.
+                    -- Never while the game holds or moves me itself (anchored, 150+ studs away, in the run).
                     local joinUntil = Util.now() + 120
-                    local nextZoneRefresh = Util.now() + 20
-                    -- v2.1.16 (user: "it keeps teleporting me into the circle"): only when I was pushed out of it
-                    local circleAt = myRoot() and myRoot().Position
-                    while not h.joinAcceptedAt and not h.join and Util.now() < joinUntil do
+                    local nextZoneTry = Util.now() + (zoneMoved and 1 or 10)
+                    local circleAt = zoneMoved and myRoot() and myRoot().Position or nil
+                    local backLogAt = -math.huge
+                    while not queued() and not inRun() and Util.now() < joinUntil do
                         local rootNow = myRoot()
-                        local pushedOut = circleAt == nil or (rootNow ~= nil and (rootNow.Position - circleAt).Magnitude > 12)
-                        if zoneMoved and pushedOut and Util.now() >= nextZoneRefresh then
-                            ctx.logger:info("Event", "Hauntlet: pushed out of the join circle: back into it")
-                            ctx.interaction:teleportToHauntletJoinZone()
-                            circleAt = myRoot() and myRoot().Position
-                            nextZoneRefresh = Util.now() + 20
+                        if rootNow and not rootNow.Anchored and Util.now() >= nextZoneTry then
+                            local p = rootNow.Position
+                            local aside = circleAt and Vector3.new(p.X - circleAt.X, 0, p.Z - circleAt.Z).Magnitude or 0
+                            local fell = circleAt ~= nil and p.Y < circleAt.Y - 8
+                            if (circleAt == nil or aside > 12 or fell) and aside < 150 then
+                                if Util.now() - backLogAt >= 30 then
+                                    backLogAt = Util.now()
+                                    ctx.logger:info("Event", circleAt and ("Hauntlet: " .. (fell and "fell through the floor"
+                                        or "pushed out of the join circle") .. ": back into it")
+                                        or "Hauntlet: trying the join circle again")
+                                end
+                                local moved = ctx.interaction:teleportToHauntletJoinZone()
+                                if moved then
+                                    zoneMoved = true
+                                    circleAt = myRoot() and myRoot().Position or circleAt
+                                end
+                                nextZoneTry = Util.now() + (moved and 5 or 10)
+                            end
                         end
                         ctx.waitUntil(function()
-                            return h.joinAcceptedAt ~= nil or h.join ~= nil
-                        end, 2)
+                            return queued() or inRun()
+                        end, 1)
                     end
-                    if not h.joinAcceptedAt and not h.join then
+                    if not queued() and not inRun() then
                         return false, "not auto-queued from the join circle within 120 s"
                     end
                 end
@@ -15001,12 +15168,43 @@ __moduleSources["Game/EventTasks"] = function(...)
             -- v2.1.3 (reports: 54 x "not auto-queued", always the round right after a run): one run per 20 min. The
             -- round after this one is skipped (TaskManager:_hauntletRoundDue), the Ghost Gallery gets it instead.
             h.lastRunStart = (group and tonumber(group.start)) or Minigame.serverNow()
-            phase(ctx, "in the run")
+            phase(ctx, "joining the run")
+            -- v2.1.21 (user report: "hearts over my head, but the game never took me into the run"): the game's client
+            -- answers the run itself with AttemptJoin(session, true) (11_GAME_FINDINGS 7an). When nothing came back in
+            -- 12 s (no session accept, no run data), that same call is sent once, as the Ghost Gallery task does.
+            if not ctx.waitUntil(function()
+                return h.sessionAcceptedAt ~= nil or h.enter ~= nil or inRun() or h.leave ~= nil or h.kicked ~= nil
+            end, 12) then
+                ctx.logger:info("Event", "Hauntlet: the run did not answer in 12 s: joining it by the game's own call")
+                ctx.interaction:send("HauntletJoin", sessionId, true, nil)
+            end
             if not ctx.waitUntil(function()
                 return h.enter ~= nil or inRun() or h.leave ~= nil or h.kicked ~= nil
-            end, 45) then
+            end, 33) then
                 return false, "did not get into the run (" .. tostring(sessionId) .. ")"
             end
+            -- v2.1.21: the run is on for the server; is it on this device too? (the same report: hearts shown, the
+            -- character still in the Hotel). Only a line for the reports, watched beside the run (never delays it).
+            local joinedRun = h.join
+            task.spawn(pcall, function()
+                local untilAt = Util.now() + 20
+                while Util.now() < untilAt do
+                    if h.join ~= joinedRun or h.leave ~= nil or h.kicked ~= nil then
+                        return
+                    end
+                    local interiors = workspace:FindFirstChild("Interiors")
+                    for _, child in ipairs(interiors and interiors:GetChildren() or {}) do
+                        if child.Name == joinedRun.interior
+                            or string.sub(child.Name, 1, #E.HauntletInteriorPrefix) == E.HauntletInteriorPrefix then
+                            return -- drawn here: the game took me in
+                        end
+                    end
+                    task.wait(0.5)
+                end
+                ctx.logger:warn("Event", "Hauntlet: the run is on for the server (hearts), but the game did not take me"
+                    .. " into it on this device (still in " .. tostring(ctx.state:get("player.interior")) .. ")")
+            end)
+            phase(ctx, "in the run")
             local function over()
                 return h.leave ~= nil or h.kicked ~= nil
             end
