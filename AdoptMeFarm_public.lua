@@ -1,4 +1,4 @@
--- AdoptMe Farm  v3.0.10 | Adopt Victims v3 | settings: the window
+-- AdoptMe Farm  v3.0.11 | Adopt Victims v3 | settings: the window
 local UserConfig = {
     Farm = {
         Enabled = true, -- false = everything paused ("Pause all" in the window); each feature has its own switch
@@ -1324,7 +1324,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "3.0.10 (Adopt Victims v3)"
+    Disclosure.VERSION = "3.0.11 (Adopt Victims v3)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -1395,7 +1395,8 @@ __moduleSources["Services/Disclosure"] = function(...)
             "Black Screen (Interface.BlackScreen, Config > CPU saver; off by default): a black screen over the game with your"
                 .. " farm stats and the developer's picture / Discord server; while it is shown the game's 3D drawing is off and"
                 .. " the frame rate is capped (15, 30 in a minigame) when your executor can, graphics quality is set to the lowest (also Roblox's own setting) and the sound is muted,"
-                .. " the window is closed and the log files keep only warnings; all come back when it closes (tap"
+                .. " the window is closed (not even built when it was left on at start) and the log files keep only warnings; all"
+                .. " come back when it closes (tap"
                 .. " the picture). Local only, no remote; it steps aside while the farm sends a virtual tap and for Roblox's"
                 .. " disconnect window",
             "Autoclose GUI on execute (Interface.StartHidden): the window starts hidden by pressing its own minimize button"
@@ -5532,9 +5533,137 @@ __moduleSources["Services/Interface"] = function(...)
         end
         return Interface.country
     end
+    -- v3.0.11 audit (Starlight source): every Starlight:Notification keeps a RenderStepped connection (it rewrites the
+    -- "x s ago" text every frame) and its frame for as long as the window lives, and every element's hover text keeps one
+    -- RenderStepped connection that is never disconnected, not even when the window is destroyed. So: the farm's
+    -- pop-ups use this one reused label (no per-frame work), and with the Black Screen on the window is not built at all.
+    function Interface.toast(title, content)
+        pcall(function()
+            local holder = Interface._toast
+            if not (holder and holder.gui and holder.gui.Parent) then
+                local root = (type(gethui) == "function" and gethui()) or game:GetService("CoreGui")
+                for _, old in ipairs(root:GetChildren()) do
+                    if old.Name == "AVToast" then -- left by an earlier run of the script
+                        pcall(function()
+                            old:Destroy()
+                        end)
+                    end
+                end
+                local gui = Instance.new("ScreenGui")
+                gui.Name = "AVToast"
+                gui.ResetOnSpawn = false
+                gui.IgnoreGuiInset = true
+                gui.DisplayOrder = 60
+                local box = Instance.new("TextLabel")
+                box.AnchorPoint = Vector2.new(1, 1)
+                box.Position = UDim2.new(1, -12, 1, -12)
+                box.Size = UDim2.fromOffset(0, 0)
+                box.AutomaticSize = Enum.AutomaticSize.XY
+                box.BackgroundColor3 = Color3.fromRGB(18, 12, 26)
+                box.BackgroundTransparency = 0.1
+                box.TextColor3 = Color3.fromRGB(238, 234, 246)
+                box.Font = Enum.Font.GothamMedium
+                box.TextSize = 13
+                box.TextXAlignment = Enum.TextXAlignment.Left
+                box.TextWrapped = true
+                box.RichText = false
+                box.Visible = false
+                local limit = Instance.new("UISizeConstraint")
+                limit.MaxSize = Vector2.new(320, 140)
+                limit.Parent = box
+                local pad = Instance.new("UIPadding")
+                pad.PaddingLeft, pad.PaddingRight = UDim.new(0, 10), UDim.new(0, 10)
+                pad.PaddingTop, pad.PaddingBottom = UDim.new(0, 6), UDim.new(0, 6)
+                pad.Parent = box
+                local corner = Instance.new("UICorner")
+                corner.CornerRadius = UDim.new(0, 8)
+                corner.Parent = box
+                local stroke = Instance.new("UIStroke")
+                stroke.Color = Color3.fromRGB(255, 128, 24)
+                stroke.Transparency = 0.3
+                stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+                stroke.Parent = box
+                box.Parent = gui
+                gui.Parent = (type(gethui) == "function" and gethui()) or game:GetService("CoreGui")
+                holder = { gui = gui, box = box, token = 0 }
+                Interface._toast = holder
+            end
+            holder.token += 1
+            local token = holder.token
+            holder.box.Text = Lang.tr(tostring(title or "")) .. "\n" .. Lang.tr(tostring(content or ""))
+            holder.box.Visible = true
+            task.delay(4, function()
+                pcall(function()
+                    if holder.token == token then
+                        holder.box.Visible = false
+                    end
+                end)
+            end)
+        end)
+    end
+    -- the Black Screen switched off from its picture: the setting is saved (the window may not exist)
+    function Interface.saveBlackScreenOff(settings)
+        settings = settings or {}
+        local saved, key = Interface.saved, "Interface.BlackScreen"
+        if saved.originals[key] == false then
+            saved.changes[key], saved.originals[key] = nil, nil
+        elseif settings.RememberSettings ~= false then
+            saved.changes[key] = false
+        end
+        pcall(Interface.writeSaved, saved.changes, settings.RememberSettings ~= false)
+    end
+    -- v3.0.11 low-end start: the Black Screen was left on = only the black screen, no window (no library loaded, none
+    -- of its per-frame work); a tap on the picture builds the window
+    function Interface.startSaverOnly(api, options, config, settings)
+        local saver = Interface.saverScreen
+        if not (saver and saver.alive) then
+            local okStatus, status = pcall(api.Status)
+            local ok, screen = pcall(Interface.blackScreen, {
+                status = okStatus and status or nil,
+                statusFn = api.Status,
+                logger = options.logger,
+                onClose = function()
+                    config.Interface.BlackScreen = false
+                    Interface.saveBlackScreenOff(settings)
+                    if type(api.OpenInterface) == "function" then
+                        task.spawn(function()
+                            pcall(api.OpenInterface)
+                        end)
+                    end
+                end,
+            })
+            if not ok or type(screen) ~= "table" then
+                return nil
+            end
+            Interface.saverScreen = screen
+            saver = screen
+        end
+        local handle = { saverOnly = true, touch = true }
+        function handle.Toggle()
+            return false
+        end
+        function handle.Close()
+            local current = Interface.saverScreen
+            if current and current.alive then
+                Interface.saverScreen = nil
+                pcall(current.destroy)
+            end
+        end
+        Interface.current = handle
+        return handle
+    end
     function Interface.start(api, options)
         options = options or {}
         assert(type(api) == "table" and type(api.Config) == "table", "Interface: the farm's control API is missing")
+        do
+            local early = api.Config.Interface or options.settings or {}
+            if early.BlackScreen == true then
+                local onlySaver = Interface.startSaverOnly(api, options, api.Config, early)
+                if onlySaver then
+                    return onlySaver
+                end
+            end
+        end
         if Interface.current then
             pcall(Interface.current.Close)
             Interface.current = nil
@@ -5558,6 +5687,13 @@ __moduleSources["Services/Interface"] = function(...)
         local country = Interface.lookupCountry()
         Lang.use(Lang.pick(settings.Language, country, locale))
         pcall(Interface.localize, Starlight)
+        -- v3.0.11: the library's own pop-ups ("Interface Hidden" at every hide, callback errors) each keep a per-frame
+        -- connection and a frame until the window is gone: they are not shown (the farm uses Interface.toast)
+        pcall(function()
+            Starlight.Notification = function()
+                return nil
+            end
+        end)
         local touch = options.touch
         if touch == nil then
             local okTouch, isTouch = pcall(function()
@@ -5619,9 +5755,7 @@ __moduleSources["Services/Interface"] = function(...)
             end)
         end
         local function notify(title, content, icon)
-            pcall(function()
-                Starlight:Notification({ Title = title, Content = content, Icon = I(icon or "info"), Duration = 4 })
-            end)
+            Interface.toast(title, content) -- v3.0.11: no Starlight notification (each one keeps a per-frame connection)
         end
         local function copy(title, text)
             local copied = pcall(function()
@@ -6123,13 +6257,7 @@ __moduleSources["Services/Interface"] = function(...)
                     logger = options.logger,
                     onClose = function()
                         config.Interface.BlackScreen = false
-                        local saved, key = Interface.saved, "Interface.BlackScreen"
-                        if saved.originals[key] == false then
-                            saved.changes[key], saved.originals[key] = nil, nil
-                        elseif settings.RememberSettings ~= false then
-                            saved.changes[key] = false
-                        end
-                        pcall(Interface.writeSaved, saved.changes, settings.RememberSettings ~= false)
+                        Interface.saveBlackScreenOff(settings)
                         if type(api.OpenInterface) == "function" then
                             task.spawn(function()
                                 pcall(api.OpenInterface)
@@ -13428,7 +13556,8 @@ __moduleSources["Game/Hauntlet"] = function(...)
         pcall(function()
             self._debugConn = self._logger.OnEntry:Connect(function(level, category, message)
                 message = tostring(message)
-                if self.debugLines and (category == "Hauntlet" or string.find(message, "Hauntlet", 1, true)) then
+                if self.debugLines and #self.debugLines < 1500
+                    and (category == "Hauntlet" or string.find(message, "Hauntlet", 1, true)) then
                     table.insert(self.debugLines, string.format("%7.1f %s [%s] %s", Util.now() - self.debugStart,
                         tostring(level), tostring(category), message))
                 end
@@ -13442,7 +13571,7 @@ __moduleSources["Game/Hauntlet"] = function(...)
         self:_debugFlush()
     end
     function Hauntlet:_debugNote(text)
-        if self.debugLines then
+        if self.debugLines and #self.debugLines < 1500 then -- v3.0.11: bounded (a run that never reports its end)
             table.insert(self.debugLines, string.format("%7.1f %s", Util.now() - (self.debugStart or 0), tostring(text)))
         end
     end
@@ -20428,14 +20557,37 @@ __moduleSources["main"] = function(...)
                 end)
             end)
         end
-        -- v3.0.10: memory every 10 min in the log (the users' "crash after 2 hours")
+        -- v3.0.10 / v3.0.11: memory every 10 min in the log (users: "crash after 2 hours"). gcinfo() is only this script's
+        -- Lua heap, Stats:GetTotalMemoryUsageMb() the whole game. The last 12 samples are kept; a warning only when the
+        -- game memory went up in each of the last 6 samples and by 25 % or more in total (a steady climb, not noise).
+        local memorySamples = {}
         scheduler:addJob("Memory", 600, function()
             local lua = math.floor((gcinfo() or 0) / 1024)
-            local total = "?"
+            local total
             pcall(function()
-                total = tostring(math.floor(game:GetService("Stats"):GetTotalMemoryUsageMb()))
+                total = math.floor(game:GetService("Stats"):GetTotalMemoryUsageMb())
             end)
-            logger:info("Core", string.format("Memory: game %s MB, script %d MB", total, lua))
+            table.insert(memorySamples, total or -1)
+            if #memorySamples > 12 then
+                table.remove(memorySamples, 1)
+            end
+            logger:info("Core", string.format("Memory: game %s MB, script %d MB, up %d min, %d jobs, webhook queue %d",
+                total and tostring(total) or "?", lua, math.floor((Util.now() - state:get("session.startedAt", Util.now())) / 60),
+                #scheduler._order, notifier:pendingCount()))
+            local n = #memorySamples
+            if n >= 7 and total then
+                local rising = true
+                for index = n - 5, n do
+                    if memorySamples[index] <= memorySamples[index - 1] or memorySamples[index - 1] < 0 then
+                        rising = false
+                    end
+                end
+                local first = memorySamples[n - 6]
+                if rising and first > 0 and total >= first * 1.25 then
+                    logger:warn("Core", string.format("Memory keeps rising: %d MB -> %d MB in 60 min (Rejoin every in Advanced"
+                        .. " gives a fresh game)", first, total))
+                end
+            end
         end)
         scheduler:addJob("Heartbeat", 60, function()
             logger:debug("Core", string.format("Heartbeat: ticks=%d, webhook sent=%d dropped=%d pending=%d",
@@ -20713,13 +20865,14 @@ __moduleSources["main"] = function(...)
                 end
             end)
             pcall(function()
-                Players.LocalPlayer.CharacterAdded:Connect(function()
+                -- v3.0.11 audit: given to the maid (Stop / a new run disconnects it; it was left behind before)
+                maid:Give(Players.LocalPlayer.CharacterAdded:Connect(function()
                     task.wait(1)
                     if config.Farm.CameraGuard and not inMinigame() then
                         lastFix = os.clock()
                         task.spawn(fixCam, 10, "new character")
                     end
-                end)
+                end))
             end)
         end
         notifier:notify(Enums.NotifyEvent.SessionStarted, {
