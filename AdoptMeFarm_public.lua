@@ -1,4 +1,4 @@
--- AdoptMe Farm  v3.0.9 | Adopt Victims v3 | settings: the window
+-- AdoptMe Farm  v3.0.10 | Adopt Victims v3 | settings: the window
 local UserConfig = {
     Farm = {
         Enabled = true, -- false = everything paused ("Pause all" in the window); each feature has its own switch
@@ -455,6 +455,7 @@ __moduleSources["Core/Config"] = function(...)
             PreferNeon = true,
             AutoRejoin = false,
             StuckRejoinSeconds = 180,
+            RejoinEveryMinutes = 0, -- v3.0.10: a fresh server every N minutes (frees the game's memory; 0 = off)
             StuckRecovery = {
                 Enabled = true,
                 Seconds = 240,
@@ -1323,7 +1324,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "3.0.9 (Adopt Victims v3)"
+    Disclosure.VERSION = "3.0.10 (Adopt Victims v3)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -6983,6 +6984,9 @@ __moduleSources["Services/Interface"] = function(...)
             "No place / character: rejoins a PUBLIC server")
         bindSlider(advanced, "stuckMinutes", "hourglass", "Rejoin after", { "Farm", "StuckRejoinSeconds" },
             1, 10, 0.5, "min", nil, 60)
+        bindSlider(advanced, "rejoinEvery", "refresh-cw", "Rejoin every", { "Farm", "RejoinEveryMinutes" }, 0, 360, 10, "min",
+            "A fresh server every N minutes when nothing runs: frees the game's memory (long sessions, weak phones). 0 = off."
+                .. " Put this script in your executor's auto-execute so it starts again after the rejoin")
         bindToggle(advanced, "gameTravel", "door-open", "Game travel (doors)", { "Farm", "GameTravel" })
         bindToggle(advanced, "respawnHome", "rotate-ccw", "Go home by respawn", { "Farm", "HomeByRespawn" })
         bindToggle(advanced, "bowlTrip", "utensils", "Food bowl trips", { "Farm", "FoodBowlTrip" })
@@ -8882,7 +8886,7 @@ __moduleSources["Game/Interaction"] = function(...)
         table.insert(lines, "LOCAL teleport of your character next to the Stray Cat (Halloween map), into the Ghost Gallery join circle in the Haunted Manor (where the popup's Yes puts you) and, inside the minigame only, 50 studs under the ghost it vacuums (held every frame, back on the floor after the round) (Farm.Event)")
         table.insert(lines, "LOCAL teleport of your character into the selected door's join circle inside the Hauntlet rooms, requesting nearby room streaming when needed (Farm.Event.Hauntlet)")
         table.insert(lines, "LOCAL virtual click — only when Roblox says you are idle, to avoid the 20-minute kick (Farm.AntiAfk)")
-        table.insert(lines, "ROBLOX rejoin of a server of this game (TeleportService) — only after 3 min with no place / no character, e.g. a white screen in a dead minigame (Farm.AutoRejoin)")
+        table.insert(lines, "ROBLOX rejoin of a server of this game (TeleportService) — only after 3 min with no place / no character, e.g. a white screen in a dead minigame (Farm.AutoRejoin), and every Farm.RejoinEveryMinutes when set (0 = off)")
         return lines
     end
     function Interaction.virtualClick()
@@ -17853,6 +17857,9 @@ __moduleSources["Game/TaskManager"] = function(...)
     -- to them and never walks (Candy Shop, quest claims, gifts, potions, neon). hands = it holds an item / a pet for a
     -- few seconds (gifts, potions, fusion): the main slot starts nothing new until it is done.
     function TaskManager:_start(key, label, taskDefinition, group, isEventJob, side, hands)
+        if key == "keep_pet" or key == "equip_pet" or key == "second_pet" then
+            self._lastEquipAt = Util.now() -- v3.0.10: no other pet swap for 90 s after an equip
+        end
         local slot = side == true and "_side" or (type(side) == "string" and side) or "_running"
         local attempt = (self._failures[key] or 0) + 1
         local runMaid = Maid.new()
@@ -18095,6 +18102,23 @@ __moduleSources["Game/TaskManager"] = function(...)
         local dt = math.min(now - (self._lastTickAt or now), 5)
         self._lastTickAt = now
         self._why = nil
+        -- v3.0.10 (users: "pets get unequipped sometimes"): a minigame takes the pet off; it goes back on after
+        if self._running and MINIGAME_TASKS[self._running.key] then
+            self._minigameTookPet = true
+        end
+        -- v3.0.10 (users: "it crashes after 2 hours"): Rejoin every (Farm.RejoinEveryMinutes): a fresh server when the
+        -- farm is idle and no minigame is near (needs the script in the executor's auto-execute)
+        local every = tonumber(self._farmConfig.RejoinEveryMinutes) or 0
+        self._startedAt = self._startedAt or now
+        if every > 0 and not self._rejoinSent and now - self._startedAt >= every * 60 and not self._running
+            and not self:_minigameFreeze() and not self:_minigameSoon() then
+            self._rejoinSent = true
+            self._logger:info("Tasks", string.format("Rejoin every %d min: joining a fresh server (frees the game's memory)",
+                every))
+            pcall(function()
+                game:GetService("TeleportService"):Teleport(game.PlaceId, game:GetService("Players").LocalPlayer)
+            end)
+        end
         pcall(self._trackNeedRhythm, self)
         self:_tickInner()
         self:_tickQuick()
@@ -18481,6 +18505,25 @@ __moduleSources["Game/TaskManager"] = function(...)
             return
         end
         local petHold = Util.now() < (self._petHoldUntil or 0) -- 10 s after a Hauntlet interrupt: no equip in between
+        -- v3.0.10 (reports: "the pet was equipped, then gone again" x3, users: "it unequips my pets"): after an equip no
+        -- other rule swaps the pet for 90 s (rules no longer fight over the pet slot)
+        local swapCool = Util.now() - (self._lastEquipAt or -math.huge) < 90
+        -- v3.0.10: the pet worn before a minigame is put back on after it (also with Pet Farm off)
+        if self._gameData and not petHold then
+            local worn, wornKnown = self._gameData:equippedPetCount()
+            if wornKnown and worn > 0 and not self._minigameTookPet then
+                self._lastWornPet = self._gameData:firstEquippedPet()
+            elseif wornKnown and self._minigameTookPet then
+                self._minigameTookPet = nil
+                local back = self._lastWornPet
+                if worn == 0 and back and self._gameData:getPetKind(back) and not self:_isBlocked("keep_pet") then
+                    self._logger:info("Tasks", "The minigame took the pet off: putting " .. tostring(self._gameData:getPetKind(back))
+                        .. " back on")
+                    self:_start("keep_pet", "put the pet back on", Tasks.equipPet, { petUnique = back })
+                    return
+                end
+            end
+        end
         -- v2.1.12 (user: "each switch does what its name says"): "Buy eggs" works on its own; equipping / swapping pets
         -- is only done by "Keep a growing pet equipped"
         local keepPet = self._farmConfig.KeepPetEquipped == true
@@ -18650,7 +18693,7 @@ __moduleSources["Game/TaskManager"] = function(...)
                 elseif not equippedGrows and growing then
                     target = growing
                 end
-                if target and not petHold and not self:_isBlocked("keep_pet") then
+                if target and not petHold and not (swapCool and count > 0) and not self:_isBlocked("keep_pet") then
                     self._logger:info("Tasks", "Pet to farm: equipping " .. chosenKind)
                     self._farmPet = target
                     self:_start("keep_pet", "equip the picked pet", Tasks.equipPet, { petUnique = target,
@@ -18683,7 +18726,7 @@ __moduleSources["Game/TaskManager"] = function(...)
                     self:_start("equip_pet", "equip pet", Tasks.equipPet, { petUnique = wanted, onFail = onEquipFail(wanted) })
                     return
                 end
-            elseif (preferNeon or kindRank) and growableEquipped and not self:_isBlocked("keep_pet") then
+            elseif (preferNeon or kindRank) and growableEquipped and not swapCool and not self:_isBlocked("keep_pet") then
                 local bestEquipped
                 for _, pet in ipairs(list) do
                     if pet.unique and (pet.age == nil or pet.age < GameConstants.FullGrownAge) then
@@ -18705,7 +18748,8 @@ __moduleSources["Game/TaskManager"] = function(...)
                     return
                 end
             end
-            if keepPet and skipGrown and #list > 0 and not growableEquipped and not chosenFull and not self:_isBlocked("keep_pet") then
+            if keepPet and skipGrown and #list > 0 and not growableEquipped and not chosenFull and not swapCool
+                and not self:_isBlocked("keep_pet") then
                 local wanted = pickGrowable()
                 if wanted then
                     self._logger:info("Tasks", "Your equipped pet is full grown: equipping one that still grows (Farm.SkipFullGrown)")
@@ -18721,7 +18765,7 @@ __moduleSources["Game/TaskManager"] = function(...)
             -- v2.1.5 (users with the 2-pet perk / Pet Certificate: "it does not equip 2 pets at once"): a second growing
             -- pet next to the first. Found out by trying: when the second equip pushes the first pet out, this account
             -- holds 1 pet, the first one comes back and it is not tried again this session.
-            if keepPet and not self._oneSlotOnly and known and self._gameData:petInventoryKnown()
+            if keepPet and not self._oneSlotOnly and known and self._gameData:petInventoryKnown() and not swapCool
                 and not self:_isBlocked("second_pet") then
                 if count == 2 and skipGrown then
                     for _, pet in ipairs(list) do
@@ -18803,6 +18847,7 @@ __moduleSources["Game/TaskManager"] = function(...)
         local inRoom = type(place) == "string" and (string.sub(place, 1, #E.MinigameInteriorPrefix) == E.MinigameInteriorPrefix
             or string.sub(place, 1, #E.HauntletInteriorPrefix) == E.HauntletInteriorPrefix)
         if inRoom then
+            self._minigameTookPet = true
             self._inMinigameRoom = true
             return "in a minigame room (" .. place .. ")"
         elseif self._inMinigameRoom then
@@ -20383,6 +20428,15 @@ __moduleSources["main"] = function(...)
                 end)
             end)
         end
+        -- v3.0.10: memory every 10 min in the log (the users' "crash after 2 hours")
+        scheduler:addJob("Memory", 600, function()
+            local lua = math.floor((gcinfo() or 0) / 1024)
+            local total = "?"
+            pcall(function()
+                total = tostring(math.floor(game:GetService("Stats"):GetTotalMemoryUsageMb()))
+            end)
+            logger:info("Core", string.format("Memory: game %s MB, script %d MB", total, lua))
+        end)
         scheduler:addJob("Heartbeat", 60, function()
             logger:debug("Core", string.format("Heartbeat: ticks=%d, webhook sent=%d dropped=%d pending=%d",
                 scheduler.TickCount, notifier.SentCount, notifier.DroppedCount, notifier:pendingCount()))
