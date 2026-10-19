@@ -20460,13 +20460,14 @@ __moduleSources["Game/EventTasks"] = function(...)
                     if root and fallLine and root.Position.Y < fallLine and safe then
                         rescues += 1
                         target, targetPart = nil, nil
+                        local fellTo = root.Position.Y -- (v3.0.71: read before the move back; the log showed the new height)
                         pcall(function()
                             root.AssemblyLinearVelocity = Vector3.zero
                             root.Parent:PivotTo(safe)
                         end)
                         if rescues <= 3 then
                             ctx.logger:warn("Spotlight", string.format("Fell under the bottom floor (y %.0f < %.0f): back to where I stood",
-                                root.Position.Y, fallLine))
+                                fellTo, fallLine))
                         end
                     elseif root and not root.Anchored then
                         if fallLine and root.Position.Y > fallLine + 10 and root.Position.Y < fallLine + 80 and not resting then
