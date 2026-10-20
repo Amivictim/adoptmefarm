@@ -1,4 +1,4 @@
--- AdoptMe Farm  v3.0.72 | Adopt Victims v3 | settings: the window
+-- AdoptMe Farm  v3.0.73 | Adopt Victims v3 | settings: the window
 local UserConfig = {
     Farm = {
         Enabled = true, -- false = everything paused ("Pause all" in the window); each feature has its own switch
@@ -1353,7 +1353,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "3.0.72 (Adopt Victims v3)"
+    Disclosure.VERSION = "3.0.73 (Adopt Victims v3)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -12456,7 +12456,10 @@ __moduleSources["Game/Interaction"] = function(...)
             virtualUser:ClickButton2(Vector2.new(0, 0))
         end)
     end
-    Interaction.CLICK_METHODS = { "firesignal", "connections", "touch", "mouse" }
+    -- v3.0.72 (user's click module): "depth" first = the game's own button object (DepthButton, found in the
+    -- upvalues of the button's InputEnded connection) is clicked through its mouse_button1_click; works where
+    -- firesignal does nothing (Delta)
+    Interaction.CLICK_METHODS = { "depth", "firesignal", "connections", "touch", "mouse" }
     -- v3.0.1: screens of this script that cover the game (the Black Screen) step aside while a virtual tap / click is
     -- sent to a game button (else the tap would land on them); each guard gets true before and false after
     Interaction.clickGuards = {}
@@ -12531,7 +12534,49 @@ __moduleSources["Game/Interaction"] = function(...)
             ran and "sent" or "not sent", tostring(detail or "")))
         return ran, detail
     end
+    -- the game's DepthButton object behind a button (user's click module): the table with mouse_button1_click in the
+    -- upvalues of an InputEnded connection
+    local function depthButtonOf(button)
+        if type(getconnections) ~= "function" or type(debug) ~= "table" or type(debug.getupvalues) ~= "function" then
+            return nil, "getconnections / debug.getupvalues missing"
+        end
+        local ok, connections = pcall(getconnections, button.InputEnded)
+        if not ok or type(connections) ~= "table" then
+            return nil, "no InputEnded connections"
+        end
+        for _, connection in ipairs(connections) do
+            local fn = connection.Function
+            if fn then
+                local okUp, upvalues = pcall(debug.getupvalues, fn)
+                if okUp and type(upvalues) == "table" then
+                    for _, value in pairs(upvalues) do
+                        if type(value) == "table" and type(value.mouse_button1_click) == "function" then
+                            return value
+                        end
+                    end
+                end
+            end
+        end
+        return nil, "not a DepthButton"
+    end
     function Interaction._clickButton(button, method)
+        -- a text or image inside a button: the button itself (user's click module)
+        if not button:IsA("GuiButton") then
+            button = button:FindFirstAncestorWhichIsA("GuiButton")
+                or (button.Parent and button.Parent:FindFirstChildWhichIsA("GuiButton")) or button
+        end
+        if method == "depth" then
+            local depth, why = depthButtonOf(button)
+            if not depth then
+                return false, why
+            end
+            task.spawn(function()
+                if not pcall(depth.mouse_button1_click) then
+                    pcall(depth.mouse_button1_click, depth)
+                end
+            end)
+            return true, ""
+        end
         if method == "connections" then
             if type(getconnections) ~= "function" then
                 return false, "getconnections missing"
@@ -19319,7 +19364,7 @@ __moduleSources["Game/EventTasks"] = function(...)
                         if ok and pos and (pos - part.Position).Magnitude < 12 then
                             for _, button in ipairs(board:GetDescendants()) do
                                 if button:IsA("GuiButton") then
-                                    for _, method in ipairs({ "firesignal", "connections" }) do
+                                    for _, method in ipairs({ "depth", "firesignal", "connections" }) do
                                         pcall(function()
                                             ctx.interaction.clickButton(button, method)
                                         end)
@@ -19772,6 +19817,15 @@ __moduleSources["Game/EventTasks"] = function(...)
                 else
                     ctx.logger:info("Event", "Ghost Gallery: the circle did not queue me in 20 s: joining by call")
                 end
+            end
+            -- v3.0.72 (report: the game's "in the queue" hint 38 s before the round, 30 s of joins, "join was not
+            -- accepted" 6 s before the start; the game took me into the round at the start and I stood still): queued by
+            -- the game's hint = its own join at the start is waited for first (until 15 s after the start)
+            if not mg.joinAcceptedAt and not mg.join and EventTasks.inQueueByHint("ghost", queueSince) then
+                phase(ctx, "in the game's queue: waiting for the round", tonumber(start))
+                ctx.waitUntil(function()
+                    return mg.joinAcceptedAt ~= nil or mg.join ~= nil
+                end, math.max(0, tonumber(start) - Minigame.serverNow()) + 15)
             end
             local joinUntil = Util.now() + 30
             while not mg.joinAcceptedAt and not mg.join and Util.now() < joinUntil do
@@ -25993,6 +26047,16 @@ __moduleSources["main"] = function(...)
         end
         function api.OpenInterface()
             local okUi, uiError = pcall(Interface.start, api, { logger = logger, settings = config.Interface })
+            -- v3.0.72 (Delta report: "MobileToggle is not a valid member of ScreenGui 'Starlight V2'"): the library
+            -- builds its window from a model it downloads (game:GetObjects); a part of it was missing: built again
+            -- from a fresh download, 2 more times, 5 s apart
+            local tries = 1
+            while not okUi and tries < 3 and not stopped do
+                logger:info("Interface", "Window not opened (" .. tostring(uiError) .. "): trying again in 5 s")
+                task.wait(5)
+                tries += 1
+                okUi, uiError = pcall(Interface.start, api, { logger = logger, settings = config.Interface })
+            end
             if not okUi then
                 logger:warn("Interface", "Window not opened (the farm keeps running): " .. tostring(uiError))
             end
