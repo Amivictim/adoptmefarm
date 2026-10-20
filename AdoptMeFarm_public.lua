@@ -1,4 +1,4 @@
--- AdoptMe Farm  v3.0.73 | Adopt Victims v3 | settings: the window
+-- AdoptMe Farm  v3.0.74 | Adopt Victims v3 | settings: the window
 local UserConfig = {
     Farm = {
         Enabled = true, -- false = everything paused ("Pause all" in the window); each feature has its own switch
@@ -514,7 +514,9 @@ __moduleSources["Core/Config"] = function(...)
                     Buy = {
                         -- v3.0.21 (week 3): Stitches, bought only when it is in Pick, at the candy price the game's own item
                         -- list (InventoryDB) gives (gamePrice); no price there = the price here (0 = never), up to `max` owned
-                        { id = "halloween_2026_stitches", gamePrice = true, price = 0, max = 2 },
+                        -- v3.0.74 (user: "it does not buy Stitches"; logs: an account owns 8, so the game has no limit of 2):
+                        -- no owned-copies limit (it stopped every account that already had 2)
+                        { id = "halloween_2026_stitches", gamePrice = true, price = 0, max = 0 },
                         -- v3.0.69 (the game's "Buy Shoebill for 18000 Candy Corn?"): 18,000 when the game's list has none
                         { id = "halloween_2026_shoebill", gamePrice = true, price = 18000, max = 0 },
                         { id = "halloween_2026_jump_scare", price = 40000, max = 1 },
@@ -1353,7 +1355,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "3.0.73 (Adopt Victims v3)"
+    Disclosure.VERSION = "3.0.74 (Adopt Victims v3)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -22070,6 +22072,7 @@ __moduleSources["Game/EventTasks"] = function(...)
             return nil
         end
         if type(settings.Pick) == "table" then
+            local why = nil
             local picked = {}
             for _, id in ipairs(settings.Pick) do
                 picked[id] = true
@@ -22093,9 +22096,20 @@ __moduleSources["Game/EventTasks"] = function(...)
                     and (entry.category == nil or entry.category == GameConstants.EggCategory)
                     and (max <= 0 or owned < max)
                     and candy - (tonumber(settings.KeepCandy) or 0) >= price then
+                    EventTasks.candyWhy = nil
                     return { id = id, price = price, left = max > 0 and (max - owned) or nil }
                 end
+                -- v3.0.74 (user: "it does not buy Stitches"): why a picked pet is not bought, logged when it changes
+                if type(id) == "string" and picked[id] and not entry.machine then
+                    why = why or (not (price and price > 0) and (id .. ": no candy price known (the game's list has none)")
+                        or not forSale(id) and (id .. ": the shop said not for sale (tried again within 60 min)")
+                        or (max > 0 and owned >= max) and string.format("%s: %d owned, max %d", id, owned, max)
+                        or (candy - (tonumber(settings.KeepCandy) or 0) < price) and string.format(
+                            "%s: costs %d candy, not enough candy yet (Keep candy %d)", id, price, tonumber(settings.KeepCandy) or 0)
+                        or nil)
+                end
             end
+            EventTasks.candyWhy = why
             return nil
         end
         for _, entry in ipairs(type(settings.Buy) == "table" and settings.Buy or {}) do
@@ -23894,6 +23908,13 @@ __moduleSources["Game/TaskManager"] = function(...)
             local pick = EventTasks.candyPetTarget(data, candyPets)
             if pick then
                 return "candy_pet", "Candy Shop: buy " .. pick.id .. " (" .. pick.price .. " candy)", EventTasks.buyCandyPet, nil
+            end
+            -- v3.0.74: why a picked candy pet is not bought (only when the reason changes)
+            if EventTasks.candyWhy ~= self._candyWhy then
+                self._candyWhy = EventTasks.candyWhy
+                if self._candyWhy then
+                    self._logger:info("Tasks", "Candy Shop: not buying " .. self._candyWhy)
+                end
             end
         end
         if eventOn and event.Quests and due("quests") and #EventTasks.questsToClaim(data:get(KEYS.Dailies)) > 0 then
