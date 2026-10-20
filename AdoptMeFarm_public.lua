@@ -1,4 +1,4 @@
--- AdoptMe Farm  v3.0.71 | Adopt Victims v3 | settings: the window
+-- AdoptMe Farm  v3.0.72 | Adopt Victims v3 | settings: the window
 local UserConfig = {
     Farm = {
         Enabled = true, -- false = everything paused ("Pause all" in the window); each feature has its own switch
@@ -1353,7 +1353,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "3.0.71 (Adopt Victims v3)"
+    Disclosure.VERSION = "3.0.72 (Adopt Victims v3)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -14215,7 +14215,9 @@ __moduleSources["Game/Travel"] = function(...)
                     return true
                 end
             end
+            -- v3.0.72: says whether the game's own trip ended (and did not move me) or never ended (diagnosis)
             return false, "still in " .. tostring(self._state:get("player.interior"))
+                .. (finished and ", the game's trip ended" or ", the game's trip never ended")
         end
         self._logger:info("Travel", "Arrived: " .. tostring(self._state:get("player.interior")))
         if destination == "MainMap" then
@@ -14716,6 +14718,7 @@ __moduleSources["Game/Tasks"] = function(...)
             return false, "no character"
         end
         task.wait(2)
+        local character = Players.LocalPlayer.Character
         local sent, reason = ctx.interaction:send("EquipItem", unique, { equip_as_last = true })
         if not sent then
             return false, "Equip failed: " .. tostring(reason)
@@ -14728,6 +14731,15 @@ __moduleSources["Game/Tasks"] = function(...)
             task.wait(1)
             if equipped() then
                 return true
+            end
+            -- v3.0.72 (reports: "equipped, then gone again" right after a respawn): a new character came in between
+            -- and dropped the pet: equip once more on the new one
+            if Players.LocalPlayer.Character ~= character and waitForCharacter(ctx, 5) then
+                task.wait(1)
+                ctx.interaction:send("EquipItem", unique, { equip_as_last = true })
+                if ctx.waitUntil(equipped, 3) then
+                    return true
+                end
             end
             return false, "the pet was equipped, then gone again"
         end
@@ -16050,10 +16062,18 @@ __moduleSources["Game/Tasks"] = function(...)
         timeoutSeconds = 40,
         run = function(ctx)
             ctx.logger:info("Tasks", "Recover: respawning")
+            -- v3.0.72 (reports: "Done: recover: go home in 0.1 s", then "the pet was equipped, then gone again": the
+            -- old character was still there at home, the new one came seconds later and dropped the pet): wait for the
+            -- new character first
+            local before = Players.LocalPlayer.Character
             ctx.interaction:send("Respawn")
+            ctx.waitUntil(function()
+                local character = Players.LocalPlayer.Character
+                return character ~= before and character ~= nil and character:FindFirstChild("HumanoidRootPart") ~= nil
+            end, 12)
             if ctx.waitUntil(function()
                 return ctx.travel:isAt(GameConstants.HouseInteriorName)
-            end, 20) then
+            end, 8) then
                 return true
             end
             ctx.logger:info("Tasks", "Recover: respawn did not bring me home, travelling")
@@ -22700,7 +22720,11 @@ __moduleSources["Game/TaskManager"] = function(...)
         -- reset only by a recover that worked or a new place (TaskManager:tick); 8 = leave the game (LeaveWhenStuck)
         if slot == "_running" and (travelTrouble or (key == "recover" and result ~= "SUCCESS")) then
             self._stuckTrips = (self._stuckTrips or 0) + 1
-            if self._stuckTrips == 4 and self._travel and self._farmConfig.RemoteRoute ~= true then
+            -- v3.0.72 (report: "4 trips in a row failed in housing: trying the remote route" -> HauntedHotel never drawn,
+            -- void, recover): at home nothing is stuck (needs work there), so the rescue is only for other places
+            local stuckAt = self._state:get("player.interior")
+            if self._stuckTrips == 4 and self._travel and self._farmConfig.RemoteRoute ~= true
+                and stuckAt ~= GameConstants.HouseInteriorName then
                 -- v3.0.70: 4 failed trips in one place: the remote route as a rescue for 5 min (RemoteRoute is off)
                 self._travel.remoteRescueUntil = Util.now() + 300
                 self._logger:warn("Tasks", string.format("4 trips in a row failed in %s: trying the remote route for 5 min"
