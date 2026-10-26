@@ -1,4 +1,4 @@
--- AdoptMe Farm  v3.0.74 | Adopt Victims v3 | settings: the window
+-- AdoptMe Farm  v3.0.79 | Adopt Victims v3 | settings: the window
 local UserConfig = {
     Farm = {
         Enabled = true, -- false = everything paused ("Pause all" in the window); each feature has its own switch
@@ -54,6 +54,7 @@ local UserConfig = {
             HauntletSquad = true, -- your accounts in one run play as a team (phone / keys / wand by turns)
             HauntletSquadKey = "", -- private: only accounts with the relay's SQUAD_KEY ask it who is in the run (never shared)
             StrayCat = false,
+            StrayCatDragon = false, -- Crypt's Polymorphing Cat Food -> the Stray Cat (unlocks the Dragon; pick it in the shop to buy it)
             Crypt = false,
             CryptOpen = { "ladder" },
             PigeonNest = false,
@@ -69,6 +70,19 @@ local UserConfig = {
             PetPen = false,
             PetPenMinutes = 15,
             PetPenSlots = 4,
+        },
+        LureBox = {
+            Enabled = false, -- collect your Box Lure's reward and refill it with a bait picked below (no lure in your house: ONE is placed first, free)
+            Baits = {}, -- bait ids from your backpack, e.g. { "ice_dimension_2025_ice_soup_bait" }
+        },
+        Transfer = { -- Transfer Thingy: YOUR accounts, the game's mannequin sales + Cash Register (never a trade)
+            MainUserId = 0, -- the Main (pick it in the window); kept by UserId
+            MainName = "",
+            Mannequin = false, -- MAIN: mannequins in your house (750 Bucks each, up to MannequinCount), price 100
+            MannequinCount = 1,
+            BuyMannequin = false, -- ALT: buys the Main's mannequin outfits (3 each, then 2 min rest)
+            AutoPay = false, -- ALT: 50 Bucks at the Main's Cash Register (3, then 2 min rest)
+            MaxOutfitPrice = 100,
         },
     },
     Interface = { Enabled = true, Keybind = "RightShift", Toasts = true, RememberSettings = true, Theme = "Halloween",
@@ -105,6 +119,14 @@ local UserConfig = {
             PreviousSession = true,
         },
         IncludeUsername = true,
+        Inventory = { -- the Summary also lists your pets, sorted by YOUR values (nothing is looked up online)
+            Enabled = true,
+            Values = {}, -- e.g. { { kind = "halloween_2026_stray_cat_dragon", variant = "normal", value = 5 } }
+            ValueUnit = "value",
+            ValueSource = "",
+            ValuesUpdated = "",
+            ValuesUrl = "https://gist.githubusercontent.com/Amivictim/cc53bfbd8975a788396149c78a74dabf/raw/b229123ff213158489df9a803dd74e4faf0abcff/adoptme_values.csv", -- your value / USD file (raw Gist / Pastebin link, JSON or CSV), downloaded every 30 min
+        },
     },
 }
 local __moduleSources = {}
@@ -154,6 +176,7 @@ __moduleSources["Core/Enums"] = function(...)
         "Kicked",
         "PreviousSessionEnded",
         "Test",
+        "Inventory",
     })
     return Enums
 end
@@ -503,6 +526,9 @@ __moduleSources["Core/Config"] = function(...)
                 AutoLever = false,
                 AutoNest = false,
                 StrayCat = false,
+                -- v3.0.75: get the Crypt's Polymorphing Cat Food and feed it to the Stray Cat (unlocks the Stray Cat Dragon in
+                -- the Candy Shop; buying it is only done when it is picked there)
+                StrayCatDragon = false,
                 PetPen = false,
                 PetPenMinutes = 15,
                 CandyPets = {
@@ -519,6 +545,9 @@ __moduleSources["Core/Config"] = function(...)
                         { id = "halloween_2026_stitches", gamePrice = true, price = 0, max = 0 },
                         -- v3.0.69 (the game's "Buy Shoebill for 18000 Candy Corn?"): 18,000 when the game's list has none
                         { id = "halloween_2026_shoebill", gamePrice = true, price = 18000, max = 0 },
+                        -- v3.0.75 Stray Cat Dragon: InventoryDB cost 120000 candy (private DragonDiag 2026-10-24); only after the
+                        -- Stray Cat is polymorphed (afterPolymorph), only when it is in Pick (never bought by the unlock itself)
+                        { id = "halloween_2026_stray_cat_dragon", gamePrice = true, price = 120000, max = 0, afterPolymorph = true },
                         { id = "halloween_2026_jump_scare", price = 40000, max = 1 },
                         { id = "halloween_2026_jacobean_pigeon", price = 4000, max = 4 },
                         -- sold by the machine by the Manor (Lightning Lever): bought by the Skelicorn task, not here
@@ -532,6 +561,22 @@ __moduleSources["Core/Config"] = function(...)
                 PetPenEggs = true, -- v3.0.32: eggs (Farm.EggToBuy) only for empty pen slots, without Repeat buy & hatch
                 PetPenRarest = true, -- v3.0.32: the rarest growing pets in the pen (a rarer one takes a less rare one's place)
                 PetPenStockMinBucks = 750, -- "Buy eggs" fills the Pet Pen only above these Bucks
+            },
+            -- v3.0.75: Box Lure: collect its reward and refill it with a bait you picked (no lure in your house: ONE is placed first, free)
+            LureBox = {
+                Enabled = false,
+                Baits = {}, -- bait ids from your backpack, in the order they are used
+            },
+            -- v3.0.75 Transfer Thingy: your own accounts, through the game's mannequin outfit sales and Cash Register
+            -- (never a trade). The Main is kept by its UserId.
+            Transfer = {
+                MainUserId = 0,
+                MainName = "", -- shown only; the UserId decides
+                Mannequin = false, -- MAIN: own house, mannequins bought up to MannequinCount (750 Bucks each), price 100
+                MannequinCount = 1,
+                BuyMannequin = false, -- ALT: buys the Main's mannequin outfits (3 per mannequin, then 2 min rest)
+                AutoPay = false, -- ALT: 50 Bucks at the Main's Cash Register (3, then 2 min rest)
+                MaxOutfitPrice = 100, -- an outfit costing more is never bought
             },
             PetMeFocusSeconds = 7,
             FailureCooldownSeconds = 30,
@@ -554,7 +599,7 @@ __moduleSources["Core/Config"] = function(...)
         },
         Logging = {
             ConsoleLevel = "INFO",
-            FileLevel = "DEBUG",
+            FileLevel = "INFO", -- v3.0.79 (user: "remove most prints"): no DEBUG lines in the files by default
             FileEnabled = true,
             SessionFile = true,
             Folder = "AdoptMeFarm/logs",
@@ -594,6 +639,18 @@ __moduleSources["Core/Config"] = function(...)
                 PreviousSession = false,
             },
             IncludeUsername = true,
+            -- v3.0.75: the Summary also lists your pets, sorted by value. Values only from YOUR list below (none is
+            -- looked up anywhere): { kind = "<pet id>", variant = "normal" | "neon" | "mega", value = <number> }
+            Inventory = {
+                Enabled = false,
+                Values = {},
+                ValueUnit = "value", -- what the numbers are (your list's unit)
+                ValueSource = "", -- where your numbers come from (shown in the message)
+                ValuesUpdated = "", -- when you last updated them (shown in the message)
+                -- v3.0.79: a file with your values (JSON or CSV, e.g. a raw GitHub Gist / Pastebin link): downloaded at
+                -- start and every 30 min (nothing is sent there); Values above win over it
+                ValuesUrl = "",
+            },
             AlertCooldownSeconds = 60,
             MinSecondsBetweenMessages = 2.5,
             MaxQueueSize = 50,
@@ -631,8 +688,13 @@ __moduleSources["Core/Config"] = function(...)
         { "Farm", "Event", "PigeonNest" },
         { "Farm", "Event", "AutoLever" },
         { "Farm", "Event", "StrayCat" },
+        { "Farm", "Event", "StrayCatDragon" },
         { "Farm", "Event", "PetPen" },
         { "Farm", "Event", "CandyPets", "Enabled" },
+        { "Farm", "LureBox", "Enabled" },
+        { "Farm", "Transfer", "Mannequin" },
+        { "Farm", "Transfer", "BuyMannequin" },
+        { "Farm", "Transfer", "AutoPay" },
     }
     Config.PRESET_EXTRA_PATHS = {
         { "Farm", "Focus" },
@@ -678,11 +740,18 @@ __moduleSources["Core/Config"] = function(...)
         { { "Farm", "Event", "Quests" }, true },
         { { "Farm", "Event", "PetPen" }, true },
     }
+    -- v3.0.78 (user: "the presets are old"): this week's event too (Stitches' Spotlight, Shoebill, lever, Stray Cat
+    -- Dragon unlock) and this week's shop pets
     local EVENT_EXTRAS_ON = {
         { { "Farm", "Event", "PigeonNest" }, true },
         { { "Farm", "Event", "StrayCat" }, true },
+        { { "Farm", "Event", "StrayCatDragon" }, true },
+        { { "Farm", "Event", "Spotlight" }, true },
+        { { "Farm", "Event", "Shoebill" }, true },
+        { { "Farm", "Event", "AutoLever" }, true },
         { { "Farm", "Event", "CandyPets", "Enabled" }, true },
-        { { "Farm", "Event", "CandyPets", "Pick" }, { "halloween_2026_jacobean_pigeon", "halloween_2026_jump_scare" } },
+        { { "Farm", "Event", "CandyPets", "Pick" }, { "halloween_2026_stray_cat_dragon", "halloween_2026_shoebill",
+            "halloween_2026_stitches" } },
     }
     Config.SPEEDRUN_CHANGES = {
         { { "Farm", "BuyEgg" }, false },
@@ -717,6 +786,8 @@ __moduleSources["Core/Config"] = function(...)
             { { "Farm", "Event", "CandyPets", "Enabled" }, false },
             { { "Farm", "Event", "PigeonNest" }, false },
             { { "Farm", "Event", "StrayCat" }, true }, -- candy every day
+            { { "Farm", "Event", "Spotlight" }, true }, -- v3.0.78
+            { { "Farm", "Event", "Shoebill" }, true },
         }
     end
     -- user 2026-10-11: "with Mega Skelicorn the candy farm at its highest": every candy source on, Rusty Keys on the
@@ -761,7 +832,8 @@ __moduleSources["Core/Config"] = function(...)
             about = "Every feature off (the defaults). Anti-AFK and the Play button stay on.",
             set = {} },
         { id = "Balanced", name = "Full AutoFarm", icon = "circle-gauge",
-            about = "Everything: every need, eggs, potions, neon + mega neon, gifts, cashback, quests and the whole event.",
+            about = "Everything: every need, eggs, potions, neon + mega neon, gifts, cashback, quests and the whole event"
+                .. " (Spotlight, Shoebill, lever, Stray Cat Dragon; shop: Dragon, Shoebill, Stitches).",
             set = join(NEEDS_ON, EXTRAS_ON, EVENT_CORE_ON, EVENT_EXTRAS_ON) },
         { id = "Skelicorn", name = "Mega Skelicorn", icon = "sparkles",
             about = "Skelicorns only: candy from the whole event, Lightning Lever from the Crypt, a Skelicorn every "
@@ -1355,7 +1427,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "3.0.74 (Adopt Victims v3)"
+    Disclosure.VERSION = "3.0.79 (Adopt Victims v3)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -1371,6 +1443,8 @@ __moduleSources["Services/Disclosure"] = function(...)
         ["Log counts"] = "number of warnings/errors this session",
         ["Version"] = "this script's version",
         ["Previous session"] = "when the previous run ended without Stop() and the last Roblox message it saw",
+        -- v3.0.75 (Notifications.Inventory, off by default): a separate message after the summary
+        ["Inventory"] = "your pets by kind and normal / neon / mega, how many, and the values from YOUR own list (Notifications.Inventory.Values; N/A when it has none)",
     }
     Disclosure.BEHAVIOUR = {
         reads = {
@@ -1387,6 +1461,9 @@ __moduleSources["Services/Disclosure"] = function(...)
                 .. " it is to use a shared item)",
             "which pet model in the world is yours (to find it later)",
             "Roblox disconnect/kick messages (to report them)",
+            "v3.0.75: your Box Lure state and your saved outfits list; the game's own hint / dialog texts sent to you (to"
+                .. " check a price, a purchase or a payment); the furniture of the house you stand in (also your selected"
+                .. " Main's, only with Transfer Thingy on); the names of the players in this server (the Select Main list)",
             "for the window's icons: the game's item list (pictures of pets / items) and the picture next to your Bucks /"
                 .. " candy on the game's own screen (read only)",
         },
@@ -1403,11 +1480,15 @@ __moduleSources["Services/Disclosure"] = function(...)
             "Farm.LeaveWhenStuck (off by default): 8 failed trips in a row in the same place (a place this device never drew;"
                 .. " reset only by a recover that worked or a new place) -> leaves the game (Kick) so YOUR rejoin tool starts a"
                 .. " fresh client; it never teleports you to another server",
+            "v3.0.76: one game trip at a time; when the game's own trip hangs (45 s, still in the same place) every trip and"
+                .. " respawn waits until it works again (Farm.AutoRejoin: rejoins after 2 min; Farm.LeaveWhenStuck: leaves);"
+                .. " Box Lure / mannequin (MAIN) jobs run only while you are already at home",
             "Farm.RemoteRoute (off by default): a game trip that did not work is tried again later with the game's own"
                 .. " travel; the old remote route only when you switch this on",
             "a walk / ride the game itself moved you away from: not counted as a failure, tried again in 10 s",
-            "walk need: the pet is equipped again before the walk, and when it stays more than 20 studs behind for 6 s"
-                .. " (at most 4 times a walk)",
+            "walk need (v3.0.77): the pet is equipped only when it is not; when it stays more than 20 studs behind for 6 s"
+                .. " (at most 4 times a walk) or the walk moves to the beach, the pet is picked up and put down next to you"
+                .. " (the game's own Pick up / Drop Pet: AdoptAPI/HoldBaby, AdoptAPI/EjectBaby)",
             "minigame round times come from the game's own data ({ timestamp, identifier } of each minigame), none made up;"
                 .. " the measured round length is kept in AdoptMeFarm/minigame_periods.json",
             "Stitches' Spotlight (Farm.Event.Spotlight, on by default): joined ONLY through the game's own teleport prompt"
@@ -1459,18 +1540,42 @@ __moduleSources["Services/Disclosure"] = function(...)
                 .. " (the hide / show key or the round AV button opens it)",
             "the Dashboard (PC) shows this server's players, FPS / ping, region and uptime, read on your device (nothing"
                 .. " sent); its Join script button copies a script that joins this server to your clipboard",
+            "Box Lure (Farm.LureBox, off by default): at home, next to YOUR placed Box Lure: collects its reward when the game"
+                .. " says it is finished, then puts in ONE bait you picked (Farm.LureBox.Baits) from your backpack, checked in"
+                .. " your data; never baits a lure that already has one; when your house has NO Box Lure, ONE is placed first"
+                .. " (HousingAPI/BuyFurnitures lures_2023_normal_lure at your recorded spot; free in the user's log, no Robux)",
+            "Stray Cat Dragon (Farm.Event.StrayCatDragon, off by default): while the Stray Cat is not polymorphed and you"
+                .. " have no Polymorphing Cat Food, Rusty Keys open the Crypt's cat food grave first (your saved Crypt list is not"
+                .. " changed); the food is then given to the Stray Cat (the same feed call as the water), checked in your data"
+                .. " (polymorphed); after that no more water or keys for it. The Dragon itself is bought only when YOU pick it"
+                .. " in the Candy Shop, and only after the polymorph",
+            "Transfer Thingy (Farm.Transfer, every switch off by default, for YOUR own accounts): MAIN: mannequins in your"
+                .. " own house, bought with Bucks (750 each) only up to Farm.Transfer.MannequinCount, each priced at 100 Bucks"
+                .. " (checked by the game's 'Price was set' message); ALT: in the house of the Main you selected (by UserId,"
+                .. " never another player) buys its mannequin outfits at their price (at most Farm.Transfer.MaxOutfitPrice; 3"
+                .. " per mannequin, then a 2 min rest or the game's 'too many orders') and removes only that bought outfit from"
+                .. " your saved outfits; Auto Pay pays 50 Bucks at the Main's Cash Register (3, then a 2 min rest or the"
+                .. " game's 'overloaded'). Every buy / payment counts only when your Bucks went down",
+            "inventory summary (Notifications.Inventory, off by default): after the webhook summary, your pets grouped by"
+                .. " kind (normal / neon / mega), sorted by the values in YOUR list (Notifications.Inventory.Values) or in YOUR"
+                .. " value file (Notifications.Inventory.ValuesUrl: only DOWNLOADED, every 30 min; nothing is sent there)",
         },
         never = {
             "downloads or runs any other code (only YOUR loader downloads this program, from the URL shown above)",
             "sends data anywhere except your own Discord webhook (if you set one) and, when Telemetry is on, the"
                 .. " developer's relay (see NETWORK)",
-            "trades, gifts or drops items",
+            "trades: never sends, accepts or answers a Roblox trade (Transfer Thingy uses only the game's mannequin outfit"
+                .. " sale and Cash Register); never gifts or drops items",
             "clicks any buy / purchase / Robux button (on popups it only clicks the close X)",
             "uses items other than: sandwich / cheese / hotdog (hungry), water / chocolate milk (thirsty), squeaky bone (play);"
                 .. " buys nothing except 1 water or 1 hotdog when a need has nothing to use (limit: Farm.MaxBuysPerSession, 0 = none),"
                 .. " and Farm.EggToBuy eggs (Bucks only, Farm.BuyEgg 'Repeat buy & hatch': the next one when the last one hatched; limit Farm.MaxEggBuysPerSession);"
-                .. " Halloween (Farm.Event): 1 water a day for the Stray Cat, your Rusty Keys, Crypt Twigs, Lost Socks and Headphones (Shoebill doors) and the loaned Ghost Vacuum;"
-                .. " spends candy only on the Halloween pets and boxes you pick (Farm.Event.CandyPets, Keep candy / Keep Bucks kept back; Stitches / Shoebill at the game's own candy price, else the price in the list, never past their max), Skelicorns (Candy Shop pick) and, with Mega a Pet (Farm.Focus), copies of the picked candy pet / Skelicorn until Pet Pen slots + 1 grow (Bucks: the picked egg); age / bucks potions on the farmed pet"
+                .. " your picked Box Lure baits (Farm.LureBox); mannequins (750 Bucks, up to Farm.Transfer.MannequinCount), your"
+                .. " selected Main's mannequin outfits (at most Farm.Transfer.MaxOutfitPrice) and 50-Bucks Cash Register payments"
+                .. " (Farm.Transfer);"
+                .. " Halloween (Farm.Event): 1 water a day for the Stray Cat (none once it is polymorphed), the Polymorphing Cat Food"
+                .. " (Farm.Event.StrayCatDragon), your Rusty Keys, Crypt Twigs, Lost Socks and Headphones (Shoebill doors) and the loaned Ghost Vacuum;"
+                .. " spends candy only on the Halloween pets and boxes you pick (Farm.Event.CandyPets, Keep candy / Keep Bucks kept back; Stitches / Shoebill / the Stray Cat Dragon (only after the polymorph) at the game's own candy price, else the price in the list, never past their max), Skelicorns (Candy Shop pick) and, with Mega a Pet (Farm.Focus), copies of the picked candy pet / Skelicorn until Pet Pen slots + 1 grow (Bucks: the picked egg); age / bucks potions on the farmed pet"
                 .. " that still grows, never an Age-Up potion on a full grown pet (Potion farm: its full grown pet gets the bonus potions only)"
                 .. " (Farm.AutoPotions; never fly / ride potions); opens gifts, chests and boxes (Farm.AutoOpen);"
                 .. " fuses 4 of your full grown pets of one kind into 1 neon, and 4 full grown neons into 1 mega neon (Farm.AutoNeon)",
@@ -1591,6 +1696,8 @@ __moduleSources["Services/Disclosure"] = function(...)
             .. " default = nothing sent): your Roblox user id and the run's session id go to the relay's /squad, at most 3"
             .. " times a run; it answers only to the same key, with the user ids of your other accounts in that run")
         add("  - " .. webhookSummary)
+        add("  - Value list (v3.0.79): ONLY when you set Notifications.Inventory.ValuesUrl: that file is downloaded at start"
+            .. " and every 30 min (a GET; nothing of yours is sent) and read as numbers (JSON / CSV), never run as code")
         add("  - Webhook summaries show the farmed pet's own picture: its address is asked once from Roblox's thumbnail"
             .. " service (thumbnails.roblox.com; only the picture's number is sent there)")
         add("  - Webhook messages can only contain these fields:")
@@ -1633,6 +1740,7 @@ __moduleSources["Services/Notifier"] = function(...)
         Kicked = { title = "Disconnected / kicked", color = 0xED4245, route = "Alerts", toggle = "SendOnKick", ping = "Kick" },
         PreviousSessionEnded = { title = "Previous run ended without Stop()", color = 0xE67E22, route = "Alerts", toggle = "SendOnKick", ping = "PreviousSession" },
         Test = { title = "Webhook test", color = 0xFEE75C, route = "Summary" },
+        Inventory = { title = "Inventory", color = 0xF1C40F, route = "Summary" }, -- v3.0.75 (Notifications.Inventory)
     }
     local FIELD_VALUE_LIMIT = 1000
     local DESCRIPTION_LIMIT = 3500
@@ -1793,6 +1901,284 @@ __moduleSources["Services/Notifier"] = function(...)
             self._logger:warn("Notifier", queue.name .. " queue full; dropped the oldest message")
         end
         table.insert(queue.items, { body = body, event = eventName, attempts = 0 })
+        return true
+    end
+    --[[
+        v3.0.75 inventory summary (Notifications.Inventory): pets grouped by kind + variant (normal / neon / mega),
+        sorted by the group's total value from the user's OWN value list (Notifications.Inventory.Values); a pet
+        without a value there is "N/A" (never 0, never guessed) and listed after the valued ones.
+        pets = { { kind = "...", variant = "normal" | "neon" | "mega", grown = true|false }, ... }
+    ]]
+    local VARIANT_LABEL = { normal = "", neon = " (Neon)", mega = " (Mega Neon)" }
+    function Notifier.prettyKind(kind)
+        local text = tostring(kind)
+        text = string.gsub(text, "^%a+_%d%d%d%d_", "") -- event prefix (halloween_2026_)
+        text = string.gsub(text, "_", " ")
+        return (string.gsub(text, "(%a)([%w']*)", function(first, rest)
+            return string.upper(first) .. rest
+        end))
+    end
+    function Notifier.formatNumber(value)
+        local negative = value < 0
+        local whole = math.floor(math.abs(value) + 0.5)
+        local fraction = math.abs(value) - math.floor(math.abs(value))
+        local text = tostring(whole)
+        if fraction > 0.001 and math.abs(value) < 1000 then
+            text = string.format("%.2f", math.abs(value))
+            text = string.gsub(text, "0+$", "")
+            text = string.gsub(text, "%.$", "")
+            return (negative and "-" or "") .. text
+        end
+        local formatted = string.reverse((string.gsub(string.reverse(text), "(%d%d%d)", "%1,")))
+        formatted = string.gsub(formatted, "^,", "")
+        return (negative and "-" or "") .. formatted
+    end
+    --[[
+        v3.0.79 (user: "load my value / USD data from somewhere I upload it"): a value list is the user's own list in
+        the config (Values) and / or a file at Notifications.Inventory.ValuesUrl (downloaded, nothing is sent). An entry
+        names a pet by its id (halloween_2026_stray_cat_dragon) or by its name (Stray Cat Dragon), any case / spaces;
+        variant normal / neon / mega; value and / or usd. Accepted files:
+          JSON list   [ { "name": "Stray Cat Dragon", "variant": "mega", "value": 80, "usd": 12.5 }, ... ]
+          JSON object { "unit": "...", "updated": "...", "source": "...", "values": [ ...the list... ] }
+          JSON map    { "Stray Cat Dragon": { "normal": 5, "neon": 20, "mega": 80 }, ... }
+                      (a variant may also be { "value": 5, "usd": 1.2 })
+          CSV lines   name,variant,value,usd   (a first line with "name" is skipped)
+    ]]
+    local function norm(text)
+        return (string.gsub(string.lower(tostring(text or "")), "[^%w]", ""))
+    end
+    Notifier.norm = norm
+    local VARIANTS = { [""] = "normal", normal = "normal", default = "normal", regular = "normal", n = "neon", neon = "neon",
+        m = "mega", mega = "mega", meganeon = "mega", mneon = "mega" }
+    local function variantOf(text)
+        return VARIANTS[norm(text)]
+    end
+    function Notifier.parseValues(text)
+        local entries, meta = {}, {}
+        local function add(name, variant, value, usd)
+            local v = variantOf(variant)
+            value, usd = tonumber(value), tonumber(usd)
+            if type(name) == "string" and name ~= "" and v and (value or usd) and (value or 0) >= 0 and (usd or 0) >= 0 then
+                table.insert(entries, { name = name, variant = v, value = value, usd = usd })
+            end
+        end
+        if type(text) ~= "string" or text == "" then
+            return entries, meta
+        end
+        local decoded = Util.jsonDecode(text)
+        if type(decoded) == "table" then
+            local list = decoded
+            if type(decoded.values) == "table" then
+                list = decoded.values
+                meta.unit = type(decoded.unit) == "string" and decoded.unit or nil
+                meta.updated = type(decoded.updated) == "string" and decoded.updated or nil
+                meta.source = type(decoded.source) == "string" and decoded.source or nil
+            end
+            if #list > 0 then
+                for _, entry in ipairs(list) do
+                    if type(entry) == "table" then
+                        add(entry.kind or entry.id or entry.name, entry.variant or "normal", entry.value, entry.usd)
+                    end
+                end
+            else
+                for name, variants in pairs(list) do
+                    if type(variants) == "table" then
+                        for variant, value in pairs(variants) do
+                            if type(value) == "table" then
+                                add(name, variant, value.value, value.usd)
+                            else
+                                add(name, variant, value, nil)
+                            end
+                        end
+                    elseif tonumber(variants) then
+                        add(name, "normal", variants, nil)
+                    end
+                end
+            end
+            return entries, meta
+        end
+        for line in string.gmatch(text, "[^\r\n]+") do
+            local parts = {}
+            for part in string.gmatch(line .. ",", "([^,]*),") do
+                table.insert(parts, (string.gsub(part, "^%s*(.-)%s*$", "%1")))
+            end
+            if norm(parts[1]) ~= "name" and norm(parts[1]) ~= "kind" then
+                add(parts[1], parts[2] or "normal", parts[3], parts[4])
+            end
+        end
+        return entries, meta
+    end
+    -- the downloaded list (main.lua fills it from Notifications.Inventory.ValuesUrl)
+    Notifier.remoteValues = nil
+    function Notifier.inventoryGroups(pets, values)
+        local valueOf = {}
+        local function put(key, variant, value, usd)
+            if key ~= "" then
+                valueOf[key .. "|" .. variant] = { value = value, usd = usd }
+            end
+        end
+        -- the downloaded list first, the config's own list on top of it
+        local remote = Notifier.remoteValues
+        for _, entry in ipairs(type(remote) == "table" and remote.entries or {}) do
+            put(norm(entry.name), entry.variant, entry.value, entry.usd)
+        end
+        for _, entry in ipairs(type(values) == "table" and values or {}) do
+            if type(entry) == "table" then
+                local value, usd = tonumber(entry.value), tonumber(entry.usd)
+                local variant = variantOf(entry.variant or "normal")
+                if variant and (value or usd) and (value or 0) >= 0 and (usd or 0) >= 0 then
+                    put(norm(entry.kind or entry.id or entry.name), variant, value, usd)
+                end
+            end
+        end
+        local function lookup(kind, variant)
+            return valueOf[norm(kind) .. "|" .. variant] or valueOf[norm(Notifier.prettyKind(kind)) .. "|" .. variant]
+        end
+        local groups, byKey, total = {}, {}, 0
+        for _, pet in ipairs(pets) do
+            total += 1
+            local key = tostring(pet.kind) .. "|" .. tostring(pet.variant)
+            local group = byKey[key]
+            if not group then
+                local found = lookup(pet.kind, pet.variant)
+                group = { kind = tostring(pet.kind), variant = pet.variant, count = 0, grown = 0, each = found and found.value,
+                    usd = found and found.usd }
+                byKey[key] = group
+                table.insert(groups, group)
+            end
+            group.count += 1
+            if pet.grown then
+                group.grown += 1
+            end
+        end
+        local known, knownUsd, unknownPets, unknownGroups = 0, 0, 0, 0
+        for _, group in ipairs(groups) do
+            group.total = group.each and group.each * group.count or nil
+            group.usdTotal = group.usd and group.usd * group.count or nil
+            known += group.total or 0
+            knownUsd += group.usdTotal or 0
+            if not group.total and not group.usdTotal then
+                unknownPets += group.count
+                unknownGroups += 1
+            end
+        end
+        -- valued groups by total value, then the ones with only a USD price by their USD total, then the unknown ones
+        local function tier(g)
+            return g.total and 1 or (g.usdTotal and 2 or 3)
+        end
+        table.sort(groups, function(a, b)
+            if tier(a) ~= tier(b) then
+                return tier(a) < tier(b)
+            end
+            local ka, kb = a.total or a.usdTotal, b.total or b.usdTotal
+            if ka and kb and ka ~= kb then
+                return ka > kb
+            end
+            if a.count ~= b.count then
+                return a.count > b.count
+            end
+            return a.kind .. a.variant < b.kind .. b.variant
+        end)
+        return groups, { pets = total, known = known, knownUsd = knownUsd, unknownPets = unknownPets, unknownGroups = unknownGroups }
+    end
+    local INVENTORY_PAGE_CHARS = 3600
+    local INVENTORY_MAX_PAGES = 5
+    function Notifier.inventoryEmbeds(pets, cfg, playerName)
+        cfg = type(cfg) == "table" and cfg or {}
+        local groups, sums = Notifier.inventoryGroups(pets, cfg.Values)
+        local remote = type(Notifier.remoteValues) == "table" and Notifier.remoteValues or nil
+        local meta = remote and remote.meta or {}
+        local function pick(a, b)
+            return (type(a) == "string" and a ~= "") and a or ((type(b) == "string" and b ~= "") and b or nil)
+        end
+        local unit = pick(cfg.ValueUnit ~= "value" and cfg.ValueUnit or nil, meta.unit) or "value"
+        local source = pick(cfg.ValueSource, meta.source) or (remote and "your value file" or "your list")
+        local updated = pick(meta.updated, cfg.ValuesUpdated)
+            or (remote and remote.at and os.date("!%Y-%m-%d %H:%M UTC", remote.at)) or "never"
+        local function usdText(amount)
+            local text = string.format("%.2f", amount)
+            return "$" .. Notifier.formatNumber(math.floor(amount)) .. string.sub(text, -3)
+        end
+        local head = {}
+        table.insert(head, string.format("👤 **%s** • 🐾 %d pets in %d groups", tostring(playerName or "?"), sums.pets, #groups))
+        table.insert(head, string.format("💰 Known value: **%s %s**%s • unknown: %d pets in %d groups",
+            Notifier.formatNumber(sums.known), unit, sums.knownUsd > 0 and (" • **" .. usdText(sums.knownUsd) .. "**") or "",
+            sums.unknownPets, sums.unknownGroups))
+        table.insert(head, string.format("📋 Values: %s, updated %s", source, updated))
+        local headText = table.concat(head, "\n")
+        local rows = {}
+        for index, group in ipairs(groups) do
+            local name = Notifier.prettyKind(group.kind) .. (VARIANT_LABEL[group.variant] or "")
+            local grown = group.grown > 0 and group.grown < group.count and string.format(" (%d grown)", group.grown) or ""
+            local parts = {}
+            if group.total then
+                table.insert(parts, string.format("%s each = **%s**", Notifier.formatNumber(group.each), Notifier.formatNumber(group.total)))
+            end
+            if group.usdTotal then
+                table.insert(parts, group.count > 1 and string.format("%s (%s each)", usdText(group.usdTotal), usdText(group.usd))
+                    or usdText(group.usdTotal))
+            end
+            table.insert(rows, string.format("`%d.` %s ×%d%s — %s", index, name, group.count, grown,
+                #parts > 0 and table.concat(parts, " • ") or "N/A"))
+        end
+        local pages, current = {}, {}
+        local size = 0
+        for _, row in ipairs(rows) do
+            if size + #row + 1 > INVENTORY_PAGE_CHARS and #current > 0 then
+                table.insert(pages, current)
+                current, size = {}, 0
+            end
+            table.insert(current, row)
+            size += #row + 1
+        end
+        if #current > 0 or #pages == 0 then
+            table.insert(pages, current)
+        end
+        local left = 0
+        while #pages > INVENTORY_MAX_PAGES do
+            left += #table.remove(pages)
+        end
+        local embeds = {}
+        for index, page in ipairs(pages) do
+            local text = (index == 1 and (headText .. "\n\n") or "") .. table.concat(page, "\n")
+            if index == #pages and left > 0 then
+                text ..= string.format("\n… and %d more groups (lowest values / unknown)", left)
+            end
+            table.insert(embeds, {
+                title = #pages > 1 and string.format("Inventory (%d/%d)", index, #pages) or "Inventory",
+                description = Util.truncate(text, DESCRIPTION_LIMIT + 300),
+            })
+        end
+        return embeds
+    end
+    function Notifier:notifyEmbeds(eventName, embeds)
+        local style = EVENT_STYLE[Enums.NotifyEvent[eventName]]
+        if not self:isEnabled() or not style or type(embeds) ~= "table" then
+            return false
+        end
+        local routeName, url = self:_resolveRoute(style.route)
+        if not url then
+            return false
+        end
+        local queue = self:_getQueue(routeName, url)
+        if queue.disabled then
+            return false
+        end
+        for _, embed in ipairs(embeds) do
+            embed.color = style.color
+            embed.footer = { text = self._scriptName }
+            pcall(function()
+                embed.timestamp = DateTime.now():ToIsoDate()
+            end)
+            local body = Util.jsonEncode({ username = self._scriptName, embeds = { embed }, allowed_mentions = { parse = {} } })
+            if body then
+                if #queue.items >= self._config.MaxQueueSize then
+                    table.remove(queue.items, 1)
+                    self.DroppedCount += 1
+                end
+                table.insert(queue.items, { body = body, event = eventName, attempts = 0 })
+            end
+        end
         return true
     end
     function Notifier:_send(queue)
@@ -3256,6 +3642,120 @@ __moduleSources["Services/Lang"] = function(...)
     template("Socks %s  •  Headphones %s", "Çoraplar %s  •  Kulaklık %s", "Calcetines %s  •  Auriculares %s",
         "Meias %s  •  Fones %s")
     template("%s (game price)", "%s (oyun fiyatı)", "%s (precio del juego)", "%s (preço do jogo)")
+    -- v3.0.75: Box Lure, Stray Cat Dragon, Transfer Thingy, inventory by value
+    add("Box Lure", "Yem Kutusu", "Caja Cebo", "Caixa Isca")
+    add("Auto Lure Box", "Otomatik Yem Kutusu", "Caja Cebo automática", "Caixa Isca automática")
+    add("Places ONE Box Lure if your house has none, collects its reward and puts a bait you picked in it",
+        "Evinde Yem Kutusu yoksa BİR tane koyar, ödülünü toplar ve seçtiğin yemi koyar",
+        "Si tu casa no tiene Caja Cebo pone UNA, recoge su recompensa y pone un cebo elegido",
+        "Se sua casa não tem Caixa Isca põe UMA, coleta a recompensa e põe uma isca escolhida")
+    -- v3.0.79
+    add("Value list URL", "Değer listesi linki", "Enlace de la lista de valores", "Link da lista de valores")
+    add("Webhook inventory: values / USD from your own file (Value list URL: raw Gist / Pastebin, JSON or CSV), by pet id or name",
+        "Webhook envanteri: değerler / USD kendi dosyandan (Değer listesi linki: raw Gist / Pastebin, JSON veya CSV), pet id'si veya adıyla",
+        "Inventario del webhook: valores / USD de tu propio archivo (enlace: raw Gist / Pastebin, JSON o CSV), por id o nombre",
+        "Inventário do webhook: valores / USD do seu arquivo (link: raw Gist / Pastebin, JSON ou CSV), por id ou nome")
+    add("Quieter logs: need, status, camera and Anti-AFK lines are debug only",
+        "Daha sessiz loglar: need, durum, kamera ve Anti-AFK satırları sadece debug",
+        "Registros más silenciosos: necesidades, estado, cámara y Anti-AFK solo en debug",
+        "Logs mais quietos: necessidades, status, câmera e Anti-AFK só em debug")
+    -- v3.0.78
+    add("No Box Lure at home: one is placed first (one time, top priority), then the picked bait goes in",
+        "Evde Yem Kutusu yoksa önce bir tane konur (tek seferlik, en öncelikli), sonra seçilen yem konur",
+        "Sin Caja Cebo en casa: primero se pone una (una vez, máxima prioridad), luego el cebo elegido",
+        "Sem Caixa Isca em casa: primeiro uma é colocada (uma vez, prioridade máxima), depois a isca escolhida")
+    add("One time jobs come first: mannequins (MAIN), the ALT's first trip to the Main's house (it waits there for the mannequins / register)",
+        "Tek seferlik işler önce: mankenler (ANA), ALT'ın ana hesabın evine ilk gidişi (orada mankenleri / kasayı bekler)",
+        "Primero los trabajos de una vez: maniquíes (MAIN), el primer viaje del ALT a la casa del Main (espera maniquíes / caja)",
+        "Trabalhos de uma vez primeiro: manequins (MAIN), a primeira ida do ALT à casa do Main (espera manequins / caixa)")
+    add("Colors for the new boxes; presets updated for this week's event", "Yeni kutulara renk; presetler bu haftanın etkinliğine göre güncellendi",
+        "Colores para las cajas nuevas; presets al día con el evento de esta semana", "Cores nas caixas novas; presets atualizados para o evento da semana")
+    add("Baits to use", "Kullanılacak yemler", "Cebos a usar", "Iscas a usar")
+    add("No bait picked", "Yem seçilmedi", "Ningún cebo elegido", "Nenhuma isca escolhida")
+    add("Only these baits from your backpack are used, in this order", "Çantandaki sadece bu yemler bu sırayla kullanılır",
+        "Solo se usan estos cebos de tu mochila, en este orden", "Só estas iscas da mochila são usadas, nesta ordem")
+    add("(not here now)", "(şu an yok)", "(no está ahora)", "(não está agora)")
+    template("Lure: %s", "Yem kutusu: %s", "Caja Cebo: %s", "Caixa Isca: %s")
+    add("Auto Stray Cat Dragon", "Otomatik Stray Cat Dragon", "Stray Cat Dragon automático", "Stray Cat Dragon automático")
+    add("Rusty Key on the Crypt's cat food grave, then the Polymorphing Cat Food to the Stray Cat (unlocks the Dragon; pick it in the Candy Shop to buy it)",
+        "Paslı Anahtar Mahzendeki kedi maması mezarına, sonra Polymorphing Cat Food Sokak Kedisine (Dragon açılır; almak için Şeker Dükkanında seç)",
+        "Llave Oxidada en la tumba de comida de gato de la Cripta, luego la Polymorphing Cat Food al gato callejero (desbloquea el Dragon; elígelo en la tienda para comprarlo)",
+        "Chave Enferrujada no túmulo de comida de gato da Cripta, depois a Polymorphing Cat Food ao gato de rua (libera o Dragon; escolha na loja para comprar)")
+    add("Stray Cat Dragon: ?", "Stray Cat Dragon: ?", "Stray Cat Dragon: ?", "Stray Cat Dragon: ?")
+    add("Stray Cat Dragon: unlocked (buy it in the Candy Shop)", "Stray Cat Dragon: açıldı (Şeker Dükkanından al)",
+        "Stray Cat Dragon: desbloqueado (cómpralo en la tienda)", "Stray Cat Dragon: liberado (compre na loja)")
+    template("Stray Cat Dragon: locked, cat food %d", "Stray Cat Dragon: kilitli, kedi maması %d",
+        "Stray Cat Dragon: bloqueado, comida de gato %d", "Stray Cat Dragon: bloqueado, comida de gato %d")
+    add("Inventory by value", "Değere göre envanter", "Inventario por valor", "Inventário por valor")
+    add("After each summary: your pets by kind (normal / neon / mega), sorted by the values in YOUR list (Notifications.Inventory.Values); no value = N/A",
+        "Her özetten sonra: petlerin türe göre (normal / neon / mega), SENİN listendeki değerlere göre sıralı (Notifications.Inventory.Values); değer yok = N/A",
+        "Tras cada resumen: tus mascotas por tipo (normal / neón / mega), ordenadas por los valores de TU lista (Notifications.Inventory.Values); sin valor = N/A",
+        "Após cada resumo: seus pets por tipo (normal / neon / mega), ordenados pelos valores da SUA lista (Notifications.Inventory.Values); sem valor = N/A")
+    add("Transfer Thingy", "Transfer Thingy", "Transfer Thingy", "Transfer Thingy")
+    add("Select Main", "Ana hesabı seç", "Elegir Main", "Escolher Main")
+    add("None", "Yok", "Ninguno", "Nenhum")
+    add("No Main selected", "Ana hesap seçilmedi", "Ningún Main elegido", "Nenhum Main escolhido")
+    add("The player your Bucks go to (players in this server); kept by its UserId",
+        "Bucks'ların gideceği oyuncu (bu sunucudakiler); UserId ile tutulur",
+        "El jugador que recibe tus Bucks (jugadores de este servidor); se guarda por su UserId",
+        "O jogador que recebe seus Bucks (jogadores deste servidor); guardado pelo UserId")
+    add("Main: none", "Ana hesap: yok", "Main: ninguno", "Main: nenhum")
+    template("Main: %s (@%s, %s)", "Ana hesap: %s (@%s, %s)", "Main: %s (@%s, %s)", "Main: %s (@%s, %s)")
+    template("Main: %s is not in this server", "Ana hesap: %s bu sunucuda değil", "Main: %s no está en este servidor",
+        "Main: %s não está neste servidor")
+    add("Mannequins", "Mankenler", "Maniquíes", "Manequins")
+    add("Auto Mannequin (MAIN)", "Otomatik Manken (ANA)", "Maniquí automático (MAIN)", "Manequim automático (MAIN)")
+    add("MAIN account: in YOUR house, mannequins bought (750 Bucks each) until the count below, each priced at 100 Bucks",
+        "ANA hesap: SENİN evinde, aşağıdaki sayıya kadar manken alınır (her biri 750 Bucks), fiyatı 100 Bucks yapılır",
+        "Cuenta MAIN: en TU casa se compran maniquíes (750 Bucks cada uno) hasta el número de abajo, cada uno a 100 Bucks",
+        "Conta MAIN: na SUA casa compra manequins (750 Bucks cada) até o número abaixo, cada um a 100 Bucks")
+    add("Number of Mannequins", "Manken sayısı", "Número de maniquíes", "Número de manequins")
+    add("How many mannequins your house should have (placed ones are reused)",
+        "Evinde kaç manken olsun (yerleştirilmiş olanlar tekrar kullanılır)",
+        "Cuántos maniquíes debe tener tu casa (los ya puestos se reutilizan)",
+        "Quantos manequins sua casa deve ter (os já colocados são reusados)")
+    add("Auto Buy Mannequin (ALT)", "Otomatik Manken Alımı (ALT)", "Compra de maniquí automática (ALT)", "Compra de manequim automática (ALT)")
+    add("ALT account: buys the selected Main's mannequin outfits (3 per mannequin, then a 2 min rest)",
+        "ALT hesap: seçili ana hesabın manken kıyafetlerini alır (manken başına 3, sonra 2 dk mola)",
+        "Cuenta ALT: compra los conjuntos de maniquí del Main elegido (3 por maniquí, luego 2 min de pausa)",
+        "Conta ALT: compra as roupas de manequim do Main escolhido (3 por manequim, depois 2 min de pausa)")
+    template("Mannequins: %s", "Mankenler: %s", "Maniquíes: %s", "Manequins: %s")
+    template("Mine: %s", "Benim: %s", "Míos: %s", "Meus: %s")
+    template("Buying: %s", "Alınıyor: %s", "Comprando: %s", "Comprando: %s")
+    add("Cash Register", "Yazar Kasa", "Caja registradora", "Caixa registradora")
+    add("Auto Pay", "Otomatik Ödeme", "Pago automático", "Pagamento automático")
+    add("ALT account: pays 50 Bucks at the selected Main's Cash Register (3 payments, then a 2 min rest)",
+        "ALT hesap: seçili ana hesabın Yazar Kasasına 50 Bucks öder (3 ödeme, sonra 2 dk mola)",
+        "Cuenta ALT: paga 50 Bucks en la caja registradora del Main elegido (3 pagos, luego 2 min de pausa)",
+        "Conta ALT: paga 50 Bucks no caixa registradora do Main escolhido (3 pagamentos, depois 2 min de pausa)")
+    template("Cash Register: %s", "Yazar Kasa: %s", "Caja registradora: %s", "Caixa registradora: %s")
+    add("Never a trade: only the game's mannequin and Cash Register", "Asla takas değil: sadece oyunun mankeni ve Yazar Kasası",
+        "Nunca un intercambio: solo el maniquí y la caja registradora del juego", "Nunca uma troca: só o manequim e o caixa registradora do jogo")
+    add("Stray Cat Dragon", "Stray Cat Dragon", "Stray Cat Dragon", "Stray Cat Dragon")
+    -- v3.0.77
+    add("Walk need: the pet is carried to you (picked up and put down) instead of being equipped again, so the walk keeps counting",
+        "Yürüyüş ihtiyacı: pet tekrar kuşanılmak yerine kucağa alınıp yanına bırakılır, yürüyüş saymaya devam eder",
+        "Paseo: la mascota se lleva en brazos hasta ti (en vez de equiparla de nuevo), el paseo sigue contando",
+        "Passeio: o pet é carregado até você (em vez de equipar de novo), o passeio continua contando")
+    add("Dashboard card shows this version's changes", "Panel kartı bu sürümün yeniliklerini gösterir",
+        "La tarjeta del panel muestra los cambios de esta versión", "O cartão do painel mostra as mudanças desta versão")
+    -- v3.0.76
+    template("Status: %s", "Durum: %s", "Estado: %s", "Status: %s")
+    add("Status: -", "Durum: -", "Estado: -", "Status: -")
+    template("Last update: %s", "Son güncelleme: %s", "Última actualización: %s", "Última atualização: %s")
+    add("What's new", "Yenilikler", "Novedades", "Novidades")
+    add("No more void loops: when the game's own travel hangs, trips and respawns wait until it works again ('Rejoin when stuck' rejoins by itself)",
+        "Void döngüsü yok: oyunun kendi yolculuğu takılırsa yolculuklar ve respawn'lar o düzelene kadar bekler ('Takılınca yeniden katıl' kendi katılır)",
+        "Sin bucles de vacío: si el viaje del juego se cuelga, viajes y reapariciones esperan a que funcione ('Reunirse si se atasca' se une solo)",
+        "Sem loops de vazio: se a viagem do jogo trava, viagens e respawns esperam voltar a funcionar ('Reentrar se travar' reentra sozinho)")
+    add("Everything on is safe: Box Lure and Mannequins (MAIN) run only while you are at home; ALT trips only while travel works",
+        "Her şey açıkken de güvenli: Yem Kutusu ve Mankenler (ANA) sadece evdeyken çalışır; ALT yolculukları sadece yolculuk çalışırken",
+        "Todo activado es seguro: Caja Cebo y Maniquíes (MAIN) solo en casa; los viajes del ALT solo si los viajes funcionan",
+        "Tudo ligado é seguro: Caixa Isca e Manequins (MAIN) só em casa; viagens do ALT só quando as viagens funcionam")
+    add("Simpler window: 6 status lines, Box Lure in Claimables, Pet Pen in its own box, Shoebill / Dragon in Event status",
+        "Daha sade pencere: 6 durum satırı, Yem Kutusu Toplananlar'da, Pet Ağılı kendi kutusunda, Shoebill / Dragon Etkinlik durumunda",
+        "Ventana más simple: 6 líneas de estado, Caja Cebo en Reclamables, Corral en su caja, Shoebill / Dragon en Estado del evento",
+        "Janela mais simples: 6 linhas de status, Caixa Isca em Coletáveis, Cercadinho na sua caixa, Shoebill / Dragon no Status do evento")
     template("Spotlight: %s candy corn, %s s left", "Spotlight: %s candy corn, %s sn kaldı", "Spotlight: %s candy corn, quedan %s s",
         "Spotlight: %s candy corn, faltam %s s")
     local NEED_WORDS = {
@@ -6803,6 +7303,8 @@ __moduleSources["Services/Interface"] = function(...)
         pets = "candy", growth = "witch", tasks = "teal", halloween = "pumpkin", crypt = "bone", shop = "candy",
         eventInfo = "ghost", minigameOptions = "night", hook = "discord", messages = "night", configs = "witch", settings = "night", presets = "pumpkin",
         advanced = "gray", developer = "witch", donate = "candy", passes = "pumpkin", crypto = "moon", saver = "slime",
+        -- v3.0.78 (user: "the new tabs have no background"): the boxes added in 3.0.75 / 3.0.76
+        pen = "teal", transferMain = "moon", transferMannequin = "witch", transferPay = "slime",
     }
     Interface.DASHBOARD_COLORS = {
         Discord = { "discord", "witch" }, Server = { "slime", "teal" }, Changelog = { "pumpkin", "moon" },
@@ -6826,61 +7328,20 @@ __moduleSources["Services/Interface"] = function(...)
         { "headphones", "Headphones (Shoebill door)" } }
     Interface.SHOP_NAMES = { halloween_2026_jump_scare = "Jump Scare", halloween_2026_jacobean_pigeon = "Jacobean Pigeon",
         halloween_2026_skelicorn = "Skelicorn", halloween_2026_poltergeist_box = "Poltergeist Box",
-        halloween_2026_stitches = "Stitches", halloween_2026_shoebill = "Shoebill" }
+        halloween_2026_stitches = "Stitches", halloween_2026_shoebill = "Shoebill",
+        halloween_2026_stray_cat_dragon = "Stray Cat Dragon" }
     Interface.EGG_NAMES = { { "cracked_egg", "Cracked Egg (350 Bucks)" }, { "pet_egg", "Pet Egg (600 Bucks)" },
         { "fairytale_egg_2026_fairytale_egg", "Fairytale Egg (event)" } }
     Interface.PING_NAMES = { Kick = "Kick / disconnect", Error = "Errors", Summary = "Summaries", TaskCompleted = "Finished needs",
         SessionStopped = "Stopped", PreviousSession = "Last run ended badly" }
     -- v3.0.0 (user: "list everything new since v2, in plain words, no text running out of the window"): what's new,
     -- by topic; the Support tab shows it with the lines wrapped to the window (Interface.wrap)
+    -- v3.0.76 (user: "in the changelog only this version's changes and the last update, simple"): only the newest version
+    Interface.LAST_UPDATE = "2026-10-26"
     Interface.WHATS_NEW = {
-        { "Black Screen (CPU saver)", "monitor", {
-            "Config > CPU saver: only your farm stats on a black screen, like the webhook",
-            "The game's 3D drawing is off, the FPS and graphics are low, the window is closed: less CPU, GPU, RAM and battery",
-            "Tap my picture at the bottom to close it; my Discord server is right there too",
-        } },
-        { "Minigames", "ghost", {
-            "Hauntlet 2 bot: picks the safest door, uses phones, keys, potions and wands, plays as a team with your other accounts",
-            "Joins through the game's own 'Teleport there now?' button; the old teleport is only the backup",
-            "Sees the game's 'You are in the queue' message and never moves you out of the queue",
-            "Round times are read from the game's own data, none made up",
-            "Stitches' Spotlight: candy corn after candy corn, rests behind a barrier when none is left",
-            "Priority: Hauntlet > Ghost Gallery > Stitches' Spotlight",
-            "Everything else pauses 30 s before a minigame and starts 20 s after it, also when you join by hand",
-        } },
-        { "Farming", "paw-print", {
-            "Pet to farm equips the picked pet (a growing copy first, else a full grown one)",
-            "Repeat buy & hatch: the egg is bought, hatched, then the next one; Keep Bucks is never spent",
-            "Pet Farm + 'Pet to farm': growing pets, neon first, one pet kind or Potion Farm",
-            "Potion Farm: your full grown pet with the highest friendship stays out and gets every need",
-            "Mega a Pet: any pet or egg is grown, made neon and mega on repeat, its copies in the Pet Pen",
-            "Several jobs at once: gifts, candy shop and potions run next to the needs",
-            "Waits at home for the next need instead of standing somewhere",
-            "Buys eggs only when your Bucks pay for them",
-        } },
-        { "Halloween", "game:candy", {
-            "Crypt: pick what the Rusty Keys open (Mummy Spider, biggest candy piles, twigs, lever)",
-            "Skelicorn: the lever is found, put in and the Skelicorn bought; 'Auto lever' on its own",
-            "Candy Shop: buys what you pick and keeps the candy and Bucks you set",
-            "Gifts, chests and boxes (Poltergeist Box too) are opened by themselves",
-            "Shoebill: your Lost Socks and Headphones are given at its Haunted Hotel doors",
-            "Candy Shop: Stitches and Shoebill (week 3)",
-            "Lightning Lever: delivered and pulled at the machine, checked in your data",
-        } },
-        { "Safer and steadier", "shield-check", {
-            "Never writes to the game's console",
-            "Stuck in the void for 20 s: goes home by itself",
-            "Places that did not load are loaded again (no more white screens)",
-            "No taps on game windows that already closed (the candy shop no longer pops up)",
-            "The Stray Cat is looked for on the whole main map",
-            "Leave when stuck: 8 failed trips in one place -> leaves the game (for rejoin tools; off by default)",
-            "A walking pet that stays behind is equipped again",
-        } },
-        { "Window", "sparkles", {
-            "Cleaner layout: Auto Farm, Claimables, Pets, Potions & neon, Pet Pen; Minigames, Halloween world, Candy Shop",
-            "Round AV button on the left: opens / closes the window (a closed window opens again)",
-            "Presets: Everything Off, Full AutoFarm, Mega Skelicorn, Potion Farm, Mega a Pet",
-            "Type any number on a slider; 'Close game pop-ups' switch in Settings",
+        { "v3.0.79", "sparkles", {
+            "Webhook inventory: values / USD from your own file (Value list URL: raw Gist / Pastebin, JSON or CSV), by pet id or name",
+            "Quieter logs: need, status, camera and Anti-AFK lines are debug only",
         } },
     }
     Interface.CHANGELOG = {}
@@ -6889,11 +7350,11 @@ __moduleSources["Services/Interface"] = function(...)
             table.insert(Interface.CHANGELOG, line)
         end
     end
+    -- v3.0.77: the Dashboard card shows the same thing as Support > What's new (this version + the last update)
     Interface.CHANGELOG_LATEST = {
-        Title = "Adopt Victims v3",
-        Date = "14 Oct 2026 (TR)",
-        Description = "Black Screen CPU saver, smarter minigames, Pet Farm and Potion Farm, a cleaner window. Full list:"
-            .. " Support > What's new.",
+        Title = "Adopt Victims " .. Interface.WHATS_NEW[1][1],
+        Date = Interface.LAST_UPDATE,
+        Description = table.concat(Interface.WHATS_NEW[1][3], " • "),
     }
     Interface.DEVELOPER = {
         name = "Victim",
@@ -7696,7 +8157,7 @@ __moduleSources["Services/Interface"] = function(...)
     Interface.NOT_SAVED = {}
     Interface.SAVED_OTHERS = { ["Interface.Toasts"] = true, ["Interface.Theme"] = true, ["Interface.Descriptions"] = true,
         ["Interface.Keybind"] = true, ["Telemetry.Enabled"] = true, ["Telemetry.IncludeInventory"] = true,
-        ["Telemetry.SendFiles"] = true,
+        ["Telemetry.SendFiles"] = true, ["Notifications.Inventory.Enabled"] = true, ["Notifications.Inventory.ValuesUrl"] = true,
         ["Logging.ConsoleLevel"] = true, ["Notifications.SendOnStartStop"] = true, ["Notifications.SendOnTaskComplete"] = true,
         ["Notifications.SendOnError"] = true, ["Notifications.SendOnKick"] = true, ["Notifications.IncludeUsername"] = true,
         ["Notifications.Enabled"] = true, ["Notifications.Webhooks.Summary"] = true, ["Notifications.Webhooks.Alerts"] = true,
@@ -8102,6 +8563,9 @@ __moduleSources["Services/Interface"] = function(...)
     -- the game's 3D drawing is off (RunService:Set3dRenderingEnabled) and the frame rate is capped (setfpscap, only when
     -- the executor has it; more frames inside a minigame); both are put back when it closes. Local only: no game action,
     -- no remote. Discord's public invite info (server name, member count) is read once.
+    -- v3.0.76 (user: "the window is a mess, make it simple"): the Farm status box shows only these lines (the Black
+    -- Screen still shows all of them)
+    Interface.WINDOW_ROWS = { doing = true, needs = true, pet = true, bucks = true, candy = true, off = true }
     Interface.BLACK = { fps = 15, minigameFps = 30, width = 760, height = 350 }
     Interface.BLACK_ORDER = { "session", "doing", "bucks", "needs", "candy", "ghost", "tasks", "hauntlet", "pet", "pen",
         "last", "off" }
@@ -9588,6 +10052,108 @@ __moduleSources["Services/Interface"] = function(...)
             describe(box, index, opts.tooltip or (path and about(path)))
             return label, dropdown
         end
+        -- v3.0.75: a dropdown whose choices change while the window is open (baits in the backpack, players in the
+        -- server). choices() = { { value, label } }; a saved value that is not a choice right now stays picked ("not
+        -- here now"), it is never dropped by a refresh. Returns refresh().
+        local liveRefreshers = {}
+        local function bindLivePick(box, index, icon, name, opts)
+            local multi = opts.multi == true
+            local list = {}
+            local function selected()
+                local now = opts.get()
+                if multi then
+                    return type(now) == "table" and now or {}
+                end
+                return { now }
+            end
+            local function build()
+                local result = {}
+                local okChoices, choices = pcall(opts.choices)
+                for _, choice in ipairs(okChoices and type(choices) == "table" and choices or {}) do
+                    table.insert(result, { choice[1], tostring(choice[2]) })
+                end
+                for _, value in ipairs(selected()) do
+                    local known = false
+                    for _, choice in ipairs(result) do
+                        known = known or choice[1] == value
+                    end
+                    if not known and value ~= nil and value ~= "" then
+                        table.insert(result, { value, (opts.nameOf and opts.nameOf(value) or tostring(value)) .. " " .. T("(not here now)") })
+                    end
+                end
+                return result
+            end
+            local function labelsOf(choices)
+                local labels = {}
+                for _, choice in ipairs(choices) do
+                    table.insert(labels, choice[2])
+                end
+                return labels
+            end
+            local function names(choices)
+                local result = {}
+                for _, value in ipairs(selected()) do
+                    for _, choice in ipairs(choices) do
+                        if choice[1] == value then
+                            table.insert(result, choice[2])
+                        end
+                    end
+                end
+                return result
+            end
+            list = build()
+            local label = box:CreateLabel({ Name = name, Icon = I(icon), Tooltip = opts.tooltip }, index)
+            local dropdown = label:AddDropdown({
+                Options = labelsOf(list),
+                CurrentOption = names(list),
+                MultipleOptions = multi,
+                Required = false,
+                Placeholder = opts.placeholder,
+                Callback = function(picked)
+                    local chosen = {}
+                    for _, item in ipairs(type(picked) == "table" and picked or { picked }) do
+                        chosen[item] = true
+                    end
+                    local values = {}
+                    for _, choice in ipairs(list) do
+                        if chosen[choice[2]] then
+                            table.insert(values, choice[1])
+                        end
+                    end
+                    if multi then
+                        if not sameSet(values, selected()) then
+                            opts.set(values)
+                        end
+                    elseif values[1] ~= nil and values[1] ~= selected()[1] then
+                        opts.set(values[1])
+                    end
+                end,
+            }, "Dropdown")
+            fitPopup(dropdown)
+            local signature = nil
+            local function refreshLive()
+                local fresh = build()
+                local parts = {}
+                for _, choice in ipairs(fresh) do
+                    table.insert(parts, tostring(choice[1]) .. "=" .. choice[2])
+                end
+                for _, value in ipairs(names(fresh)) do
+                    table.insert(parts, "*" .. value)
+                end
+                local now = table.concat(parts, "|")
+                if now ~= signature then
+                    signature = now
+                    list = fresh
+                    pcall(function()
+                        dropdown:Set({ Options = labelsOf(fresh), CurrentOption = names(fresh) })
+                    end)
+                end
+            end
+            signature = nil
+            table.insert(liveRefreshers, refreshLive)
+            describe(box, index, opts.tooltip)
+            return refreshLive
+        end
         local function bindText(box, index, icon, name, path, placeholder, accept, shown)
             if type(read(path)) ~= "string" then
                 return nil
@@ -9864,8 +10430,10 @@ __moduleSources["Services/Interface"] = function(...)
             local headerTitle, headerText = Interface.stateHeader(nil)
             stateHeader = live:CreateParagraph({ Name = headerTitle, Icon = I("power"), Content = headerText }, "state")
             for _, row in ipairs(Interface.statusRows(nil, rowWidth)) do
-                rowElements[row.key] = live:CreateLabel({ Name = row.text, Icon = I(row.game or row.icon, row.icon) },
-                    "row_" .. row.key)
+                if Interface.WINDOW_ROWS[row.key] then -- v3.0.76: the window shows the 6 lines that matter
+                    rowElements[row.key] = live:CreateLabel({ Name = row.text, Icon = I(row.game or row.icon, row.icon) },
+                        "row_" .. row.key)
+                end
             end
         end
         -- v2.1.12 (user: "keep it simple, no clutter; each switch does what its name says, nothing needs another switch
@@ -9919,11 +10487,38 @@ __moduleSources["Services/Interface"] = function(...)
         bindToggle(needsBox, "babyMode", "baby", "Baby needs too", { "Farm", "BabyMode" })
         bindPick(needsBox, "needSkip", "octagon-x", "Skip these needs", { "Farm", "AutoNeeds", "Skip" }, Interface.NEED_NAMES,
             { multi = true, placeholder = "Nothing skipped: every need", tooltip = "Needs picked here are NOT done" })
+        -- v3.0.75 Box Lure: the switch, then the baits from your own backpack (picked ones only, in this order)
         local tasksBox = mainTab:CreateGroupbox({ Name = "Claimables", Icon = I("gift"), Column = 1 }, "tasks")
         bindToggle(tasksBox, "autoOpen", "gift", "Open gifts & boxes", { "Farm", "AutoOpen", "Enabled" },
             "Equips and opens every gift, chest and box in your backpack (Poltergeist Box too), next to the other tasks")
         bindToggle(tasksBox, "cashback", "game:bucks", "Collect cashback", { "Farm", "CollectCashback" },
             "Collects your cashback Bucks every 10 minutes")
+        -- v3.0.76: the Box Lure sits in Claimables (one box less)
+        bindToggle(tasksBox, "lureOn", "gift", "Auto Lure Box", { "Farm", "LureBox", "Enabled" },
+            "Places ONE Box Lure if your house has none, collects its reward and puts a bait you picked in it")
+        local lureBaits = nil
+        bindLivePick(tasksBox, "lureBaits", "package", "Baits to use", {
+            multi = true,
+            placeholder = "No bait picked",
+            tooltip = "Only these baits from your backpack are used, in this order",
+            get = function()
+                return read({ "Farm", "LureBox", "Baits" })
+            end,
+            set = function(values)
+                write({ "Farm", "LureBox", "Baits" }, values)
+            end,
+            nameOf = function(id)
+                return prettyKind(id)
+            end,
+            choices = function()
+                local result = {}
+                for _, bait in ipairs(type(lureBaits) == "table" and lureBaits or {}) do
+                    table.insert(result, { bait.id, string.format("%s x%d", prettyKind(bait.id), bait.count) })
+                end
+                return result
+            end,
+        })
+        local lureInfo = tasksBox:CreateLabel({ Name = "Lure: ?", Icon = I("info") }, "lureInfo")
         -- v2.1.33 (user: "I cannot tap the Pet to farm dropdown" since 2.1.32 moved it to the left column): back in
         -- the Pets box on the right, where it worked
         local petsBox = mainTab:CreateGroupbox({ Name = "Pets", Icon = I("paw-print"), Column = col(2) }, "pets")
@@ -9998,15 +10593,13 @@ __moduleSources["Services/Interface"] = function(...)
             "Joins every run and picks the safer doors (a run always comes before a Ghost Gallery round)")
         bindToggle(halloweenBox, "spotlight", "item:halloween_2026_stitches|tent", "Stitches' Spotlight", { "Farm", "Event", "Spotlight" },
             "Joins each round by the game's teleport prompt and collects candy corn")
-        bindSlider(halloweenBox, "spotlightSpeed", "circle-gauge", "Spotlight speed", { "Farm", "Event", "SpotlightSpeed" }, 60, 120, 1,
-            "", "Spotlight move speed (studs per second)")
-        bindSlider(halloweenBox, "spotlightPickup", "target", "Spotlight pickup range", { "Farm", "Event", "SpotlightPickupRange" },
-            0, 40, 1, "", "0 = go to every candy corn")
-        halloweenBox:CreateLabel({ Name = "Priority: Hauntlet > Ghost > Stitches", Icon = I("list-ordered") }, "minigameOrder")
+        -- v3.0.76: the Spotlight sliders are in Minigame options; the order is in the tooltips (Hauntlet > Ghost > Stitches)
         local cryptBox = eventTab:CreateGroupbox({ Name = "Halloween world", Icon = I("item:halloween_2026_tomb_spider|skull"),
             Column = 1 }, "crypt")
         bindToggle(cryptBox, "cat", "cat", "Feed the Stray Cat", { "Farm", "Event", "StrayCat" },
             "1 water to the Stray Cat once a day (candy)")
+        bindToggle(cryptBox, "catDragon", "sparkles", "Auto Stray Cat Dragon", { "Farm", "Event", "StrayCatDragon" },
+            "Rusty Key on the Crypt's cat food grave, then the Polymorphing Cat Food to the Stray Cat (unlocks the Dragon; pick it in the Candy Shop to buy it)")
         bindToggle(cryptBox, "crypt", "item:halloween_2026_rusty_key|key-round", "Use Rusty Keys", { "Farm", "Event", "Crypt" },
             "Opens Crypt graves with your Rusty Keys; pick below what to open")
         bindPick(cryptBox, "cryptOpen", "item:halloween_2026_rusty_key|key-round", "Open", { "Farm", "Event", "CryptOpen" }, Interface.CRYPT_NAMES,
@@ -10017,15 +10610,16 @@ __moduleSources["Services/Interface"] = function(...)
             "Lightning Lever in your backpack or not pulled: goes to the machine by the Manor, puts it in and pulls it there")
         bindToggle(cryptBox, "shoebill", "item:halloween_2026_lost_socks|footprints", "Shoebill (Lost Sock + Headphones)", { "Farm", "Event", "Shoebill" },
             "Gives your Lost Socks and Headphones at the Shoebill doors (Haunted Hotel)")
-        local shoebillInfo = cryptBox:CreateLabel({ Name = "Socks ?/3  •  Headphones ?", Icon = I("footprints") }, "shoebillSocks")
         bindToggle(cryptBox, "quests", "scroll-text", "Claim quests", { "Farm", "Event", "Quests" },
             "Claims finished quests and board rewards; visits homes when a quest asks for it")
-        bindToggle(cryptBox, "pen", "fence", "Auto Pet Pen", { "Farm", "Event", "PetPen" },
+        -- v3.0.76: the Pet Pen in its own small box (the Halloween world box was too long)
+        local penBox = eventTab:CreateGroupbox({ Name = "Pet Pen", Icon = I("fence"), Column = col(2) }, "pen")
+        bindToggle(penBox, "pen", "fence", "Auto Pet Pen", { "Farm", "Event", "PetPen" },
             "At home: claims the pen, takes full grown pets out, puts growing ones in ('Buy eggs' keeps it full)")
-        bindToggle(cryptBox, "penRarest", "gem", "Rarest pets in the pen", { "Farm", "Event", "PetPenRarest" })
-        bindToggle(cryptBox, "penEggs", "egg", "Eggs for empty pen slots", { "Farm", "Event", "PetPenEggs" })
-        bindSlider(cryptBox, "penMinutes", "timer", "Claim every", { "Farm", "Event", "PetPenMinutes" }, 1, 60, 1, "min")
-        actionButton(cryptBox, "qaPen", "fence", "Claim Pet Pen now", "Goes home if needed and claims / refills the Pet Pen once.",
+        bindToggle(penBox, "penRarest", "gem", "Rarest pets in the pen", { "Farm", "Event", "PetPenRarest" })
+        bindToggle(penBox, "penEggs", "egg", "Eggs for empty pen slots", { "Farm", "Event", "PetPenEggs" })
+        bindSlider(penBox, "penMinutes", "timer", "Claim every", { "Farm", "Event", "PetPenMinutes" }, 1, 60, 1, "min")
+        actionButton(penBox, "qaPen", "fence", "Claim Pet Pen now", "Goes home if needed and claims / refills the Pet Pen once.",
             function()
                 return callApi("ClaimPetPen")
             end)
@@ -10070,6 +10664,10 @@ __moduleSources["Services/Interface"] = function(...)
         end
         local optionsBox = eventTab:CreateGroupbox({ Name = "Minigame options", Icon = I("sliders-horizontal"), Column = col(2) },
             "minigameOptions")
+        bindSlider(optionsBox, "spotlightSpeed", "circle-gauge", "Spotlight speed", { "Farm", "Event", "SpotlightSpeed" }, 60, 120, 1,
+            "", "Spotlight move speed (studs per second)")
+        bindSlider(optionsBox, "spotlightPickup", "target", "Spotlight pickup range", { "Farm", "Event", "SpotlightPickupRange" },
+            0, 40, 1, "", "0 = go to every candy corn")
         bindPick(optionsBox, "hauntletMove", "door-open", "Door move", { "Farm", "Event", "HauntletMove" },
             { { "tween", "Tween (smooth)" }, { "walk", "Walk" }, { "tp", "Teleport" } })
         bindSlider(optionsBox, "hauntletMoveSeconds", "timer", "Move time", { "Farm", "Event", "HauntletMoveSeconds" },
@@ -10092,6 +10690,99 @@ __moduleSources["Services/Interface"] = function(...)
         local eventInfoBox = eventTab:CreateGroupbox({ Name = "Event status", Icon = I("game:candy"), Column = col(2) }, "eventInfo")
         local eventInfo = eventInfoBox:CreateParagraph({ Name = "Your event", Icon = I("ghost"), Content = "Waiting for your data..." },
             "eventText")
+        -- v3.0.75 Transfer Thingy: YOUR accounts, through the game's mannequin outfit sales and Cash Register (never a
+        -- trade). Each switch works on this account only; the Main is only the player the Bucks go to.
+        local transferTab = track(farmSection:CreateTab({ Name = "Transfer Thingy", Icon = I("wallet"), Columns = columns }, "transfer"))
+        local mainBox = transferTab:CreateGroupbox({ Name = "Select Main", Icon = I("users"), Column = 1 }, "transferMain")
+        local function playerChoices()
+            local result = { { "0", T("None") } }
+            local Players = game:GetService("Players")
+            local me = Players.LocalPlayer
+            local others = {}
+            for _, player in ipairs(Players:GetPlayers()) do
+                if player ~= me then
+                    table.insert(others, player)
+                end
+            end
+            table.sort(others, function(a, b)
+                return string.lower(a.Name) < string.lower(b.Name)
+            end)
+            for _, player in ipairs(others) do
+                table.insert(result, { tostring(player.UserId), string.format("%s (@%s)", player.DisplayName, player.Name) })
+            end
+            return result
+        end
+        bindLivePick(mainBox, "transferMainPick", "users", "Select Main", {
+            placeholder = "No Main selected",
+            tooltip = "The player your Bucks go to (players in this server); kept by its UserId",
+            get = function()
+                local id = tonumber(read({ "Farm", "Transfer", "MainUserId" })) or 0
+                return tostring(math.floor(id))
+            end,
+            set = function(value)
+                local id = tonumber(value) or 0
+                local player = id > 0 and game:GetService("Players"):GetPlayerByUserId(id) or nil
+                write({ "Farm", "Transfer", "MainUserId" }, id)
+                write({ "Farm", "Transfer", "MainName" }, player and player.Name or "")
+            end,
+            nameOf = function(value)
+                local name = read({ "Farm", "Transfer", "MainName" })
+                return (type(name) == "string" and name ~= "") and name or ("UserId " .. tostring(value))
+            end,
+            choices = playerChoices,
+        })
+        local mainInfo = mainBox:CreateLabel({ Name = "Main: none", Icon = I("users") }, "transferMainInfo")
+        local transferInfo = mainBox:CreateLabel({ Name = "Status: -", Icon = I("info") }, "transferInfo")
+        local shownHeadshot = nil
+        local mannequinBox = transferTab:CreateGroupbox({ Name = "Mannequins", Icon = I("users"), Column = 1 }, "transferMannequin")
+        bindToggle(mannequinBox, "mannequinMain", "users", "Auto Mannequin (MAIN)", { "Farm", "Transfer", "Mannequin" },
+            "MAIN account: in YOUR house, mannequins bought (750 Bucks each) until the count below, each priced at 100 Bucks")
+        bindSlider(mannequinBox, "mannequinCount", "users", "Number of Mannequins", { "Farm", "Transfer", "MannequinCount" },
+            1, 10, 1, "", "How many mannequins your house should have (placed ones are reused)")
+        bindToggle(mannequinBox, "mannequinAlt", "banknote", "Auto Buy Mannequin (ALT)", { "Farm", "Transfer", "BuyMannequin" },
+            "ALT account: buys the selected Main's mannequin outfits (3 per mannequin, then a 2 min rest)")
+        local payBox = transferTab:CreateGroupbox({ Name = "Cash Register", Icon = I("coins"), Column = col(2) }, "transferPay")
+        bindToggle(payBox, "autoPay", "coins", "Auto Pay", { "Farm", "Transfer", "AutoPay" },
+            "ALT account: pays 50 Bucks at the selected Main's Cash Register (3 payments, then a 2 min rest)")
+        local function transferRefresh(status, setText)
+            local s = type(status) == "table" and status or {}
+            local house = type(s.house) == "table" and s.house or {}
+            local id = tonumber(read({ "Farm", "Transfer", "MainUserId" })) or 0
+            local player = id > 0 and game:GetService("Players"):GetPlayerByUserId(id) or nil
+            local text
+            if id <= 0 then
+                text = T("Main: none")
+            elseif player then
+                text = T("Main: %s (@%s, %s)", player.DisplayName, player.Name, tostring(id))
+            else
+                text = T("Main: %s is not in this server", tostring(read({ "Farm", "Transfer", "MainName" }) or id))
+            end
+            setText(mainInfo, "transferMain", { Name = text })
+            if shownHeadshot ~= id then
+                shownHeadshot = id
+                pcall(function()
+                    local icon = mainInfo.Instance.Header.Icon
+                    if id > 0 then
+                        icon.Image = "rbxthumb://type=AvatarHeadShot&id=" .. tostring(id) .. "&w=48&h=48"
+                        icon.ImageColor3 = Color3.new(1, 1, 1)
+                    else
+                        icon.Image = "rbxassetid://" .. tostring(I("users"))
+                    end
+                end)
+            end
+            -- v3.0.76: one status line for the whole tab
+            local parts = {}
+            if house.mannequins then
+                table.insert(parts, T("Mine: %s", tostring(house.mannequins)))
+            end
+            if house.buys then
+                table.insert(parts, T("Buying: %s", tostring(house.buys)))
+            end
+            if house.pay then
+                table.insert(parts, T("Cash Register: %s", tostring(house.pay)))
+            end
+            setText(transferInfo, "transferInfo", { Name = T("Status: %s", #parts > 0 and table.concat(parts, " • ") or "-") })
+        end
         setupSection = Window:CreateTabSection("Setup")
         local webhookTab = track(setupSection:CreateTab({ Name = "Webhook", Icon = I("bell"), Columns = columns }, "webhook"))
         local hookBox = webhookTab:CreateGroupbox({ Name = "Discord webhook", Icon = I("bell"), Column = 1 }, "hook")
@@ -10162,6 +10853,18 @@ __moduleSources["Services/Interface"] = function(...)
         bindToggle(messagesBox, "hookErrors", "triangle-alert", "Errors", { "Notifications", "SendOnError" })
         bindToggle(messagesBox, "hookStartStop", "power", "Start / stop", { "Notifications", "SendOnStartStop" })
         bindToggle(messagesBox, "hookName", "paw-print", "Show my Roblox name", { "Notifications", "IncludeUsername" })
+        bindToggle(messagesBox, "hookInventory", "coins", "Inventory by value", { "Notifications", "Inventory", "Enabled" },
+            "After each summary: your pets by kind (normal / neon / mega), sorted by the values in YOUR list (Notifications.Inventory.Values); no value = N/A")
+        bindText(messagesBox, "hookValuesUrl", "link", "Value list URL", { "Notifications", "Inventory", "ValuesUrl" },
+            "https://... (raw)", function(url)
+                if url ~= "" and not string.match(url, "^https://[%w%-%.]+%.[%a]+/") then
+                    return false, "Use an https:// link to the raw file (Gist / Pastebin raw)"
+                end
+                notify("Value list", url == "" and "Removed." or "Saved: it is downloaded in a few seconds.", "check")
+                return true
+            end, function(value)
+                return (type(value) == "string" and value ~= "") and (string.sub(value, 1, 28) .. "...") or ""
+            end)
         bindText(messagesBox, "hookAlerts", "link", "Alerts URL", { "Notifications", "Webhooks", "Alerts" },
             "https://...", function(url)
                 if url ~= "" and not Config.isValidWebhookUrl(url) then
@@ -10668,8 +11371,9 @@ __moduleSources["Services/Interface"] = function(...)
             }, "\n")
         end
         do -- v3.0.0: what's new since v2, by topic, every line wrapped to the window
-            local changelog = supportTab:CreateGroupbox({ Name = "What's new in v3", Icon = I("scroll-text"), Column = 1 },
+            local changelog = supportTab:CreateGroupbox({ Name = "What's new", Icon = I("scroll-text"), Column = 1 },
                 "changelog")
+            changelog:CreateLabel({ Name = T("Last update: %s", Interface.LAST_UPDATE), Icon = I("history") }, "lastUpdate")
             local width = wide and 40 or 56
             for index, section in ipairs(Interface.WHATS_NEW) do
                 local out = {}
@@ -10758,6 +11462,11 @@ __moduleSources["Services/Interface"] = function(...)
                     s.twigs and tostring(s.twigs) or "?"),
                 s.nestTwigs and T("Nest: %s / 8 twigs", tostring(s.nestTwigs)) or T("Nest: ?"),
                 s.nextRoundIn and T("Next Ghost Gallery in %s", clock(s.nextRoundIn)) or T("Next Ghost Gallery: unknown yet"),
+                -- v3.0.76: the Shoebill and Dragon lines live here (no extra labels in the switch boxes)
+                T("Socks %s  •  Headphones %s", s.shoebillSocks or "?/3",
+                    s.shoebillHeadphones == true and "✓" or (s.shoebillHeadphones == false and "–" or "?")),
+                type(s.dragon) == "table" and (s.dragon.polymorphed and T("Stray Cat Dragon: unlocked (buy it in the Candy Shop)")
+                    or T("Stray Cat Dragon: locked, cat food %d", tonumber(s.dragon.food) or 0)) or T("Stray Cat Dragon: ?"),
             }, "\n")
         end
         local dashboardReady, farmCardFrame, farmCard, serverChips = false, nil, nil, nil
@@ -10865,10 +11574,19 @@ __moduleSources["Services/Interface"] = function(...)
                 end
             end
             setText(eventInfo, "event", { Content = eventText(status) })
-            do
+            do -- v3.0.75: Box Lure / Stray Cat Dragon / Transfer Thingy lines and the live dropdowns
                 local s = type(status) == "table" and status or {}
-                local headphones = s.shoebillHeadphones == true and "✓" or (s.shoebillHeadphones == false and "–" or "?")
-                setText(shoebillInfo, "shoebill", { Name = T("Socks %s  •  Headphones %s", s.shoebillSocks or "?/3", headphones) })
+                local house = type(s.house) == "table" and s.house or {}
+                if s.baits ~= nil then
+                    lureBaits = s.baits
+                end
+                setText(lureInfo, "lure", { Name = T("Lure: %s", tostring(house.lure or "-")) })
+                pcall(transferRefresh, status, setText)
+                if tick % 5 == 0 then -- the dropdowns: every 5th refresh at most (players / backpack change slowly)
+                    for _, refreshLive in ipairs(liveRefreshers) do
+                        pcall(refreshLive)
+                    end
+                end
             end
             local webhookOn = type(status) == "table" and status.webhooksOn == true
             setText(hookState, "hook", { Name = webhookOn and T("Webhook: ON") or T("Webhook: OFF (no URL yet)") })
@@ -11056,6 +11774,11 @@ __moduleSources["Game/GameConstants"] = function(...)
         Dailies = "dailies_manager",
         Hauntlet = "halloween_2026_hauntlet_manager",
         HauntletCycle = "hauntlet_cycle_timestamp",
+        -- v3.0.75 (user's discovery logs 2026-10-23/24): the Box Lure state ({ lures_map = { BasicLure = { bait_kind,
+        -- finished, lure_kind, lure_start_timestamp } } }, empty after a claim) and my saved outfits (a bought mannequin
+        -- outfit arrives here as { name = "Outfit", source_outfit_version = <the mannequin's outfit version> })
+        Lures = "lures_2023_lure_manager",
+        Outfits = "outfits",
     }
     GameConstants.PetsFolderName = "Pets"
     GameConstants.PetModelIdAttribute = "StreamingId"
@@ -11131,6 +11854,34 @@ __moduleSources["Game/GameConstants"] = function(...)
         ClaimTombSpider = { remote = "Halloween2026/ClaimTombSpider", folder = "EventFolder",
             purpose = "Halloween: take the Mummy Spider at the bottom of the Crypt (Farm.Event.Crypt)" },
         NeonFusion = { remote = "PetAPI/DoNeonFusion", purpose = "neon fusion: 4 of YOUR full grown pets of one kind -> 1 neon (Farm.AutoNeon)" },
+        -- v3.0.75 (user's discovery logs lureboxplacingbait / lureclaimafter4h): my Box Lure, the game's own calls:
+        -- ActivateFurniture(me, "<lure furniture>", "UseBlock", { bait_unique = <my bait> } | false (claim), my character)
+        LureUse = { remote = "HousingAPI/ActivateFurniture", purpose = "Box Lure: put YOUR picked bait in YOUR lure / collect its reward (Farm.LureBox)",
+            houseCall = "lure" },
+        -- v3.0.75 (MainMannequin.log): Bucks furniture purchase, only a mannequin, in MY house (Farm.Transfer.Mannequin)
+        BuyLure = { remote = "HousingAPI/BuyFurnitures", purpose = "Box Lure: place ONE Box Lure (lures_2023_normal_lure, free in the user's log) in YOUR house when there is none (Farm.LureBox)",
+            houseCall = "buyLure" },
+        BuyMannequin = { remote = "HousingAPI/BuyFurnitures", purpose = "Transfer: buy 1 mannequin (750 Bucks) for YOUR house, up to Farm.Transfer.MannequinCount",
+            houseCall = "buyMannequin" },
+        -- v3.0.75 (MainMannequin.log: { price = 100, set_price = true } -> "Price was set to $100!")
+        MannequinPrice = { remote = "HousingAPI/ActivateFurniture", purpose = "Transfer: set YOUR mannequin's outfit price to 100 Bucks",
+            houseCall = "price" },
+        -- v3.0.75 (AltLogss.log): buy the selected Main's mannequin outfit; then that bought outfit is removed from MY
+        -- saved outfits (the user's flow: DeleteOutfit("player", <its name>, nil)), only an outfit whose
+        -- source_outfit_version is that mannequin's
+        BuyMannequinOutfit = { remote = "AvatarAPI/BuyMannequinOutfit", purpose = "Transfer: buy the selected Main's mannequin outfit at its price (Farm.Transfer.BuyMannequin)",
+            houseCall = "buyOutfit" },
+        DeleteBoughtOutfit = { remote = "AvatarAPI/DeleteOutfit", purpose = "Transfer: remove the outfit just bought from a mannequin from MY saved outfits (only that one)",
+            houseCall = "deleteOutfit" },
+        -- v3.0.75 (AltLogss.log): ActivateFurniture(<Main>, "<register>", "UseBlock", 50, my character) -> "50 Buck(s) paid to <Main>"
+        PayRegister = { remote = "HousingAPI/ActivateFurniture", purpose = "Transfer: pay 50 Bucks at the selected Main's Cash Register (Farm.Transfer.AutoPay)",
+            houseCall = "pay" },
+        -- v3.0.77 (user's discovery halloween12 2026-10-26: "Pick up" / "Drop Pet" on the pet): INVOKE
+        -- AdoptAPI/HoldBaby(<pet model>) -> state_manager_raw.states = { { id = "HoldingBaby", baby = <pet> } };
+        -- FIRE AdoptAPI/EjectBaby(<pet model>) -> states = {}. Used for the walk: the pet is carried instead of equipped again
+        HoldPet = { remote = "AdoptAPI/HoldBaby", purpose = "walk: pick up YOUR pet (carried along when you move, instead of equipping it again)",
+            petModel = true },
+        DropPet = { remote = "AdoptAPI/EjectBaby", purpose = "walk: put YOUR carried pet down next to you", petModel = true },
         BuyItem = { remote = "ShopAPI/BuyItem", purpose = "buy 1 water / 1 hotdog when you have none; 1 egg (Farm.EggToBuy) when you have no pet that still grows (Farm.BuyEgg); Halloween pets with candy (Farm.Event.CandyPets)" },
     }
     GameConstants.BabiesTeam = "Babies"
@@ -11280,6 +12031,32 @@ __moduleSources["Game/GameConstants"] = function(...)
         return p.X > -1500 and p.X < 1000 and p.Z > -3000 and p.Z < 0
     end
     GameConstants.HouseFurnitureFolderPath = { "HouseInteriors", "furniture" }
+    GameConstants.HouseBlueprintPath = { "HouseInteriors", "blueprint" } -- a child named after the house's owner
+    -- v3.0.75 house features (Box Lure, Transfer Thingy); every id / text below is from the user's discovery logs
+    GameConstants.House = {
+        LureKind = "lures_2023_normal_lure", -- BuyFurnitures kind of the Box Lure (lureboxplacingbait.log)
+        LureUseBlock = "UseBlock",
+        MannequinKind = "mannequins_2024_mannequin", -- BuyFurnitures kind (MainMannequin.log)
+        MaxMannequins = 10, -- the most Farm.Transfer.MannequinCount can ask for
+        MannequinCost = 750, -- Bucks (money went down by 750 for each one in MainMannequin.log)
+        MannequinModel = "Mannequin", -- its model name (DownloadsAPI/Download("Furniture", "Mannequin"))
+        RegisterModel = "CashRegister", -- its model name (DownloadsAPI/Download("Furniture", "CashRegister"))
+        SalePrice = 100, -- the user's price; "Price was set to $100!"
+        PayAmount = 50, -- the most one payment can be (job_pay max_payout 50; "50 Buck(s) paid to")
+        PerWindow = 3, -- 3 buys / payments, then the game says "too many orders" / "overloaded" (user: ~2 min)
+        WindowSeconds = 120,
+        -- recorded house-local spots of the user's own mannequins (MainMannequin.log): used only when no placed
+        -- mannequin gives a place to put the next one beside
+        MannequinSpots = { { 5.7, 0, -16.5 }, { 7.1, 0, -20.9 }, { 10.5, 0, -22.8 } },
+        -- v3.0.78 (user: "no lure in the house: place one, first thing"): the user's own placed spot
+        -- (lureboxplacingbait.log: BuyFurnitures lures_2023_normal_lure at (13.2, 0, -23.3); Bucks did not go down)
+        LureSpots = { { 13.2, 0, -23.3 } },
+        TextPricedSet = "Price was set to",
+        TextPaid = "Buck(s) paid to",
+        TextTooManyOrders = "too many orders",
+        TextOverloaded = "overloaded",
+        TextPaySelf = "can't pay yourself",
+    }
     GameConstants.FurnitureUniqueAttribute = "furniture_unique"
     GameConstants.FurnitureForAilment = {
         sleepy = { "basicbed" },
@@ -11321,6 +12098,14 @@ __moduleSources["Game/GameConstants"] = function(...)
         Vacuum = "halloween_2026_ghost_vacuum",
         NestTwigs = 8,
         CatFood = { "water", "chocolate_milk" },
+        -- v3.0.75 Stray Cat Dragon (private v3.0.102 DragonDiag 2026-10-24): the Crypt grave reward
+        -- "polymorphing_cat_food" (max_collectable 1) gives food/halloween_2026_polymorphing_cat_food; fed to the Stray
+        -- Cat -> halloween_2026_stray_cat_manager.polymorphed = true -> the Dragon is sold in the Candy Shop (InventoryDB
+        -- cost 120000 candy). pet_polymorph_potion is a DIFFERENT potion (the cat answered "not_cat_food"): never fed.
+        CatFoodGrave = "polymorphing_cat_food",
+        DragonFood = "halloween_2026_polymorphing_cat_food",
+        DragonPet = "halloween_2026_stray_cat_dragon",
+        NotDragonFood = "pet_polymorph_potion",
         Ladder = "ladder",
         -- skelicorn.log 2026-10-11: the graves are candy_corn_pile_small (1000), _big (2000), _ginormous (3000)
         GraveValue = { candy_corn_pile_ginormous = 4, candy_corn_pile_big = 3, candy_corn_pile_small = 2, twig = 1 },
@@ -12326,12 +13111,12 @@ __moduleSources["Game/AilmentTracker"] = function(...)
             local label = self:ownerLabel(entry) .. " " .. entry.kind
             if not before then
                 local extra = entry.preferredItem and (" (prefers " .. entry.preferredItem .. ")") or ""
-                self._logger:info("Needs", "New need: " .. label .. extra)
+                self._logger:debug("Needs", "New need: " .. label .. extra) -- v3.0.79: quieter logs
             elseif entry.inProgress and not before.inProgress then
-                self._logger:info("Needs", string.format("In progress: %s (about %d s)", label, math.floor(1 / entry.rate + 0.5)))
+                self._logger:debug("Needs", string.format("In progress: %s (about %d s)", label, math.floor(1 / entry.rate + 0.5)))
             elseif not entry.inProgress and before.inProgress then
                 if self._state:get("farm.currentTask") == entry.kind then
-                    self._logger:info("Needs", "Progress stopped: " .. label)
+                    self._logger:debug("Needs", "Progress stopped: " .. label)
                 else
                     self._logger:debug("Needs", "Progress stopped: " .. label)
                 end
@@ -13902,6 +14687,89 @@ __moduleSources["Game/Interaction"] = function(...)
         end
         return table.concat(parts, ", ")
     end
+    --[[
+        v3.0.75: the house calls (Box Lure, Transfer Thingy) only in the exact shapes of the user's recorded calls:
+        lure          (me, "<furniture>", "UseBlock", { bait_unique = "<item>" } | false, my character)
+        price         (me, "<furniture>", "UseBlock", { price = 100, set_price = true }, my character)
+        buyMannequin  ({ { kind = "mannequins_2024_mannequin", properties = { cframe = <CFrame> } } })
+        buyOutfit     (<another player>, "<furniture>", "<outfit version>", <price 1..Farm.Transfer.MaxOutfitPrice>)
+        deleteOutfit  ("player", "<name>", nil)
+        pay           (<another player>, "<furniture>", "UseBlock", 50, my character)
+    ]]
+    Interaction.maxOutfitPrice = 100
+    function Interaction.isCFrame(value)
+        local kind = typeof(value)
+        return kind == "CFrame"
+    end
+    function Interaction.checkHouseCall(kind, n, a, b, c, d, e)
+        local Players = game:GetService("Players")
+        local me = Players.LocalPlayer
+        local H = GameConstants.House
+        local function onlyKeys(t, keys)
+            if type(t) ~= "table" then
+                return false
+            end
+            for k in pairs(t) do
+                if keys[k] == nil then
+                    return false
+                end
+            end
+            return true
+        end
+        local function furnitureKey(v)
+            return type(v) == "string" and v ~= "" and #v <= 64
+        end
+        local function otherPlayer(v)
+            local kind = typeof(v)
+            return kind == "Instance" and v:IsA("Player") and v ~= me and v.Parent == Players
+        end
+        if kind == "lure" then
+            local baitOk = d == false or (onlyKeys(d, { bait_unique = true }) and type(d.bait_unique) == "string" and d.bait_unique ~= "")
+            if n == 5 and a == me and furnitureKey(b) and c == H.LureUseBlock and baitOk and e == me.Character then
+                return true
+            end
+            return "not the recorded Box Lure call"
+        elseif kind == "price" then
+            if n == 5 and a == me and furnitureKey(b) and c == "UseBlock" and onlyKeys(d, { price = true, set_price = true })
+                and d.price == H.SalePrice and d.set_price == true and e == me.Character then
+                return true
+            end
+            return "not the recorded price call"
+        elseif kind == "buyMannequin" then
+            local entry = type(a) == "table" and a[1]
+            if n == 1 and type(a) == "table" and #a == 1 and onlyKeys(entry, { kind = true, properties = true })
+                and entry.kind == H.MannequinKind and onlyKeys(entry.properties, { cframe = true })
+                and Interaction.isCFrame(entry.properties.cframe) then
+                return true
+            end
+            return "only one mannequin (" .. H.MannequinKind .. ") per call"
+        elseif kind == "buyLure" then
+            local entry = type(a) == "table" and a[1]
+            if n == 1 and type(a) == "table" and #a == 1 and onlyKeys(entry, { kind = true, properties = true })
+                and entry.kind == H.LureKind and onlyKeys(entry.properties, { cframe = true })
+                and Interaction.isCFrame(entry.properties.cframe) then
+                return true
+            end
+            return "only one Box Lure (" .. H.LureKind .. ") per call"
+        elseif kind == "buyOutfit" then
+            if n == 4 and otherPlayer(a) and furnitureKey(b) and type(c) == "string" and #c >= 8 and #c <= 64
+                and type(d) == "number" and d >= 1 and d <= Interaction.maxOutfitPrice and d == math.floor(d) then
+                return true
+            end
+            return "not a mannequin purchase within Farm.Transfer.MaxOutfitPrice"
+        elseif kind == "deleteOutfit" then
+            if n == 3 and a == "player" and type(b) == "string" and b ~= "" and c == nil then
+                return true
+            end
+            return "not the recorded outfit delete"
+        elseif kind == "pay" then
+            if n == 5 and otherPlayer(a) and furnitureKey(b) and c == "UseBlock" and d == H.PayAmount and e == me.Character then
+                return true
+            end
+            return "not the recorded Cash Register payment"
+        end
+        return "unknown house call"
+    end
     function Interaction:send(actionName, ...)
         local action = GameConstants.Actions[actionName]
         if not action then
@@ -13986,6 +14854,19 @@ __moduleSources["Game/Interaction"] = function(...)
                 error("Interaction: " .. actionName .. " may not send " .. tostring(message) .. " " .. tostring(value), 2)
             end
         end
+        if action.petModel then -- v3.0.77: only one pet model (the walk finds MY pet's model)
+            local first = ...
+            local kind = typeof(first)
+            if select("#", ...) ~= 1 or kind ~= "Instance" or not first:IsA("Model") then
+                error("Interaction: " .. actionName .. " is sent with one pet model only", 2)
+            end
+        end
+        if action.houseCall then
+            local okCheck, why = pcall(Interaction.checkHouseCall, action.houseCall, select("#", ...), ...)
+            if not okCheck or why ~= true then
+                error("Interaction: " .. actionName .. " refused: " .. tostring(why), 2)
+            end
+        end
         local folderName = action.folder and GameConstants.Remotes[action.folder] or GameConstants.Remotes.Folder
         local apiFolder = ReplicatedStorage:FindFirstChild(folderName)
         local remote = apiFolder and apiFolder:FindFirstChild(action.remote)
@@ -14052,9 +14933,39 @@ __moduleSources["Game/Travel"] = function(...)
     function Travel:canGoTo(destination)
         return GameConstants.Travel[destination] ~= nil
     end
+    -- v3.0.75: the owner of the house that is loaded (workspace.HouseInteriors.blueprint.<owner name>, as for my own
+    -- house in exitHouse); nil = not known (none / several drawn)
+    function Travel.houseOwnerName()
+        local node = workspace
+        for _, name in ipairs(GameConstants.HouseBlueprintPath) do
+            node = node and node:FindFirstChild(name)
+        end
+        local children = node and node:GetChildren() or {}
+        local me = Players.LocalPlayer
+        if node and me and node:FindFirstChild(me.Name) then
+            return me.Name
+        end
+        return #children == 1 and children[1].Name or nil
+    end
     function Travel:isAt(destination)
         local interior = self._state:get("player.interior")
-        return type(interior) == "string" and string.sub(interior, 1, #destination) == destination
+        local at = type(interior) == "string" and string.sub(interior, 1, #destination) == destination
+        -- v3.0.75 (Transfer Thingy: an ALT stands in its Main's house): someone else's house is not "home"
+        if at and destination == GameConstants.HouseInteriorName then
+            local owner = Travel.houseOwnerName()
+            local me = Players.LocalPlayer
+            if owner ~= nil and me and owner ~= me.Name then
+                return false
+            end
+        end
+        return at
+    end
+    -- v3.0.75: in the house of that player (its blueprint is the one drawn)
+    function Travel:inHouseOf(player)
+        local interior = self._state:get("player.interior")
+        return player ~= nil and type(interior) == "string"
+            and string.sub(interior, 1, #GameConstants.HouseInteriorName) == GameConstants.HouseInteriorName
+            and Travel.houseOwnerName() == player.Name
     end
     function Travel:exitToMainMap()
         local place = self._state:get("player.interior")
@@ -14208,6 +15119,11 @@ __moduleSources["Game/Travel"] = function(...)
     end
     function Travel:_gameTravel(destination, recipe)
         local me = Players.LocalPlayer
+        -- v3.0.76: a hanging game trip = no respawn / new trip on top of it (that only voided)
+        local hung, hungTo = self:stuckSeconds()
+        if hung then
+            return false, string.format("the game's last trip (to %s, %d s ago) has not ended", tostring(hungTo), math.floor(hung))
+        end
         local before = self._state:get("player.interior")
         if recipe.ownHouse and self._farmConfig.HomeByRespawn ~= false and Util.now() >= (self._respawnSkipUntil or 0) then
             self._logger:info("Travel", "Going home by respawn (now in " .. tostring(before) .. ")")
@@ -14240,21 +15156,17 @@ __moduleSources["Game/Travel"] = function(...)
         local doorId = gameDoorId(recipe)
         self._logger:info("Travel", "Going to " .. destination .. " (now in " .. tostring(before) .. ", game travel via "
             .. doorId .. ")")
-        local finished = false
-        task.spawn(function()
-            local ok, err = pcall(module.enter, destination, doorId, options)
-            finished = true
-            if not ok then
-                self._logger:warn("Travel", "InteriorsM.enter failed: " .. tostring(err))
-            end
-        end)
+        local trip, busy = self:_enter(module, destination, doorId, options)
+        if not trip then
+            return false, busy
+        end
         if not self:_waitArrival(destination, ARRIVAL_TIMEOUT_SECONDS + 5) then
             -- v3.0.19 (user: "big lag spikes on teleports"; reports: game travel "did not work" -> remote route ->
             -- "still not drawn" -> void): the game's own trip may still be loading on a slow device. Never start a
             -- second trip on top of it: wait for it to finish (at most 20 s more)
-            if not finished then
+            if not trip.finished then
                 local untilAt = Util.now() + 20
-                while not finished and Util.now() < untilAt and not self:isAt(destination) do
+                while not trip.finished and Util.now() < untilAt and not self:isAt(destination) do
                     task.wait(0.25)
                 end
                 if self:_waitArrival(destination, 3) then
@@ -14264,7 +15176,7 @@ __moduleSources["Game/Travel"] = function(...)
             end
             -- v3.0.72: says whether the game's own trip ended (and did not move me) or never ended (diagnosis)
             return false, "still in " .. tostring(self._state:get("player.interior"))
-                .. (finished and ", the game's trip ended" or ", the game's trip never ended")
+                .. (trip.finished and ", the game's trip ended" or ", the game's trip never ended")
         end
         self._logger:info("Travel", "Arrived: " .. tostring(self._state:get("player.interior")))
         if destination == "MainMap" then
@@ -14318,7 +15230,9 @@ __moduleSources["Game/Travel"] = function(...)
         end
         self._logger:info("Travel", destination .. " is not drawn on this device: entering it the game's way so it loads"
             .. " (void / white screen fix)")
-        task.spawn(pcall, module.enter, destination, gameDoorId(recipe), recipe.ownHouse and { house_owner = me } or {})
+        if not self:_enter(module, destination, gameDoorId(recipe), recipe.ownHouse and { house_owner = me } or {}) then
+            return false -- the game's last trip has not ended: never a second one on top of it
+        end
         untilAt = Util.now() + 10
         while Util.now() < untilAt do
             if drawn() then
@@ -14347,19 +15261,77 @@ __moduleSources["Game/Travel"] = function(...)
         local ok, drawn = pcall(self._ensureDrawn, self, destination, recipe, true)
         return ok and drawn == true
     end
+    -- v3.0.75 (Transfer Thingy): the selected Main's house, by the game's own way in (the quest visit below), checked
+    function Travel:goToHouseOf(player)
+        if self:inHouseOf(player) then
+            return true
+        end
+        local started, why = self:visitHouse(player)
+        if not started then
+            return false, why
+        end
+        local deadline = Util.now() + ARRIVAL_TIMEOUT_SECONDS + 8
+        while Util.now() < deadline do
+            if not player.Parent then
+                return false, player.Name .. " left the server"
+            end
+            if self:inHouseOf(player) then
+                task.wait(1) -- its furniture is drawn a moment after the walls
+                return true
+            end
+            task.wait(0.25)
+        end
+        return false, string.format("not in %s's house (now in %s, house drawn: %s)", player.Name,
+            tostring(self._state:get("player.interior")), tostring(Travel.houseOwnerName() or "?"))
+    end
     function Travel:visitHouse(player)
         local module = self:_interiorsModule()
         if not module then
             return false, "no InteriorsM"
         end
-        self._logger:info("Travel", "Visiting the house of " .. tostring(player.Name) .. " (quest)")
+        self._logger:info("Travel", "Visiting the house of " .. tostring(player.Name))
+        local trip, busy = self:_enter(module, "housing", "MainDoor", { house_owner = player })
+        if not trip then
+            return false, busy
+        end
+        return true
+    end
+    --[[
+        v3.0.76 (user log 2026-10-26, Delta: "the game's trip never ended" to MainMap, then every next trip, the
+        respawn home and the "draw it again" trip were started on top of it -> the house was never drawn -> void,
+        again and again): ONE game trip (InteriorsM.enter) at a time. While one has not ended (and I am still where it
+        started), no other trip is started; Travel:stuckSeconds() tells the task manager how long it hangs.
+    ]]
+    function Travel:_enter(module, destination, door, options)
+        local pending = self._pendingTrip
+        if pending and not pending.finished then
+            local moved = self._state:get("player.interior") ~= pending.from or self:isAt(pending.to)
+            if not moved then
+                return nil, string.format("the game's last trip (to %s, %d s ago) has not ended", tostring(pending.to),
+                    math.floor(Util.now() - pending.at))
+            end
+        end
+        local trip = { to = destination, from = self._state:get("player.interior"), at = Util.now(), finished = false }
+        self._pendingTrip = trip
         task.spawn(function()
-            local ok, err = pcall(module.enter, "housing", "MainDoor", { house_owner = player })
+            local ok, err = pcall(module.enter, destination, door, options)
+            trip.finished = true
             if not ok then
-                self._logger:warn("Travel", "InteriorsM.enter (house visit) failed: " .. tostring(err))
+                self._logger:warn("Travel", "InteriorsM.enter failed: " .. tostring(err))
             end
         end)
-        return true
+        return trip
+    end
+    -- seconds the last game trip has hung (not ended, still where it started); nil = no trip hangs
+    function Travel:stuckSeconds()
+        local pending = self._pendingTrip
+        if not pending or pending.finished then
+            return nil
+        end
+        if self._state:get("player.interior") ~= pending.from or self:isAt(pending.to) then
+            return nil
+        end
+        return Util.now() - pending.at, pending.to
     end
     -- v2.1.17 (reports: "Hauntlet join zone not found (interiors loaded: School / HauntedManor / none)" while my data
     -- said HauntedHotel; voids at (-5989, 2160, -9030) "in Hospital / Salon"): my data can say "there" while this
@@ -14470,7 +15442,7 @@ __moduleSources["Game/Travel"] = function(...)
             local module = self:_interiorsModule()
             if module then
                 self._logger:info("Travel", "Leaving the Crypt first (its door to the main map)")
-                task.spawn(pcall, module.enter, "MainMap", "TheCrypt/MainDoor", {})
+                self:_enter(module, "MainMap", "TheCrypt/MainDoor", {})
                 local deadline = Util.now() + 15
                 while Util.now() < deadline and not self:isAt("MainMap") do
                     task.wait(0.25)
@@ -14793,6 +15765,45 @@ __moduleSources["Game/Tasks"] = function(...)
         return false, "the pet did not appear as equipped"
     end
     Tasks._equipPetAgain = equipPetAgain
+    -- v3.0.77 (user: "in the walk the pet keeps teleporting to me and does not walk; equipping it again breaks the
+    -- walk: carry the pet instead"; discovery halloween12: HoldBaby(<pet>) -> state "HoldingBaby", EjectBaby(<pet>)
+    -- puts it down): the pet is picked up, carried along (a teleport too) and put down next to me
+    local function carrying(ctx)
+        local manager = ctx.gameData:get(GameConstants.DataKeys.StateManager)
+        local states = type(manager) == "table" and type(manager.states) == "table" and manager.states or {}
+        for _, state in pairs(states) do
+            if type(state) == "table" and state.id == "HoldingBaby" then
+                return true
+            end
+        end
+        return false
+    end
+    Tasks._carrying = carrying
+    local function carryPet(ctx, unique, move)
+        local model = ctx.petLocator:findModel(unique)
+        if not model then
+            if move then
+                pcall(move)
+            end
+            return false, "the pet model is not here"
+        end
+        ctx.interaction:send("HoldPet", model)
+        local held = ctx.waitUntil(function()
+            return carrying(ctx)
+        end, 3)
+        if move then
+            pcall(move)
+        end
+        if held then
+            task.wait(0.5)
+            ctx.interaction:send("DropPet", model)
+            ctx.waitUntil(function()
+                return not carrying(ctx)
+            end, 3)
+        end
+        return held, held and "" or "the game did not let me pick it up"
+    end
+    Tasks._carryPet = carryPet
     ensurePetModel = function(ctx, unique)
         local model, reason = ctx.petLocator:findModel(unique)
         if model then
@@ -15797,15 +16808,27 @@ __moduleSources["Game/Tasks"] = function(...)
                     task.wait(3)
                 end
                 if kind == "walk" then
-                    -- v3.0.44 (user: "before the walk need, equip the pet again: sometimes it bugs and the pet does not
-                    -- walk"; log: "walk: progress 1%, NOT running"): unequip, then equip (the farm's own equipPetAgain)
-                    ctx.interaction:send("UnequipItem", entry.petUnique, nil)
-                    ctx.waitUntil(function()
-                        return not ctx.gameData:isPetEquipped(entry.petUnique)
-                    end, 4)
-                    local okEquip, whyEquip = equipPetAgain(ctx, entry.petUnique)
-                    if not okEquip then
-                        return false, "equipping the pet again before the walk: " .. tostring(whyEquip)
+                    -- v3.0.77 (user log 2026-10-26: unequip + equip before the walk reset it): equipped only when it
+                    -- is not; never carried around while walking (a carried pet is put down)
+                    ctx.maid:Give(function()
+                        if carrying(ctx) then
+                            local model = ctx.petLocator:findModel(entry.petUnique)
+                            if model then
+                                ctx.interaction:send("DropPet", model)
+                            end
+                        end
+                    end)
+                    if not ctx.gameData:isPetEquipped(entry.petUnique) then
+                        local okEquip, whyEquip = equipPetAgain(ctx, entry.petUnique)
+                        if not okEquip then
+                            return false, "equipping the pet before the walk: " .. tostring(whyEquip)
+                        end
+                    end
+                    if carrying(ctx) then
+                        local model = ctx.petLocator:findModel(entry.petUnique)
+                        if model then
+                            ctx.interaction:send("DropPet", model)
+                        end
                     end
                 end
                 local stroller
@@ -16012,14 +17035,13 @@ __moduleSources["Game/Tasks"] = function(...)
                                 farSince = farSince or elapsed
                                 if elapsed - farSince >= 6 then
                                     farSince, reequips, reequipBusy = nil, reequips + 1, true
-                                    ctx.logger:info("Tasks", string.format("walk: the pet is stuck %d studs behind me: equipping it"
-                                        .. " again (%d of 4)", math.floor(far), reequips))
+                                    ctx.logger:info("Tasks", string.format("walk: the pet is stuck %d studs behind me: carrying it"
+                                        .. " to me (%d of 4)", math.floor(far), reequips))
                                     task.spawn(function()
-                                        pcall(function()
-                                            ctx.interaction:send("UnequipItem", unique, nil)
-                                            task.wait(1)
-                                            equipPetAgain(ctx, unique)
-                                        end)
+                                        local okCarry, whyCarry = pcall(carryPet, ctx, unique, nil)
+                                        if okCarry and whyCarry == false then
+                                            ctx.logger:info("Tasks", "walk: the pet could not be picked up")
+                                        end
                                         sinceActive, reequipBusy = 0, false
                                     end)
                                 end
@@ -16066,16 +17088,24 @@ __moduleSources["Game/Tasks"] = function(...)
                 end
                 if stalled and GameConstants.Spots.beach_party then
                     ctx.logger:info("Tasks", kind .. " is not progressing here: moving to the open beach spot and walking there")
-                    local teleported, why = ctx.interaction:teleportTo("beach_party")
-                    ctx.logger:info("Tasks", "Teleport to beach_party: " .. (teleported and "ok" or tostring(why)))
+                    local teleported, why
                     if kind == "walk" then
-                        -- v3.0.60: the pet stays where it was (465 studs away in the log): equipped again next to me
-                        ctx.interaction:send("UnequipItem", unique, nil)
-                        task.wait(1)
-                        equipPetAgain(ctx, unique)
-                    elseif petDroppedDuringTask(ctx, group) or ctx.waitUntil(function()
+                        -- v3.0.77: the pet is carried along the teleport (it was equipped again before: that reset the walk)
+                        local held = carryPet(ctx, unique, function()
+                            teleported, why = ctx.interaction:teleportTo("beach_party")
+                        end)
+                        ctx.logger:info("Tasks", "Teleport to beach_party: " .. (teleported and "ok" or tostring(why))
+                            .. (held and " (pet carried)" or " (the pet could not be picked up)"))
+                        if not held and not ctx.gameData:isPetEquipped(unique) then
+                            equipPetAgain(ctx, unique)
+                        end
+                    else
+                        teleported, why = ctx.interaction:teleportTo("beach_party")
+                        ctx.logger:info("Tasks", "Teleport to beach_party: " .. (teleported and "ok" or tostring(why)))
+                    end
+                    if kind ~= "walk" and (petDroppedDuringTask(ctx, group) or ctx.waitUntil(function()
                         return petDroppedDuringTask(ctx, group)
-                    end, 5) then
+                    end, 5)) then
                         equipPetAgain(ctx, unique)
                     end
                     walkPhase(60)
@@ -18134,7 +19164,86 @@ __moduleSources["Game/EventTasks"] = function(...)
         end
         return nil, "no Crypt floors in your data yet"
     end
-    function EventTasks.cryptPick(crypt, wants, preferTwig, gameData)
+    -- v3.0.75 Stray Cat Dragon (Farm.Event.StrayCatDragon; private v3.0.102 DragonDiag): the ids from the game's own
+    -- InventoryDB when it has them, the confirmed ids as the fallback
+    EventTasks._dragonIds = nil
+    function EventTasks.dragonIds()
+        if EventTasks._dragonIds then
+            return EventTasks._dragonIds
+        end
+        local ids = { pet = E.DragonPet, food = E.DragonFood }
+        pcall(function()
+            local fsys = game:GetService("ReplicatedStorage"):FindFirstChild("Fsys")
+            local db = fsys and require(fsys).load("InventoryDB")
+            if type(db) ~= "table" then
+                return
+            end
+            if type(db.pets) == "table" and db.pets[E.DragonPet] == nil then
+                for id in pairs(db.pets) do
+                    if string.find(string.lower(tostring(id)), "stray_cat_dragon", 1, true) then
+                        ids.pet = tostring(id)
+                        break
+                    end
+                end
+            end
+            if type(db.food) == "table" and db.food[E.DragonFood] == nil then
+                for id in pairs(db.food) do
+                    local l = string.lower(tostring(id))
+                    if string.find(l, E.CatFoodGrave, 1, true) and not string.find(l, E.NotDragonFood, 1, true) then
+                        ids.food = tostring(id)
+                        break
+                    end
+                end
+            end
+        end)
+        EventTasks._dragonIds = ids
+        return ids
+    end
+    EventTasks._catPolymorphed = false -- the cat answered "polymorphed" this session
+    function EventTasks.catPolymorphed(gameData)
+        if EventTasks._catPolymorphed then
+            return true
+        end
+        local cat = gameData and gameData:get(KEYS.StrayCat)
+        return type(cat) == "table" and cat.polymorphed == true
+    end
+    function EventTasks.catFoodHeld(gameData)
+        if not gameData then
+            return 0
+        end
+        return #gameData:findItems(GameConstants.ItemCategory, { EventTasks.dragonIds().food })
+    end
+    EventTasks._catFoodGraveMiss = 0 -- v3.0.104 (private): a cat food grave that gave nothing is not opened again
+    -- the Crypt cat food is still needed: Dragon unlock on, the cat not polymorphed, no cat food in my backpack
+    function EventTasks.catFoodWanted(gameData, event)
+        return type(event) == "table" and event.StrayCatDragon == true and gameData ~= nil
+            and type(gameData:get(KEYS.StrayCat)) == "table" and not EventTasks.catPolymorphed(gameData)
+            and EventTasks.catFoodHeld(gameData) == 0 and EventTasks._catFoodGraveMiss < 1
+    end
+    -- the Dragon is sold only after the cat is polymorphed (private reports 2026-10-24: 69 of 69 buys failed before)
+    function EventTasks.dragonLocked(gameData, id)
+        return id ~= nil and id == EventTasks.dragonIds().pet and not EventTasks.catPolymorphed(gameData)
+    end
+    function EventTasks.cryptPick(crypt, wants, preferTwig, gameData, event)
+        -- v3.0.75: the cat food grave first while the Dragon unlock wants it; otherwise never (the saved CryptOpen list
+        -- is not changed: only this pick)
+        do
+            local list = {}
+            for _, want in ipairs(type(wants) == "table" and wants or {}) do
+                if want ~= E.CatFoodGrave then
+                    table.insert(list, want)
+                end
+            end
+            if EventTasks.catFoodWanted(gameData, event) then
+                table.insert(list, 1, E.CatFoodGrave)
+                if not table.find(list, E.Ladder) then -- the grave may be on a lower floor
+                    table.insert(list, E.Ladder)
+                end
+            end
+            if type(wants) == "table" or #list > 0 then
+                wants = list
+            end
+        end
         -- v3.0.28: "sock" / "headphones" only while the Shoebill doors still want one (and none is in my backpack)
         if type(wants) == "table" and (table.find(wants, "sock") or table.find(wants, "headphones")) then
             local need = EventTasks.shoebillWants(gameData)
@@ -18691,7 +19800,44 @@ __moduleSources["Game/EventTasks"] = function(...)
                 local data = ctx.gameData:get(KEYS.StrayCat)
                 return type(data) == "table" and data or {}
             end
-            if cat().fed_today == true then
+            -- v3.0.75: a polymorphed cat (the Dragon unlocked) never takes water again: nothing more to do
+            if EventTasks.catPolymorphed(ctx.gameData) then
+                return true
+            end
+            -- v3.0.75 Stray Cat Dragon: the Crypt's Polymorphing Cat Food (only that exact item, never
+            -- pet_polymorph_potion), through the same feed call as the water (StrayCatGiftFood)
+            local ev = ctx.farmConfig.Event
+            if type(ev) == "table" and ev.StrayCatDragon == true then
+                local foodId = EventTasks.dragonIds().food
+                local food = not string.find(foodId, E.NotDragonFood, 1, true)
+                    and ctx.gameData:findItems(GameConstants.ItemCategory, { foodId })[1]
+                if food then
+                    EventTasks._catFoodTryAt = Util.now()
+                    local there, notThere = standAt(ctx, "stray_cat")
+                    if not there then
+                        return false, notThere
+                    end
+                    local held, holdWhy = hold(ctx, food.unique, GameConstants.ItemCategory)
+                    if not held then
+                        return false, holdWhy
+                    end
+                    task.wait(1)
+                    local sent, result = ctx.interaction:send("StrayCatFeed", { unique = food.unique })
+                    local reason = type(result) == "table" and result.reason or nil
+                    if reason == "polymorphed" then
+                        EventTasks._catPolymorphed = true
+                    end
+                    if ctx.waitUntil(function()
+                        return EventTasks.catPolymorphed(ctx.gameData)
+                    end, 8) then
+                        ctx.logger:success("Event", "Stray Cat Dragon: the cat is polymorphed (the Dragon can be bought in the Candy Shop)")
+                        return true
+                    end
+                    return false, "Stray Cat Dragon: the cat did not take the cat food (" .. (sent and ("answer: "
+                        .. answerText(reason or result)) or "send failed") .. ")"
+                end
+            end
+            if ev.StrayCat ~= true or cat().fed_today == true then
                 return true
             end
             local giftsBefore = tonumber(cat().total_gifts) or 0
@@ -18720,6 +19866,11 @@ __moduleSources["Game/EventTasks"] = function(...)
             task.wait(1)
             local sent, result = ctx.interaction:send("StrayCatFeed", { unique = item.unique })
             local reason = type(result) == "table" and result.reason or nil
+            if reason == "polymorphed" then -- (private v3.0.99 reports: the polymorphed cat answers this to water)
+                EventTasks._catPolymorphed = true
+                ctx.logger:info("Event", "Stray Cat is polymorphed: no more water for it")
+                return true
+            end
             for _ = 1, 2 do
                 if reason ~= "too_far" then
                     break
@@ -18753,8 +19904,10 @@ __moduleSources["Game/EventTasks"] = function(...)
             local nestState = EventTasks.nestState(ctx.gameData:get(KEYS.PigeonNest),
                 #ctx.gameData:itemsOfId(TOYS, E.Twig), key and 1 or 0)
             local preferTwig = ctx.farmConfig.Event.AutoNest ~= false and nestState == "COLLECT_TWIGS"
-            local plan, why = EventTasks.cryptPick(ctx.gameData:get(KEYS.Crypt), ctx.farmConfig.Event.CryptOpen, preferTwig,
-                ctx.gameData)
+            local ev = ctx.farmConfig.Event
+            local focusNow = GameConstants.focusOf(ctx.farmConfig)
+            local wants = (ev.Crypt or (focusNow ~= nil and focusNow.kind == "spider")) and ev.CryptOpen or {}
+            local plan, why = EventTasks.cryptPick(ctx.gameData:get(KEYS.Crypt), wants, preferTwig, ctx.gameData, ev)
             local skeliStep = EventTasks.skelicornOn(ctx.farmConfig) and EventTasks.skelicornStep(ctx.gameData, ctx.farmConfig)
             if skeliStep and (skeliStep == "crypt" or EventTasks.skelicornNeedsLever(ctx.gameData)) then
                 -- v2.1.4 Auto Skelicorn: the lever's grave first; none on the floors I can reach: the ladder down
@@ -18834,6 +19987,17 @@ __moduleSources["Game/EventTasks"] = function(...)
                 ctx.logger:warn("Event", "Crypt: a grave opened, but not with the expected id (floor * 16 + grave)")
             end
             ctx.logger:success("Event", "Crypt: opened " .. plan.reward .. " on floor " .. plan.floor)
+            if plan.reward == E.CatFoodGrave then
+                -- v3.0.75: the Dragon's cat food (max 1 per player): a grave that gave none is not opened again
+                if ctx.waitUntil(function()
+                    return EventTasks.catFoodHeld(ctx.gameData) > 0 or EventTasks.catPolymorphed(ctx.gameData)
+                end, 8) then
+                    ctx.logger:success("Event", "Stray Cat Dragon: got the Polymorphing Cat Food")
+                else
+                    EventTasks._catFoodGraveMiss += 1
+                    ctx.logger:warn("Event", "Stray Cat Dragon: the cat food grave gave no cat food: not opened again this session")
+                end
+            end
             if preferTwig then
                 local _, placedNow, heldNow = EventTasks.nestState(ctx.gameData:get(KEYS.PigeonNest),
                     #ctx.gameData:itemsOfId(TOYS, E.Twig), 0)
@@ -22092,7 +23256,8 @@ __moduleSources["Game/EventTasks"] = function(...)
                 end
                 -- v3.0.19 (reports: "ShopServer:247 attempt to index nil with 'currency_id'" x39): a box (category
                 -- "gifts") was bought here as a PET; boxes go through buyShopGift with their own category
-                if type(id) == "string" and picked[id] and price and price > 0 and not entry.machine and forSale(id)
+                local locked = entry.afterPolymorph == true and EventTasks.dragonLocked(gameData, id)
+                if type(id) == "string" and picked[id] and price and price > 0 and not entry.machine and forSale(id) and not locked
                     and (entry.category == nil or entry.category == GameConstants.EggCategory)
                     and (max <= 0 or owned < max)
                     and candy - (tonumber(settings.KeepCandy) or 0) >= price then
@@ -22101,7 +23266,8 @@ __moduleSources["Game/EventTasks"] = function(...)
                 end
                 -- v3.0.74 (user: "it does not buy Stitches"): why a picked pet is not bought, logged when it changes
                 if type(id) == "string" and picked[id] and not entry.machine then
-                    why = why or (not (price and price > 0) and (id .. ": no candy price known (the game's list has none)")
+                    why = why or (locked and (id .. ": the Stray Cat is not polymorphed yet (Stray Cat Dragon)"))
+                        or (not (price and price > 0) and (id .. ": no candy price known (the game's list has none)")
                         or not forSale(id) and (id .. ": the shop said not for sale (tried again within 60 min)")
                         or (max > 0 and owned >= max) and string.format("%s: %d owned, max %d", id, owned, max)
                         or (candy - (tonumber(settings.KeepCandy) or 0) < price) and string.format(
@@ -22115,6 +23281,7 @@ __moduleSources["Game/EventTasks"] = function(...)
         for _, entry in ipairs(type(settings.Buy) == "table" and settings.Buy or {}) do
             local id, price, max = entry.id or entry[1], tonumber(entry.price), tonumber(entry.max) or 0
             if type(id) == "string" and price and price > 0 and not entry.machine and forSale(id)
+                and entry.afterPolymorph ~= true -- v3.0.75: the Dragon only when picked (Pick)
                 and (entry.category == nil or entry.category == GameConstants.EggCategory) then
                 local owned = 0
                 for _ in pairs(gameData:petUniquesOfKind(id)) do
@@ -22428,6 +23595,902 @@ __moduleSources["Game/EventTasks"] = function(...)
     }
     return EventTasks
 end
+__moduleSources["Game/HouseTasks"] = function(...)
+    --[[
+        v3.0.75 house features, built ONLY from the user's discovery logs (2026-10-23/24):
+        * Box Lure (Farm.LureBox): lureboxplacingbait.log / lureclaimafter4h.log
+          bait:  HousingAPI/ActivateFurniture(me, "<lure>", "UseBlock", { bait_unique = "<bait>" }, my character)
+                 -> lures_2023_lure_manager.lures_map.BasicLure = { bait_kind, finished = false, lure_kind, lure_start_timestamp }
+          claim: HousingAPI/ActivateFurniture(me, "<lure>", "UseBlock", false, my character) -> lures_map = {}
+        * Transfer Thingy (Farm.Transfer), the game's mannequin sales and Cash Register, never a trade:
+          MAIN: HousingAPI/BuyFurnitures({ { kind = "mannequins_2024_mannequin", properties = { cframe } } }) (750 Bucks)
+                HousingAPI/ActivateFurniture(me, "<mannequin>", "UseBlock", { price = 100, set_price = true }, char)
+                -> hint "Price was set to $100!"
+          ALT:  AvatarAPI/BuyMannequinOutfit(<Main>, "<mannequin>", "<outfit version>", 100) -> hint "100 Buck(s) paid to
+                <Main>", outfits = { { name = "Outfit", source_outfit_version = <version> } }; then
+                AvatarAPI/DeleteOutfit("player", "Outfit", nil). 3 buys, then dialog "This outfit has too many orders
+                right now, come back later!"
+                HousingAPI/ActivateFurniture(<Main>, "<register>", "UseBlock", 50, my character) -> hint "50 Buck(s) paid
+                to <Main>"; 3 payments, then dialog "This register seems overloaded right now! Try again later."
+        Nothing here is ever reported as done before the game's data or its own message says so.
+    ]]
+    local import = ...
+    local Util = import("Core/Util")
+    local GameConstants = import("Game/GameConstants")
+    local Players = game:GetService("Players")
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local HouseTasks = {}
+    local KEYS = GameConstants.DataKeys
+    local H = GameConstants.House
+    -- key -> seconds to the next check, read once by the task manager after the task ended
+    HouseTasks.waitFor = {}
+    function HouseTasks.takeWait(key)
+        local wait = HouseTasks.waitFor[key]
+        HouseTasks.waitFor[key] = nil
+        return wait
+    end
+    HouseTasks.status = {} -- short lines for the window: lure, main, mannequins, buys, pay
+    -- ---------------------------------------------------------------- the game's own hint / dialog messages
+    HouseTasks.messages = {}
+    function HouseTasks.start(maid)
+        local api = ReplicatedStorage:FindFirstChild(GameConstants.Remotes.Folder)
+        for _, name in ipairs({ "MsgAPI/HintSent", "MsgAPI/DialogSent" }) do
+            local remote = api and api:FindFirstChild(name)
+            if remote and remote:IsA("RemoteEvent") then
+                maid:Give(remote.OnClientEvent:Connect(function(info)
+                    local text = type(info) == "table" and info.text
+                    if type(text) == "string" then
+                        table.insert(HouseTasks.messages, { text = text, at = Util.now() })
+                        if #HouseTasks.messages > 20 then
+                            table.remove(HouseTasks.messages, 1)
+                        end
+                    end
+                end))
+            end
+        end
+    end
+    function HouseTasks.saidSince(since, pattern)
+        pattern = string.lower(pattern)
+        for index = #HouseTasks.messages, 1, -1 do
+            local message = HouseTasks.messages[index]
+            if message.at < since then
+                break
+            end
+            if string.find(string.lower(message.text), pattern, 1, true) then
+                return message.text
+            end
+        end
+        return nil
+    end
+    -- ---------------------------------------------------------------- furniture of the loaded house
+    local function furnitureData(gameData)
+        local interior = gameData and gameData:get(KEYS.Interior)
+        return type(interior) == "table" and type(interior.furniture) == "table" and interior.furniture or nil
+    end
+    function HouseTasks.piecesOfKind(gameData, kind)
+        local list = {}
+        for key, piece in pairs(furnitureData(gameData) or {}) do
+            if type(piece) == "table" and piece.id == kind then
+                table.insert(list, { key = tostring(key), piece = piece })
+            end
+        end
+        table.sort(list, function(a, b)
+            return a.key < b.key
+        end)
+        return list
+    end
+    -- the furniture models drawn for that owner (holder "<owner>/.../<key>", model attribute furniture_unique = key)
+    function HouseTasks.modelsOf(ownerName)
+        local result = {}
+        local node = workspace
+        for _, name in ipairs(GameConstants.HouseFurnitureFolderPath) do
+            node = node and node:FindFirstChild(name)
+        end
+        if not (node and type(ownerName) == "string") then
+            return result
+        end
+        local prefix = ownerName .. "/"
+        for _, holder in ipairs(node:GetChildren()) do
+            if string.sub(holder.Name, 1, #prefix) == prefix then
+                for _, child in ipairs(holder:GetChildren()) do
+                    if child:IsA("Model") then
+                        local key = child:GetAttribute(GameConstants.FurnitureUniqueAttribute)
+                        if type(key) == "string" then
+                            result[key] = child
+                        end
+                    end
+                end
+            end
+        end
+        return result
+    end
+    local function standPart(model)
+        local useBlocks = model and model:FindFirstChild("UseBlocks")
+        return (useBlocks and useBlocks:FindFirstChildWhichIsA("BasePart"))
+            or (model and (model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)))
+    end
+    local function moveNear(ctx, model)
+        local part = standPart(model)
+        if not part then
+            return false, "its model has no part to stand by"
+        end
+        return ctx.interaction:teleportNearPart(part, 4)
+    end
+    local function money(gameData)
+        return tonumber(gameData:get(KEYS.Money))
+    end
+    local function serverNow()
+        local ok, now = pcall(function()
+            return workspace:GetServerTimeNow()
+        end)
+        return ok and now or os.time()
+    end
+    -- the structure of a data entry (names and kinds only, no values): for the logs when something is not readable
+    function HouseTasks.describe(value, depth)
+        depth = depth or 0
+        if type(value) ~= "table" then
+            return typeof(value)
+        end
+        if depth >= 2 then
+            return "{...}"
+        end
+        local parts = {}
+        for key, item in pairs(value) do
+            table.insert(parts, tostring(key) .. "=" .. HouseTasks.describe(item, depth + 1))
+            if #parts >= 12 then
+                table.insert(parts, "...")
+                break
+            end
+        end
+        table.sort(parts)
+        return "{" .. table.concat(parts, ", ") .. "}"
+    end
+    -- ---------------------------------------------------------------- Box Lure
+    -- every bait in my backpack: an item whose id has "bait" in it (the user's bait: ice_dimension_2025_ice_soup_bait;
+    -- the game takes it by its unique). Nothing from a guide list: only what my inventory holds.
+    function HouseTasks.baits(gameData)
+        local inventory = gameData and gameData:get(KEYS.Inventory)
+        if type(inventory) ~= "table" then
+            return nil -- not known yet (never "no baits")
+        end
+        local byId, list = {}, {}
+        for category, items in pairs(inventory) do
+            if category ~= "pets" and type(items) == "table" then
+                for unique, item in pairs(items) do
+                    local id = type(item) == "table" and tostring(item.id or item.kind or "") or ""
+                    if string.find(string.lower(id), "bait", 1, true) then
+                        local entry = byId[id]
+                        if not entry then
+                            entry = { id = id, count = 0, uniques = {} }
+                            byId[id] = entry
+                            table.insert(list, entry)
+                        end
+                        entry.count += 1
+                        table.insert(entry.uniques, tostring(item.unique or unique))
+                    end
+                end
+            end
+        end
+        table.sort(list, function(a, b)
+            return a.id < b.id
+        end)
+        for _, entry in ipairs(list) do
+            table.sort(entry.uniques)
+        end
+        return list
+    end
+    -- the first PICKED bait I own, in the order of the pick list
+    function HouseTasks.pickBait(baits, picked)
+        if type(baits) ~= "table" or type(picked) ~= "table" then
+            return nil
+        end
+        for _, id in ipairs(picked) do
+            for _, entry in ipairs(baits) do
+                if entry.id == id and entry.count > 0 and entry.uniques[1] then
+                    return entry
+                end
+            end
+        end
+        return nil
+    end
+    -- my lure's state: nil = not known; { entry = nil } = empty; { entry = { finished, bait_kind, ... } }
+    function HouseTasks.lureState(gameData, lureKind)
+        local manager = gameData and gameData:get(KEYS.Lures)
+        if type(manager) ~= "table" then
+            return nil
+        end
+        local map = type(manager.lures_map) == "table" and manager.lures_map or {}
+        for _, entry in pairs(map) do
+            if type(entry) == "table" and (entry.lure_kind == nil or entry.lure_kind == lureKind) then
+                return { entry = entry }
+            end
+        end
+        return { entry = nil }
+    end
+    -- what the lure job should do now: "claim", "bait", or nil + why (and seconds until a new look)
+    function HouseTasks.lurePlan(gameData, cfg)
+        if type(cfg) ~= "table" or cfg.Enabled ~= true then
+            return nil, "off", 600
+        end
+        local state = HouseTasks.lureState(gameData, H.LureKind)
+        if not state then
+            return nil, "lure data not known yet", 60
+        end
+        local entry = state.entry
+        if entry and entry.finished == true then
+            return "claim", "reward ready", 0
+        end
+        if entry then
+            local started = tonumber(entry.lure_start_timestamp)
+            local hours = started and math.max(0, serverNow() - started) / 3600 or nil
+            return nil, string.format("baited with %s%s", tostring(entry.bait_kind or "?"),
+                hours and string.format(", %.1f h ago", hours) or ""), 300
+        end
+        local bait = HouseTasks.pickBait(HouseTasks.baits(gameData), cfg.Baits)
+        if not bait then
+            if type(cfg.Baits) ~= "table" or #cfg.Baits == 0 then
+                return nil, "empty: no bait picked", 300
+            end
+            return nil, "empty: none of the picked baits in your backpack", 300
+        end
+        return "bait", "empty: baiting with " .. bait.id, 0
+    end
+    HouseTasks.lure = {
+        id = "lure_box",
+        timeoutSeconds = 60,
+        run = function(ctx)
+            local cfg = ctx.farmConfig.LureBox
+            local step = HouseTasks.lurePlan(ctx.gameData, cfg)
+            if not step then
+                return true
+            end
+            if not ctx.travel:isAt(GameConstants.HouseInteriorName) then
+                local ok, why = ctx.travel:goTo(GameConstants.HouseInteriorName)
+                if not ok then
+                    return false, "going home: " .. tostring(why)
+                end
+            end
+            local me = Players.LocalPlayer
+            local pieces = HouseTasks.piecesOfKind(ctx.gameData, H.LureKind)
+            if #pieces == 0 then
+                HouseTasks.status.lure = "no Box Lure in your house yet (it is placed first)"
+                HouseTasks.waitFor.lure_box = 60
+                return true
+            end
+            local models
+            ctx.waitUntil(function()
+                models = HouseTasks.modelsOf(me.Name)
+                return models[pieces[1].key] ~= nil
+            end, 6)
+            local key = pieces[1].key
+            local model = models and models[key]
+            if not model then
+                return false, "the Box Lure (" .. key .. ") is not drawn in your house"
+            end
+            local function entryNow()
+                local state = HouseTasks.lureState(ctx.gameData, H.LureKind)
+                return state and state.entry
+            end
+            if step == "claim" then
+                moveNear(ctx, model)
+                local sent, answer = ctx.interaction:send("LureUse", me, key, H.LureUseBlock, false, me.Character)
+                if not sent then
+                    return false, "Box Lure claim not sent: " .. tostring(answer)
+                end
+                if not ctx.waitUntil(function()
+                    local entry = entryNow()
+                    return entry == nil or entry.finished ~= true
+                end, 8) then
+                    return false, "Box Lure: the reward was not collected (the lure still says finished)"
+                end
+                ctx.logger:success("House", "Box Lure: reward collected")
+                step = HouseTasks.lurePlan(ctx.gameData, cfg)
+                if step ~= "bait" then
+                    return true
+                end
+                task.wait(1)
+            end
+            if entryNow() ~= nil then
+                return true -- already baited: never baited twice
+            end
+            local bait = HouseTasks.pickBait(HouseTasks.baits(ctx.gameData), cfg.Baits)
+            if not bait then
+                return true
+            end
+            moveNear(ctx, model)
+            local unique = bait.uniques[1]
+            local sent, answer = ctx.interaction:send("LureUse", me, key, H.LureUseBlock, { bait_unique = unique }, me.Character)
+            if not sent then
+                return false, "Box Lure bait not sent: " .. tostring(answer)
+            end
+            if not ctx.waitUntil(function()
+                local entry = entryNow()
+                return entry ~= nil and entry.bait_kind == bait.id
+            end, 8) then
+                return false, "Box Lure: " .. bait.id .. " did not go in (server answer: " .. Util.truncate(tostring(answer), 60) .. ")"
+            end
+            ctx.logger:success("House", "Box Lure: baited with " .. bait.id)
+            HouseTasks.waitFor.lure_box = 300
+            return true
+        end,
+    }
+    -- ---------------------------------------------------------------- Transfer Thingy: the selected Main
+    function HouseTasks.mainPlayer(cfg)
+        local userId = type(cfg) == "table" and tonumber(cfg.MainUserId) or 0
+        if not userId or userId <= 0 then
+            return nil, "no Main selected"
+        end
+        local player = Players:GetPlayerByUserId(userId)
+        if not player then
+            return nil, string.format("the Main (%s) is not in this server", tostring(cfg.MainName ~= "" and cfg.MainName or userId))
+        end
+        if player == Players.LocalPlayer then
+            return nil, "the selected Main is this account"
+        end
+        return player
+    end
+    -- per mannequin / register: confirmed buys in the current window and the time it may be used again
+    HouseTasks.windows = {}
+    function HouseTasks.window(id)
+        local w = HouseTasks.windows[id]
+        if not w then
+            w = { count = 0, coolUntil = 0 }
+            HouseTasks.windows[id] = w
+        end
+        return w
+    end
+    function HouseTasks.ready(id, now)
+        return (now or Util.now()) >= HouseTasks.window(id).coolUntil
+    end
+    -- one confirmed buy / payment; the 3rd starts the rest (H.WindowSeconds); returns true when it now rests
+    function HouseTasks.confirmed(id, now)
+        local w = HouseTasks.window(id)
+        w.count += 1
+        if w.count >= H.PerWindow then
+            w.count, w.coolUntil = 0, (now or Util.now()) + H.WindowSeconds
+            return true
+        end
+        return false
+    end
+    -- the game said "too many orders" / "overloaded": that one rests (longer if it says so: never shorter)
+    function HouseTasks.refused(id, now, seconds)
+        local w = HouseTasks.window(id)
+        w.count = 0
+        w.coolUntil = math.max(w.coolUntil, (now or Util.now()) + (seconds or H.WindowSeconds))
+    end
+    function HouseTasks.nextReadyIn(ids, now)
+        now = now or Util.now()
+        local best
+        for _, id in ipairs(ids) do
+            local wait = math.max(0, HouseTasks.window(id).coolUntil - now)
+            best = best and math.min(best, wait) or wait
+        end
+        return best
+    end
+    -- ---------------------------------------------------------------- MAIN: mannequins in my house
+    local function cframeOf(piece)
+        local found
+        local function scan(t, depth)
+            for _, value in pairs(t) do
+                if found then
+                    return
+                end
+                local kind = typeof(value)
+                if kind == "CFrame" then
+                    found = value
+                elseif type(value) == "table" and depth < 2 then
+                    scan(value, depth + 1)
+                end
+            end
+        end
+        if type(piece) == "table" then
+            scan(piece, 0)
+        end
+        return found
+    end
+    --[[
+        v3.0.78 (user: "with Auto Lure Box on, first look whether the box is there, if not place it: a one time job, top
+        priority; the same for the other one time transfer jobs"): what my own house holds, read whenever I stand in
+        it (nil = not seen yet this session)
+    ]]
+    HouseTasks.homeSeen = nil
+    function HouseTasks.noteHome(gameData)
+        local data = furnitureData(gameData)
+        if not data then
+            return
+        end
+        local lure, mannequins = 0, {}
+        for key, piece in pairs(data) do
+            if type(piece) == "table" and piece.id == H.LureKind then
+                lure += 1
+            elseif type(piece) == "table" and piece.id == H.MannequinKind then
+                table.insert(mannequins, tostring(key))
+            end
+        end
+        HouseTasks.homeSeen = { lure = lure, mannequins = mannequins, at = Util.now() }
+    end
+    HouseTasks.lurePlaceTries = 0
+    function HouseTasks.lurePlaceNeeded(cfg)
+        local seen = HouseTasks.homeSeen
+        return type(cfg) == "table" and cfg.Enabled == true and (seen == nil or seen.lure == 0)
+            and HouseTasks.lurePlaceTries < #H.LureSpots + 1
+    end
+    HouseTasks.placeLure = {
+        id = "lure_place",
+        timeoutSeconds = 60,
+        run = function(ctx)
+            if not ctx.travel:isAt(GameConstants.HouseInteriorName) then
+                local ok, why = ctx.travel:goTo(GameConstants.HouseInteriorName)
+                if not ok then
+                    return false, "going home: " .. tostring(why)
+                end
+            end
+            -- my house's furniture list first (it arrives a moment after the walls)
+            ctx.waitUntil(function()
+                return furnitureData(ctx.gameData) ~= nil and next(furnitureData(ctx.gameData)) ~= nil
+            end, 6)
+            HouseTasks.noteHome(ctx.gameData)
+            local pieces = HouseTasks.piecesOfKind(ctx.gameData, H.LureKind)
+            if #pieces > 0 then
+                ctx.logger:info("House", "Box Lure: already in your house (" .. pieces[1].key .. ")")
+                return true
+            end
+            HouseTasks.lurePlaceTries += 1
+            local spot = H.LureSpots[HouseTasks.lurePlaceTries]
+            local at
+            if spot then
+                at = CFrame.new(spot[1], spot[2], spot[3])
+            else -- the last try: beside a placed mannequin (its own place in the data)
+                local mannequin = HouseTasks.piecesOfKind(ctx.gameData, H.MannequinKind)[1]
+                local base = mannequin and cframeOf(mannequin.piece)
+                at = base and base * CFrame.new(-3, 0, 0)
+            end
+            if not at then
+                HouseTasks.status.lure = "no spot known for a Box Lure: place one yourself"
+                return false, "no spot known for the Box Lure"
+            end
+            local bucks = money(ctx.gameData)
+            local sent, answer = ctx.interaction:send("BuyLure", { { kind = H.LureKind, properties = { cframe = at } } })
+            if not sent then
+                return false, "Box Lure placement not sent: " .. tostring(answer)
+            end
+            if not ctx.waitUntil(function()
+                return #HouseTasks.piecesOfKind(ctx.gameData, H.LureKind) > 0
+            end, 8) then
+                return false, "the Box Lure did not appear in your house (" .. Util.truncate(tostring(answer), 60) .. ")"
+            end
+            HouseTasks.noteHome(ctx.gameData)
+            local now = money(ctx.gameData)
+            ctx.logger:success("House", string.format("Box Lure placed in your house%s", (bucks and now and now < bucks)
+                and string.format(" (%d Bucks)", bucks - now) or " (free)"))
+            HouseTasks.waitFor.lure_place = 1800
+            return true
+        end,
+    }
+    -- MAIN: one time work left (go home to look, buy up to the count, set the prices)
+    function HouseTasks.mannequinSetupNeeded(cfg)
+        if type(cfg) ~= "table" or cfg.Mannequin ~= true then
+            return false
+        end
+        local seen = HouseTasks.homeSeen
+        if seen == nil then
+            return true
+        end
+        local target = math.clamp(math.floor(tonumber(cfg.MannequinCount) or 1), 1, H.MaxMannequins or 10)
+        if #seen.mannequins < target and HouseTasks._boughtThisSession < target then
+            return true
+        end
+        for _, key in ipairs(seen.mannequins) do
+            if not HouseTasks._priced[key] and (HouseTasks._priceTries[key] or 0) < 3 then
+                return true
+            end
+        end
+        return false
+    end
+    -- ALT: the selected Main's house visited this session (the first trip there comes first)
+    HouseTasks.visitedMain = {}
+    HouseTasks._priced = {} -- mannequin key -> true once the game said "Price was set to"
+    HouseTasks._priceTries = {}
+    HouseTasks._boughtThisSession = 0
+    function HouseTasks.mannequinPlan(gameData, cfg, ownerIsMe)
+        if type(cfg) ~= "table" or cfg.Mannequin ~= true then
+            return nil
+        end
+        if not ownerIsMe then
+            return "check"
+        end
+        local target = math.clamp(math.floor(tonumber(cfg.MannequinCount) or 1), 1, H.MaxMannequins or 10)
+        local pieces = HouseTasks.piecesOfKind(gameData, H.MannequinKind)
+        if #pieces < target then
+            return "buy", target, pieces
+        end
+        for _, item in ipairs(pieces) do
+            if not HouseTasks._priced[item.key] and (HouseTasks._priceTries[item.key] or 0) < 3 then
+                return "price", target, pieces
+            end
+        end
+        return nil, target, pieces
+    end
+    HouseTasks.mannequinSetup = {
+        id = "mannequin_setup",
+        timeoutSeconds = 90,
+        run = function(ctx)
+            local cfg = ctx.farmConfig.Transfer
+            local me = Players.LocalPlayer
+            if not ctx.travel:isAt(GameConstants.HouseInteriorName) then
+                local ok, why = ctx.travel:goTo(GameConstants.HouseInteriorName)
+                if not ok then
+                    return false, "going home: " .. tostring(why)
+                end
+            end
+            ctx.waitUntil(function() -- my house's furniture list arrives a moment after the walls
+                return furnitureData(ctx.gameData) ~= nil and next(furnitureData(ctx.gameData)) ~= nil
+            end, 6)
+            HouseTasks.noteHome(ctx.gameData)
+            ctx.maid:Give(function()
+                if ctx.travel:isAt(GameConstants.HouseInteriorName) then
+                    HouseTasks.noteHome(ctx.gameData)
+                end
+            end)
+            local step, target, pieces = HouseTasks.mannequinPlan(ctx.gameData, cfg, true)
+            if step == "buy" then
+                if HouseTasks._boughtThisSession >= target then
+                    -- never more than the count this session, whatever the data says (no duplicates after a refresh)
+                    HouseTasks.status.mannequins = string.format("%d of %d placed (bought %d this session: waiting for the game)",
+                        #pieces, target, HouseTasks._boughtThisSession)
+                    HouseTasks.waitFor.mannequin_setup = 120
+                    return true
+                end
+                local bucks = money(ctx.gameData)
+                if not bucks or bucks < H.MannequinCost then
+                    HouseTasks.status.mannequins = string.format("%d of %d (needs %d Bucks for the next one)", #pieces, target, H.MannequinCost)
+                    HouseTasks.waitFor.mannequin_setup = 600
+                    return true
+                end
+                -- beside the last placed one (its own place in the data), else the user's recorded spots
+                local at
+                local last = pieces[#pieces]
+                local base = last and cframeOf(last.piece)
+                if base then
+                    at = base * CFrame.new(3, 0, 0)
+                else
+                    local spot = H.MannequinSpots[#pieces + 1]
+                    at = spot and CFrame.new(spot[1], spot[2], spot[3])
+                end
+                if not at then
+                    HouseTasks.status.mannequins = string.format("%d of %d: place the others yourself (no free spot known)", #pieces, target)
+                    ctx.logger:warn("House", "Mannequins: no known spot for another one; place it yourself, it is reused")
+                    HouseTasks.waitFor.mannequin_setup = 1800
+                    return true
+                end
+                local countBefore = #pieces
+                HouseTasks._boughtThisSession += 1
+                local sent, answer = ctx.interaction:send("BuyMannequin", { { kind = H.MannequinKind, properties = { cframe = at } } })
+                if not sent then
+                    return false, "mannequin purchase not sent: " .. tostring(answer)
+                end
+                if not ctx.waitUntil(function()
+                    return #HouseTasks.piecesOfKind(ctx.gameData, H.MannequinKind) > countBefore
+                end, 8) then
+                    HouseTasks.waitFor.mannequin_setup = 1800
+                    return false, "the mannequin did not appear in your house (" .. Util.truncate(tostring(answer), 60)
+                        .. "); place it yourself"
+                end
+                ctx.logger:success("House", string.format("Mannequins: bought one for %d Bucks (%d of %d)", H.MannequinCost,
+                    countBefore + 1, target))
+                HouseTasks.waitFor.mannequin_setup = 3
+                return true
+            end
+            pieces = pieces or HouseTasks.piecesOfKind(ctx.gameData, H.MannequinKind)
+            local models
+            ctx.waitUntil(function()
+                models = HouseTasks.modelsOf(me.Name)
+                for _, item in ipairs(pieces) do
+                    if not models[item.key] then
+                        return false
+                    end
+                end
+                return true
+            end, 6)
+            local done = 0
+            for _, item in ipairs(pieces) do
+                if HouseTasks._priced[item.key] then
+                    done += 1
+                elseif (HouseTasks._priceTries[item.key] or 0) < 3 and models[item.key] then
+                    HouseTasks._priceTries[item.key] = (HouseTasks._priceTries[item.key] or 0) + 1
+                    moveNear(ctx, models[item.key])
+                    local since = Util.now()
+                    local sent, answer = ctx.interaction:send("MannequinPrice", me, item.key, "UseBlock",
+                        { price = H.SalePrice, set_price = true }, me.Character)
+                    if sent and ctx.waitUntil(function()
+                        return HouseTasks.saidSince(since, H.TextPricedSet) ~= nil
+                    end, 6) then
+                        HouseTasks._priced[item.key] = true
+                        done += 1
+                        ctx.logger:success("House", string.format("Mannequin %s: price set to %d Bucks (the game confirmed)",
+                            item.key, H.SalePrice))
+                    else
+                        ctx.logger:warn("House", string.format("Mannequin %s: the price was not confirmed (%s)", item.key,
+                            Util.truncate(tostring(answer), 60)))
+                    end
+                end
+            end
+            HouseTasks.status.mannequins = string.format("%d placed, %d priced at %d", #pieces, done, H.SalePrice)
+            HouseTasks.waitFor.mannequin_setup = done >= #pieces and 1800 or 120
+            return true
+        end,
+    }
+    -- ---------------------------------------------------------------- ALT: buy the Main's mannequin outfits
+    local UUID = "^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$"
+    -- the outfit version and price of a mannequin, read from its furniture data / model attributes (UNKNOWN field
+    -- names: found by shape: a UUID string, a number under "price"); nil when not readable
+    function HouseTasks.outfitInfo(piece, model)
+        local version, price
+        local function consider(key, value)
+            key = string.lower(tostring(key))
+            if type(value) == "string" and string.match(value, UUID)
+                and (version == nil or string.find(key, "version", 1, true)) then
+                version = value
+            elseif type(value) == "number" and key == "price" then
+                price = value
+            end
+        end
+        local function scan(t, depth)
+            for key, value in pairs(t) do
+                consider(key, value)
+                if type(value) == "table" and depth < 3 then
+                    scan(value, depth + 1)
+                end
+            end
+        end
+        if type(piece) == "table" then
+            scan(piece, 0)
+        end
+        if model then
+            pcall(function()
+                for key, value in pairs(model:GetAttributes()) do
+                    consider(key, value)
+                end
+            end)
+        end
+        return version, price
+    end
+    HouseTasks._described = {}
+    local function boughtOutfit(gameData, version)
+        local outfits = gameData:get(KEYS.Outfits)
+        if type(outfits) ~= "table" then
+            return nil
+        end
+        local found, sameName = nil, 0
+        for _, outfit in pairs(outfits) do
+            if type(outfit) == "table" and outfit.source_outfit_version == version then
+                found = outfit
+            end
+        end
+        if found then
+            for _, outfit in pairs(outfits) do
+                if type(outfit) == "table" and outfit.name == found.name then
+                    sameName += 1
+                end
+            end
+        end
+        return found, sameName
+    end
+    HouseTasks.buyMannequins = {
+        id = "mannequin_buy",
+        timeoutSeconds = 150,
+        run = function(ctx)
+            local cfg = ctx.farmConfig.Transfer
+            local main, why = HouseTasks.mainPlayer(cfg)
+            if not main then
+                HouseTasks.status.buys = why
+                HouseTasks.waitFor.mannequin_buy = 60
+                return true
+            end
+            local maxPrice = math.clamp(math.floor(tonumber(cfg.MaxOutfitPrice) or H.SalePrice), 1, 1000)
+            pcall(function()
+                getmetatable(ctx.interaction).maxOutfitPrice = maxPrice -- the allowlist's price limit (Interaction)
+            end)
+            local ok, travelWhy = ctx.travel:goToHouseOf(main)
+            if not ok then
+                return false, "going to " .. main.Name .. "'s house: " .. tostring(travelWhy)
+            end
+            -- v3.0.78 (user: "the ALT first goes to the Main's house so its mannequins / register load"): their
+            -- data and models are waited for (10 s) before anything is looked at
+            local pieces, models
+            ctx.waitUntil(function()
+                pieces = HouseTasks.piecesOfKind(ctx.gameData, H.MannequinKind)
+                models = HouseTasks.modelsOf(main.Name)
+                return #pieces > 0 and models[pieces[1].key] ~= nil
+            end, 10)
+            HouseTasks.visitedMain[main.UserId] = true
+            local list = {}
+            for _, item in ipairs(pieces) do
+                -- the model under "<Main>/..." = this mannequin is the Main's (never anyone else's)
+                if models[item.key] then
+                    local version, price = HouseTasks.outfitInfo(item.piece, models[item.key])
+                    if version and price then
+                        table.insert(list, { key = item.key, model = models[item.key], version = version, price = price })
+                    elseif not HouseTasks._described[item.key] then
+                        HouseTasks._described[item.key] = true
+                        ctx.logger:warn("House", string.format("Mannequin %s: its outfit version / price is not readable"
+                            .. " (data %s): not bought", item.key, HouseTasks.describe(item.piece)))
+                    end
+                end
+            end
+            if #list == 0 then
+                HouseTasks.status.buys = string.format("%s: %d mannequins, none readable", main.Name, #pieces)
+                HouseTasks.waitFor.mannequin_buy = 300
+                return true
+            end
+            local ids, bought = {}, 0
+            for _, item in ipairs(list) do
+                table.insert(ids, "m:" .. main.UserId .. ":" .. item.key)
+            end
+            for index, item in ipairs(list) do
+                local id = ids[index]
+                while HouseTasks.ready(id) do
+                    if not main.Parent or not ctx.travel:inHouseOf(main) then
+                        return false, "left " .. main.Name .. "'s house"
+                    end
+                    if item.price > maxPrice then
+                        HouseTasks.refused(id, nil, 1800)
+                        ctx.logger:warn("House", string.format("Mannequin %s costs %d Bucks (more than Farm.Transfer.MaxOutfitPrice %d): skipped",
+                            item.key, item.price, maxPrice))
+                        break
+                    end
+                    local before = money(ctx.gameData)
+                    if not before or before < item.price then
+                        HouseTasks.status.buys = "not enough Bucks"
+                        HouseTasks.waitFor.mannequin_buy = 600
+                        return true
+                    end
+                    moveNear(ctx, item.model)
+                    local since = Util.now()
+                    local sent, answer = ctx.interaction:send("BuyMannequinOutfit", main, item.key, item.version, item.price)
+                    local paid = sent and ctx.waitUntil(function()
+                        local now = money(ctx.gameData)
+                        return (now and now <= before - item.price) or HouseTasks.saidSince(since, H.TextTooManyOrders) ~= nil
+                    end, 6)
+                    if HouseTasks.saidSince(since, H.TextTooManyOrders) then
+                        HouseTasks.refused(id)
+                        ctx.logger:info("House", string.format("Mannequin %s: \"too many orders\": resting %d s", item.key, H.WindowSeconds))
+                        break
+                    end
+                    local now = money(ctx.gameData)
+                    if not paid or not now or now > before - item.price then
+                        HouseTasks.refused(id, nil, 60)
+                        ctx.logger:warn("House", string.format("Mannequin %s: no purchase seen (%s): next one", item.key,
+                            Util.truncate(tostring(answer), 60)))
+                        break
+                    end
+                    bought += 1
+                    local resting = HouseTasks.confirmed(id)
+                    ctx.logger:success("House", string.format("Bought %s's mannequin outfit (%s) for %d Bucks", main.Name, item.key, item.price))
+                    -- the bought outfit leaves my saved outfits (the user's flow), only that exact one
+                    local outfit, sameName
+                    ctx.waitUntil(function()
+                        outfit, sameName = boughtOutfit(ctx.gameData, item.version)
+                        return outfit ~= nil
+                    end, 5)
+                    if outfit and sameName == 1 and type(outfit.name) == "string" then
+                        ctx.interaction:send("DeleteBoughtOutfit", "player", outfit.name, nil)
+                        ctx.waitUntil(function()
+                            return boughtOutfit(ctx.gameData, item.version) == nil
+                        end, 4)
+                    elseif outfit then
+                        ctx.logger:info("House", "The bought outfit shares its name with another saved outfit: kept")
+                    end
+                    if resting then
+                        break
+                    end
+                    task.wait(1.5)
+                end
+            end
+            local wait = HouseTasks.nextReadyIn(ids) or 120
+            HouseTasks.status.buys = string.format("%s: %d mannequins, bought %d now, next in %d s", main.Name, #list, bought, math.floor(wait))
+            HouseTasks.waitFor.mannequin_buy = math.max(5, wait)
+            return true
+        end,
+    }
+    -- ---------------------------------------------------------------- ALT: Cash Register payments
+    function HouseTasks.findRegister(gameData, main)
+        local models = HouseTasks.modelsOf(main.Name)
+        for key, model in pairs(models) do
+            if model.Name == H.RegisterModel then
+                return key, model
+            end
+        end
+        for key, piece in pairs(furnitureData(gameData) or {}) do
+            local id = type(piece) == "table" and string.lower(tostring(piece.id or "")) or ""
+            if (string.find(id, "cash_register", 1, true) or string.find(id, "cashregister", 1, true)) and models[tostring(key)] then
+                return tostring(key), models[tostring(key)]
+            end
+        end
+        return nil
+    end
+    HouseTasks.pay = {
+        id = "auto_pay",
+        timeoutSeconds = 90,
+        run = function(ctx)
+            local cfg = ctx.farmConfig.Transfer
+            local main, why = HouseTasks.mainPlayer(cfg)
+            if not main then
+                HouseTasks.status.pay = why
+                HouseTasks.waitFor.auto_pay = 60
+                return true
+            end
+            local id = "p:" .. main.UserId
+            if not HouseTasks.ready(id) then
+                HouseTasks.waitFor.auto_pay = HouseTasks.nextReadyIn({ id })
+                return true
+            end
+            local bucks = money(ctx.gameData)
+            if not bucks or bucks < H.PayAmount then
+                HouseTasks.status.pay = "not enough Bucks"
+                HouseTasks.waitFor.auto_pay = 600
+                return true
+            end
+            local ok, travelWhy = ctx.travel:goToHouseOf(main)
+            if not ok then
+                return false, "going to " .. main.Name .. "'s house: " .. tostring(travelWhy)
+            end
+            local key, model
+            ctx.waitUntil(function()
+                key, model = HouseTasks.findRegister(ctx.gameData, main)
+                return key ~= nil
+            end, 10)
+            HouseTasks.visitedMain[main.UserId] = true
+            if not key then
+                HouseTasks.status.pay = main.Name .. " has no Cash Register in the house"
+                HouseTasks.waitFor.auto_pay = 900
+                return true
+            end
+            local me = Players.LocalPlayer
+            local paidNow = 0
+            while HouseTasks.ready(id) do
+                if not main.Parent or not ctx.travel:inHouseOf(main) then
+                    return false, "left " .. main.Name .. "'s house"
+                end
+                local before = money(ctx.gameData)
+                if not before or before < H.PayAmount then
+                    HouseTasks.status.pay = "not enough Bucks"
+                    break
+                end
+                moveNear(ctx, model)
+                local since = Util.now()
+                local sent, answer = ctx.interaction:send("PayRegister", main, key, "UseBlock", H.PayAmount, me.Character)
+                local seen = sent and ctx.waitUntil(function()
+                    local now = money(ctx.gameData)
+                    return (now and now <= before - H.PayAmount) or HouseTasks.saidSince(since, H.TextOverloaded) ~= nil
+                end, 6)
+                if HouseTasks.saidSince(since, H.TextOverloaded) then
+                    HouseTasks.refused(id)
+                    ctx.logger:info("House", string.format("Cash Register: \"overloaded\": resting %d s", H.WindowSeconds))
+                    break
+                end
+                local now = money(ctx.gameData)
+                if not seen or not now or now > before - H.PayAmount then
+                    HouseTasks.refused(id, nil, 60)
+                    ctx.logger:warn("House", "Cash Register: no payment seen (" .. Util.truncate(tostring(answer), 60) .. ")")
+                    break
+                end
+                paidNow += 1
+                ctx.logger:success("House", string.format("Paid %d Bucks to %s at the Cash Register", H.PayAmount, main.Name))
+                if HouseTasks.confirmed(id) then
+                    break
+                end
+                task.wait(2)
+            end
+            local wait = HouseTasks.nextReadyIn({ id }) or 0
+            HouseTasks.status.pay = string.format("%s: paid %d now%s", main.Name, paidNow * H.PayAmount,
+                wait > 0 and string.format(", next in %d s", math.floor(wait)) or "")
+            HouseTasks.waitFor.auto_pay = math.max(5, wait)
+            return true
+        end,
+    }
+    return HouseTasks
+end
 __moduleSources["Game/TaskManager"] = function(...)
     local import = ...
     local Util = import("Core/Util")
@@ -22436,6 +24499,7 @@ __moduleSources["Game/TaskManager"] = function(...)
     local Tasks = import("Game/Tasks")
     local EventTasks = import("Game/EventTasks")
     local Minigame = import("Game/Minigame")
+    local HouseTasks = import("Game/HouseTasks")
     local TaskManager = {}
     TaskManager.__index = TaskManager
     local TEAM_KEY = "team"
@@ -22769,7 +24833,8 @@ __moduleSources["Game/TaskManager"] = function(...)
             self:_leverChecked(result, reason)
         end
         if running.eventJob then
-            local wait = key == "pet_pen" and math.max(1, tonumber(self._farmConfig.Event.PetPenMinutes) or 15) * 60
+            local wait = HouseTasks.takeWait(key)
+                or key == "pet_pen" and math.max(1, tonumber(self._farmConfig.Event.PetPenMinutes) or 15) * 60
                 or (key == "skelicorn" and EventTasks.skelicornShop(self._farmConfig) and 15)
                 or EVENT_RECHECK_SECONDS[key] or 60
             self._nextEventAt[key] = Util.now() + wait
@@ -23001,6 +25066,21 @@ __moduleSources["Game/TaskManager"] = function(...)
             local place = self._state:get("player.interior")
             if place ~= self._stuckPlace then
                 self._stuckPlace, self._stuckTrips = place, 0
+            end
+        end
+        do -- v3.0.75: a house job whose switch was turned off stops now
+            local running = self._running
+            local farm = self._farmConfig
+            local transfer = type(farm.Transfer) == "table" and farm.Transfer or {}
+            local on = {
+                lure_box = type(farm.LureBox) == "table" and farm.LureBox.Enabled == true,
+                lure_place = type(farm.LureBox) == "table" and farm.LureBox.Enabled == true,
+                mannequin_setup = transfer.Mannequin == true,
+                mannequin_buy = transfer.BuyMannequin == true,
+                auto_pay = transfer.AutoPay == true,
+            }
+            if running and on[running.key] == false then
+                self:_finish("INTERRUPTED", "switched off")
             end
         end
         self:_tickInner()
@@ -23245,6 +25325,9 @@ __moduleSources["Game/TaskManager"] = function(...)
         if self:_whiteScreenCheck() then
             return
         end
+        if self:_travelStuckCheck() then
+            return
+        end
         self:_expireDisabled()
         self:_trackPet()
         if self._side and Util.now() > self._side.deadline then
@@ -23405,6 +25488,14 @@ __moduleSources["Game/TaskManager"] = function(...)
                     return
                 end
                 self._why = "waiting: " .. freeze
+                return
+            end
+        end
+        do -- v3.0.78: one time setup jobs come first (after the minigames): Box Lure placement, mannequins, ALT's first trip
+            local key, label, taskDef = self:_selectSetupJob()
+            if key then
+                self:_stopQuickHands("setup first")
+                self:_start(key, label, taskDef, nil, true)
                 return
             end
         end
@@ -23734,6 +25825,11 @@ __moduleSources["Game/TaskManager"] = function(...)
             self:_start(eventKey, eventLabel, eventTask, eventGroup, true)
             return
         end
+        local houseKey, houseLabel, houseTask = self:_selectHouseJob()
+        if houseKey then
+            self:_start(houseKey, houseLabel, houseTask, nil, true)
+            return
+        end
         local group, taskDefinition = self:_selectGroup()
         if group then
             local owners = {}
@@ -23882,7 +25978,8 @@ __moduleSources["Game/TaskManager"] = function(...)
         local KEYS = GameConstants.DataKeys
         -- 1) remote calls only: any time
         local focus = GameConstants.focusOf(farm)
-        if eventOn and focus and focus.kind == "candy" and due("candy_pet") and data:petInventoryKnown() then
+        if eventOn and focus and focus.kind == "candy" and due("candy_pet") and data:petInventoryKnown()
+            and not EventTasks.dragonLocked(data, focus.id) then -- v3.0.75: no Dragon before the cat is polymorphed
             -- Mega a Pet with a candy pet: Pet Pen slots + 1 copies growing (1 raised, the rest in the pen)
             local wanted = EventTasks.copiesWanted(data, farm)
             local growing = data:growingCopies(focus.id)
@@ -23927,7 +26024,7 @@ __moduleSources["Game/TaskManager"] = function(...)
             local okWhy, why = pcall(EventTasks.potionWhy, data, farm)
             if okWhy and why ~= self._potionWhy then
                 self._potionWhy = why
-                self._logger:info("Tasks", "Auto Potions: " .. why)
+                self._logger:debug("Tasks", "Auto Potions: " .. why)
             end
         end
         local team = self._state:get("player.team")
@@ -24167,6 +26264,103 @@ __moduleSources["Game/TaskManager"] = function(...)
         end
         return stateName
     end
+    -- v3.0.75: Box Lure (Farm.LureBox) and Transfer Thingy (Farm.Transfer) jobs, each with its own switch; they move
+    -- the character, so they run in the main slot after the event jobs; each says when it wants to look again
+    -- (HouseTasks.waitFor) so nothing is polled faster than the game's own timers / rests
+    -- v3.0.78 (user: "with Auto Lure Box on, first check whether the box is there, if not place it: one time, top
+    -- priority; the same for the other one time transfer jobs; the ALT first goes to the Main's house"): the one time
+    -- jobs, each at most every 60 s (a failure rests as usual), only while trips work
+    function TaskManager:_selectSetupJob()
+        local farm = self._farmConfig
+        local data = self._gameData
+        local character = game:GetService("Players").LocalPlayer.Character
+        if not data or not self._travel or not (character and character:FindFirstChild("HumanoidRootPart")) then
+            return nil
+        end
+        local now = Util.now()
+        if self._travel:isAt(GameConstants.HouseInteriorName) and now - (self._homeNotedAt or -math.huge) >= 10 then
+            self._homeNotedAt = now
+            HouseTasks.noteHome(data)
+        end
+        local travelOk = (self._travelFailures or 0) == 0 and (self._stuckTrips or 0) == 0 and not self._travel:stuckSeconds()
+        if not travelOk then
+            return nil
+        end
+        local function due(key)
+            return not self:_isBlocked(key) and now >= (self._nextEventAt[key] or 0)
+        end
+        if HouseTasks.lurePlaceNeeded(farm.LureBox) and due("lure_place") then
+            return "lure_place", "Box Lure: check / place it (one time)", HouseTasks.placeLure
+        end
+        local transfer = type(farm.Transfer) == "table" and farm.Transfer or {}
+        if HouseTasks.mannequinSetupNeeded(transfer) and due("mannequin_setup") then
+            return "mannequin_setup", "Mannequins (MAIN): place and price (one time)", HouseTasks.mannequinSetup
+        end
+        if transfer.AutoPay == true or transfer.BuyMannequin == true then
+            local main = HouseTasks.mainPlayer(transfer)
+            if main and not HouseTasks.visitedMain[main.UserId] then
+                if transfer.BuyMannequin == true and due("mannequin_buy") then
+                    return "mannequin_buy", "First trip to " .. main.Name .. "'s house: mannequins", HouseTasks.buyMannequins
+                elseif transfer.AutoPay == true and due("auto_pay") then
+                    return "auto_pay", "First trip to " .. main.Name .. "'s house: Cash Register", HouseTasks.pay
+                end
+            end
+        end
+        return nil
+    end
+    function TaskManager:_selectHouseJob()
+        local farm = self._farmConfig
+        local data = self._gameData
+        local character = game:GetService("Players").LocalPlayer.Character
+        if not data or not (character and character:FindFirstChild("HumanoidRootPart")) then
+            return nil
+        end
+        local now = Util.now()
+        local function due(key)
+            return not self:_isBlocked(key) and now >= (self._nextEventAt[key] or 0)
+        end
+        -- v3.0.76 (user: "with everything on nothing may break"): the Box Lure and the MAIN's mannequins never make a
+        -- trip of their own: they run only while I already stand at home (the needs bring me home often enough); the
+        -- ALT's trips to the Main's house only while trips work (no failed trip in a row, no hanging game trip)
+        local atHome = self._travel ~= nil and self._travel:isAt(GameConstants.HouseInteriorName)
+        local travelOk = (self._travelFailures or 0) == 0 and (self._stuckTrips or 0) == 0
+            and not (self._travel and self._travel.stuckSeconds and self._travel:stuckSeconds())
+        local lure = farm.LureBox
+        if type(lure) == "table" and lure.Enabled == true and atHome and due("lure_box") then
+            local step, why, wait = HouseTasks.lurePlan(data, lure)
+            HouseTasks.status.lure = why
+            if step then
+                return "lure_box", "Box Lure: " .. why, HouseTasks.lure
+            end
+            self._nextEventAt.lure_box = now + (wait or 300)
+        end
+        local transfer = farm.Transfer
+        if type(transfer) ~= "table" then
+            return nil
+        end
+        if transfer.MannequinCount ~= self._mannequinTarget then -- a new count is looked at right away
+            self._mannequinTarget = transfer.MannequinCount
+            self._nextEventAt.mannequin_setup = 0
+        end
+        if transfer.Mannequin == true and atHome and due("mannequin_setup") then
+            return "mannequin_setup", "Mannequins (MAIN): place and price", HouseTasks.mannequinSetup
+        end
+        if transfer.AutoPay == true or transfer.BuyMannequin == true then
+            -- the selected Main is looked up by its UserId before every trip (never another player)
+            local main, why = HouseTasks.mainPlayer(transfer)
+            HouseTasks.status.main = main and string.format("%s (@%s, %d)", main.DisplayName, main.Name, main.UserId) or why
+            if not main or not travelOk then
+                return nil
+            end
+            if transfer.AutoPay == true and due("auto_pay") then
+                return "auto_pay", "Auto Pay: Cash Register of " .. main.Name, HouseTasks.pay
+            end
+            if transfer.BuyMannequin == true and due("mannequin_buy") then
+                return "mannequin_buy", "Buy " .. main.Name .. "'s mannequin outfits", HouseTasks.buyMannequins
+            end
+        end
+        return nil
+    end
     function TaskManager:_selectEventJob()
         local event = self._farmConfig.Event
         local data = self._gameData
@@ -24266,7 +26460,7 @@ __moduleSources["Game/TaskManager"] = function(...)
                 self._skelicornLineAt = Util.now()
                 if key ~= self._skelicornLine or Util.now() - (self._skelicornNoteAt or -1e9) >= 900 then
                     self._skelicornLine, self._skelicornNoteAt = key, Util.now()
-                    self._logger:info("Skelicorn", line)
+                    self._logger:debug("Skelicorn", line) -- v3.0.79: quieter logs
                     EventTasks.skelicornNote(line)
                 end
             end
@@ -24280,23 +26474,38 @@ __moduleSources["Game/TaskManager"] = function(...)
         end
         -- (v2.1.12: Mega a Pet candy copies, the Candy Shop, quest claims, gifts, potions and neon fusion run in the quick
         -- slot next to this one: _selectQuickJob)
-        if event.StrayCat and due("stray_cat") then
+        do
+            -- v3.0.75: water once a day (Farm.Event.StrayCat) until the cat is polymorphed; the Dragon's cat food
+            -- (Farm.Event.StrayCatDragon) as soon as it is in my backpack (5 min between tries, never after the polymorph)
             local cat = data:get(KEYS.StrayCat)
-            if type(cat) == "table" and cat.fed_today == false then
-                return "stray_cat", "feed the Stray Cat", EventTasks.strayCat, nil
+            local polymorphed = EventTasks.catPolymorphed(data)
+            local water = event.StrayCat and type(cat) == "table" and cat.fed_today == false and not polymorphed
+                and due("stray_cat")
+            local food = event.StrayCatDragon == true and type(cat) == "table" and not polymorphed
+                and EventTasks.catFoodHeld(data) > 0 and not self:_isBlocked("stray_cat")
+                and Util.now() - (EventTasks._catFoodTryAt or -math.huge) >= 300
+            if water or food then
+                return "stray_cat", food and "Stray Cat Dragon: feed the cat food" or "feed the Stray Cat", EventTasks.strayCat, nil
+            end
+            if event.StrayCatDragon == true and polymorphed and not self._dragonNoted then
+                self._dragonNoted = true
+                self._logger:info("Event", "Stray Cat Dragon: the cat is polymorphed (the Dragon is in the Candy Shop)")
             end
         end
         if event.Shoebill and due("shoebill") and EventTasks.shoebillNeed(data) then -- v3.0.21
             return "shoebill", "Shoebill: give the item at its Hotel door", EventTasks.shoebill, nil
         end
-        local cryptOn = event.Crypt or (focus ~= nil and focus.kind == "spider")
+        -- v3.0.75: the Dragon unlock opens the Crypt for its cat food too (only while it is wanted)
+        local cryptOn = event.Crypt or (focus ~= nil and focus.kind == "spider") or EventTasks.catFoodWanted(data, event)
         -- user 2026-10-11: "with Auto Skelicorn on, the lever comes first, 100%": while the lever is still needed the
         -- Crypt picks (Farm.Event.CryptOpen) do not run; the Auto Skelicorn block above opens the Crypt for the lever
         -- (log 2026-10-11: while the step showed "buy" the normal Crypt picks spent the Rusty Key on a ladder)
         local leverFirst = EventTasks.skelicornOn(self._farmConfig) and data:petInventoryKnown()
             and EventTasks.skelicornStep(data, self._farmConfig) ~= nil and EventTasks.skelicornNeedsLever(data)
         if cryptOn and not leverFirst and due("crypt") and data:get(KEYS.Crypt) ~= nil then
-            local plan = EventTasks.cryptPick(data:get(KEYS.Crypt), event.CryptOpen, nil, data)
+            -- v3.0.75: with only the Dragon unlock on (Crypt off) only its cat food grave and the ladder are opened
+            local wants = (event.Crypt or (focus ~= nil and focus.kind == "spider")) and event.CryptOpen or {}
+            local plan = EventTasks.cryptPick(data:get(KEYS.Crypt), wants, nil, data, event)
             if plan and plan.spider and event.MummySpider ~= false then
                 return "crypt", "claim the Mummy Spider", EventTasks.crypt, nil
             elseif plan and not plan.spider and #data:itemsOfId(GameConstants.ToyCategory, E.RustyKey) > 0 then
@@ -24305,7 +26514,7 @@ __moduleSources["Game/TaskManager"] = function(...)
         end
         if event.Quests and now >= (self._questLogAt or 0) then
             self._questLogAt = now + 600
-            self._logger:info("Event", "Quests: " .. EventTasks.describeQuests(data:get(KEYS.Dailies)))
+            self._logger:debug("Event", "Quests: " .. EventTasks.describeQuests(data:get(KEYS.Dailies)))
         end
         -- v2.1.12: "Claim quests" also does the visit-homes quests (one setting: Farm.Event.HouseVisits is not read)
         if event.Quests and due("house_visits") and EventTasks.visitQuest(data:get(KEYS.Dailies)) then
@@ -24360,6 +26569,48 @@ __moduleSources["Game/TaskManager"] = function(...)
     end
     -- v3.0.19: the client's place is broken (nothing drawn, no way out): leave the game so the rejoin tool starts a
     -- fresh client in the same private server. The report goes first.
+    --[[
+        v3.0.76 (user log 2026-10-26, Delta): the game's own trip (InteriorsM.enter) never ended; every trip, respawn
+        home and "draw it again" after it only voided (house never drawn). While a trip hangs for 45 s+: nothing that
+        moves the character starts (the window says why), no respawn loop; Farm.AutoRejoin rejoins after 2 min,
+        Farm.LeaveWhenStuck leaves. When the trip ends or I am somewhere else, the farm goes on by itself.
+    ]]
+    local TRAVEL_STUCK_SECONDS = 45
+    function TaskManager:_travelStuckCheck()
+        local hung, to = nil, nil
+        if self._travel and type(self._travel.stuckSeconds) == "function" then
+            hung, to = self._travel:stuckSeconds()
+        end
+        if not hung or hung < TRAVEL_STUCK_SECONDS then
+            if self._travelStuckNoted then
+                self._travelStuckNoted = nil
+                self._travelFailures, self._stuckTrips = 0, 0
+                self._logger:info("Tasks", "The game's travel works again: the farm goes on")
+            end
+            return false
+        end
+        if not self._travelStuckNoted then
+            self._travelStuckNoted = true
+            self._logger:warn("Tasks", string.format("The game's travel is stuck on this device (the trip to %s started %d s"
+                .. " ago never ended): trips and respawns are paused (they only end in the void). Rejoin, or turn on"
+                .. " 'Rejoin when stuck'", tostring(to), math.floor(hung)))
+            if self._running and not NEVER_INTERRUPT[self._running.key] then
+                self:_finish("INTERRUPTED", "the game's travel is stuck")
+            end
+            self:_finish("INTERRUPTED", "the game's travel is stuck", "_side")
+        end
+        self._travelFailures, self._voidSince = 0, nil
+        if hung >= 120 and not self._leaving and not self._rejoinSent then
+            if self._farmConfig.AutoRejoin then
+                self._rejoinSent = true
+                self:_rejoin(string.format("the game's travel hangs for %d s", math.floor(hung)))
+            elseif self._farmConfig.LeaveWhenStuck then
+                self:_leaveStuck(string.format("the game's travel hangs for %d s", math.floor(hung)))
+            end
+        end
+        self._why = "waiting: the game's travel is stuck (rejoin)"
+        return not self._running
+    end
     function TaskManager:_leaveStuck(reason)
         self._leaving = true
         self._logger:warn("Tasks", "Stuck in a place this device never drew: " .. reason .. ": leaving the game for a fresh"
@@ -24561,6 +26812,7 @@ __moduleSources["main"] = function(...)
     local Minigame = import("Game/Minigame")
     local Hauntlet = import("Game/Hauntlet")
     local EventTasks = import("Game/EventTasks")
+    local HouseTasks = import("Game/HouseTasks")
     local Interface = import("Services/Interface")
     local Players = game:GetService("Players")
     local GLOBAL_KEY = "AdoptMeFarm"
@@ -25409,6 +27661,7 @@ __moduleSources["main"] = function(...)
                 spotlight:start(maid)
                 local hauntlet = Hauntlet.new(logger, game:GetService("Players").LocalPlayer.UserId)
                 hauntlet:start(maid)
+                HouseTasks.start(maid) -- v3.0.75: the game's own hint / dialog texts (Box Lure, Transfer Thingy checks)
                 -- v2.1.3: the squad finder (same worker, /squad), ONLY on accounts that carry the private squad key
                 -- (Farm.Event.HauntletSquadKey): everyone else sends nothing and never learns who is in a squad
                 pcall(function()
@@ -25468,6 +27721,38 @@ __moduleSources["main"] = function(...)
         scheduler:addJob("SessionHeartbeat", SESSION_HEARTBEAT_SECONDS, function()
             sessionStore:heartbeat()
         end)
+        do -- v3.0.79: the user's own value / USD file (Notifications.Inventory.ValuesUrl), downloaded only (nothing sent)
+            local fetchedUrl, fetchedAt, busy = nil, -math.huge, false
+            scheduler:addJob("ValueList", 15, function()
+                local inventorySettings = config.Notifications.Inventory
+                local url = type(inventorySettings) == "table" and inventorySettings.Enabled == true
+                    and type(inventorySettings.ValuesUrl) == "string" and inventorySettings.ValuesUrl or ""
+                if url == "" or busy or not string.match(url, "^https://") then
+                    return
+                end
+                if url == fetchedUrl and Util.now() - fetchedAt < 1800 then
+                    return
+                end
+                busy, fetchedUrl, fetchedAt = true, url, Util.now()
+                task.spawn(function()
+                    local ok, body = pcall(function()
+                        return game:HttpGet(url)
+                    end)
+                    if ok and type(body) == "string" then
+                        local entries, meta = Notifier.parseValues(body)
+                        if #entries > 0 then
+                            Notifier.remoteValues = { entries = entries, meta = meta, at = os.time(), url = url }
+                            logger:info("Notifier", string.format("Value list: %d values read", #entries))
+                        else
+                            logger:warn("Notifier", "Value list: no values found in the file (JSON or CSV, see Notifications.Inventory)")
+                        end
+                    else
+                        logger:warn("Notifier", "Value list could not be downloaded: " .. Util.truncate(tostring(body), 120))
+                    end
+                    busy = false
+                end)
+            end, { runImmediately = true })
+        end
         do
             local lastSummaryAt = Util.now()
             scheduler:addJob("SummaryWebhook", SUMMARY_CHECK_SECONDS, function()
@@ -25480,6 +27765,33 @@ __moduleSources["main"] = function(...)
                 if Util.now() - lastSummaryAt >= minutes * 60 then
                     lastSummaryAt = Util.now()
                     notifier:notify(Enums.NotifyEvent.Summary, summaryFields(), nil, { thumbnail = picture })
+                    -- v3.0.75: the pets, sorted by YOUR values (Notifications.Inventory), right after the summary
+                    local inventorySettings = config.Notifications.Inventory
+                    if type(inventorySettings) == "table" and inventorySettings.Enabled == true and uiGameData
+                        and uiGameData:petInventoryKnown() then
+                        local okEmbeds, embeds = pcall(function()
+                            local pets = {}
+                            for _, pet in pairs(uiGameData:get(GameConstants.DataKeys.Inventory).pets) do
+                                if type(pet) == "table" then
+                                    local properties = type(pet.properties) == "table" and pet.properties or {}
+                                    table.insert(pets, {
+                                        kind = tostring(pet.kind or pet.id or "?"),
+                                        variant = properties.mega_neon == true and "mega"
+                                            or (GameConstants.isNeonPet(properties) and "neon" or "normal"),
+                                        grown = tonumber(properties.age) == 6,
+                                    })
+                                end
+                            end
+                            local me = game:GetService("Players").LocalPlayer
+                            return Notifier.inventoryEmbeds(pets, inventorySettings,
+                                config.Notifications.IncludeUsername ~= false and me and me.Name or "your account")
+                        end)
+                        if okEmbeds then
+                            notifier:notifyEmbeds(Enums.NotifyEvent.Inventory, embeds)
+                        else
+                            logger:warn("Notifier", "Inventory summary not built: " .. tostring(embeds))
+                        end
+                    end
                 end
             end)
         end
@@ -25489,7 +27801,7 @@ __moduleSources["main"] = function(...)
                 local status = buildStatusLine(state, petLocator)
                 if status ~= lastStatus then
                     lastStatus = status
-                    logger:info("Status", status)
+                    logger:debug("Status", status) -- v3.0.79: quieter logs (the window / reports show the state)
                 end
             end, { runImmediately = true })
         end
@@ -25572,7 +27884,7 @@ __moduleSources["main"] = function(...)
                     end
                     local ok, reason = Interaction.virtualClick()
                     if ok then
-                        logger:info("AntiAfk", "Idle warning from Roblox: sent a virtual click")
+                        logger:debug("AntiAfk", "Idle warning from Roblox: sent a virtual click")
                     else
                         logger:warn("AntiAfk", "Virtual click failed: " .. tostring(reason))
                     end
@@ -25790,7 +28102,7 @@ __moduleSources["main"] = function(...)
                 busy = false
                 if os.clock() - lastLog >= 60 then
                     lastLog = os.clock()
-                    logger:info("Camera", "fixcam + zoom " .. zoomTarget() .. " applied (" .. why .. ")"
+                    logger:debug("Camera", "fixcam + zoom " .. zoomTarget() .. " applied (" .. why .. ")"
                         .. (quiet > 0 and (", +" .. quiet .. " more since the last line") or ""))
                     quiet = 0
                 else
@@ -25942,6 +28254,23 @@ __moduleSources["main"] = function(...)
                 nextRoundIn = nextRoundIn,
                 shoebillSocks = uiGameData and (EventTasks.shoebillProgress(uiGameData)) or nil, -- "2/3" (the window)
                 shoebillHeadphones = uiGameData and select(2, EventTasks.shoebillProgress(uiGameData)) or nil,
+                -- v3.0.75: Box Lure / Transfer Thingy lines and the baits in my backpack (read at most every 10 s)
+                house = HouseTasks.status,
+                baits = (function()
+                    if not uiGameData then
+                        return nil
+                    end
+                    local now = Util.now()
+                    if not HouseTasks._baitsAt or now - HouseTasks._baitsAt >= 10 then
+                        HouseTasks._baitsAt = now
+                        HouseTasks._baitsShown = HouseTasks.baits(uiGameData)
+                    end
+                    return HouseTasks._baitsShown
+                end)(),
+                dragon = uiGameData and {
+                    polymorphed = EventTasks.catPolymorphed(uiGameData),
+                    food = EventTasks.catFoodHeld(uiGameData),
+                } or nil,
                 timers = taskManager and (function()
                     local ok, t = pcall(taskManager.eventTimers, taskManager)
                     return ok and t or nil
