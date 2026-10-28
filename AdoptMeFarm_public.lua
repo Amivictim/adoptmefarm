@@ -1,4 +1,4 @@
--- AdoptMe Farm  v3.0.79 | Adopt Victims v3 | settings: the window
+-- AdoptMe Farm  v3.0.83 | Adopt Victims v3 | settings: the window
 local UserConfig = {
     Farm = {
         Enabled = true, -- false = everything paused ("Pause all" in the window); each feature has its own switch
@@ -46,6 +46,11 @@ local UserConfig = {
             Spotlight = true, -- Stitches' Spotlight rounds, joined by the game's own teleport prompt (Hauntlet > Ghost > Stitches)
             SpotlightSpeed = 90, -- studs/s in the round (60 - 120)
             SpotlightPickupRange = 20, -- candy corn this close is pulled in by the game (0 = go to every candy corn)
+            WhereBear = false, -- Where Bear: candy in its rounds (after Hauntlet / Ghost / Stitches; before needs)
+            WhereBearMode = "tween", -- "tween" (smart glide, like Stitches) | "path" (walks) | "walk" (moved every frame) | "tp" (teleports)
+            WhereBearSpeed = 65, -- "tween" / "walk": studs/s (16 - 120)
+            WhereBearTpGap = 0.07, -- "tp": seconds between teleports (0.03 - 1)
+            WhereBearAvoidBear = 28, -- candy this close to the bear is left (0 = off)
             Shoebill = true, -- a Lost Sock / Headphones in your backpack is given at its Haunted Hotel Shoebill door
             Hauntlet = false,
             HauntletMove = "tween", -- how the bot reaches a door's circle: "tween" (smooth) | "walk" | "tp"
@@ -120,12 +125,12 @@ local UserConfig = {
         },
         IncludeUsername = true,
         Inventory = { -- the Summary also lists your pets, sorted by YOUR values (nothing is looked up online)
-            Enabled = true,
+            Enabled = false,
             Values = {}, -- e.g. { { kind = "halloween_2026_stray_cat_dragon", variant = "normal", value = 5 } }
             ValueUnit = "value",
             ValueSource = "",
             ValuesUpdated = "",
-            ValuesUrl = "https://gist.githubusercontent.com/Amivictim/cc53bfbd8975a788396149c78a74dabf/raw/b229123ff213158489df9a803dd74e4faf0abcff/adoptme_values.csv", -- your value / USD file (raw Gist / Pastebin link, JSON or CSV), downloaded every 30 min
+            ValuesUrl = "", -- your value / USD file (raw Gist / Pastebin link, JSON or CSV), downloaded every 30 min
         },
     },
 }
@@ -516,6 +521,12 @@ __moduleSources["Core/Config"] = function(...)
                 -- v3.0.22 Stitches' Spotlight (Halloween week 3): every Spotlight round, joined by the game's own teleport
                 -- prompt; priority Hauntlet > Ghost Gallery > Spotlight (a Spotlight round at the same time is skipped)
                 Spotlight = true,
+                -- v3.0.80 Where Bear (week 4): candy in its rounds (Hauntlet / Ghost / Spotlight come first)
+                WhereBear = false,
+                WhereBearMode = "tween", -- "tween" (smart glide, like Stitches) | "path" (walks) | "walk" (moved every frame) | "tp" (teleports)
+                WhereBearSpeed = 65, -- "tween" / "walk": studs/s (16 - 120)
+                WhereBearTpGap = 0.07, -- "tp": seconds between teleports (0.03 - 1)
+                WhereBearAvoidBear = 28, -- candy this close to the bear is left (0 = off)
                 -- v3.0.21 Shoebill (Haunted Hotel doors): a Lost Sock / Headphones in my backpack is given at its door
                 Shoebill = true,
                 Crypt = false,
@@ -681,6 +692,7 @@ __moduleSources["Core/Config"] = function(...)
         { "Farm", "AutoOpen", "Enabled" },
         { "Farm", "Event", "GhostGallery" },
         { "Farm", "Event", "Spotlight" },
+        { "Farm", "Event", "WhereBear" },
         { "Farm", "Event", "Shoebill" },
         { "Farm", "Event", "Hauntlet" },
         { "Farm", "Event", "Crypt" },
@@ -1427,7 +1439,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "3.0.79 (Adopt Victims v3)"
+    Disclosure.VERSION = "3.0.83 (Adopt Victims v3)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -1496,6 +1508,13 @@ __moduleSources["Services/Disclosure"] = function(...)
                 .. " \"spotlight\") from that circle; in the round your character moves onto the spawned candy corn (the"
                 .. " game's own client collects it) and rests behind a barrier when none is left; priority Hauntlet >"
                 .. " Ghost Gallery > Stitches' Spotlight (the lower one is skipped when they meet)",
+            "Where Bear (Farm.Event.WhereBear, off by default): the game's own travel to the Manor, then you walk into"
+                .. " its door (the game's join call adoptme_new.modules.Minigame.MinigameDedicatedPlace:64 \"where_bear_2026\""
+                .. " only when walking in did not join). A private server keeps you in its room; a public server sends you"
+                .. " to the minigame's own place (the script only collects there when your executor runs it again"
+                .. " there, and teleports you back to Adopt Me when you switch it off or before a Hauntlet run when"
+                .. " Hauntlet is on). Candy is collected only while a round plays (Farm.Event.WhereBearMode: path / walk / tp);"
+                .. " priority Hauntlet > Ghost Gallery > Stitches' Spotlight > Where Bear > other jobs and needs",
             "Shoebill (Farm.Event.Shoebill, on by default): a Lost Sock / Headphones in your backpack -> the game's"
                 .. " own travel to the Haunted Hotel, next to that door, then Halloween2026/ShoebillGiveHeadphones (once,"
                 .. " checked in headphones_given) or one Halloween2026/ShoebillGiveSocks per"
@@ -1614,7 +1633,7 @@ __moduleSources["Services/Disclosure"] = function(...)
                     .. " (Interface.Enabled = false: no window)")
                 or "OFF (Interface.Enabled = false)"),
             "Can do (each ONLY when it is on; at the first start only Stitches' Spotlight and Shoebill are on): pet + baby needs, daily quests, the"
-                .. " Halloween event (Ghost Gallery, Hauntlet, Stitches' Spotlight, Crypt, Shoebill, Stray Cat, nest), Pet Pen, age potions, gifts, neon fusion."
+                .. " Halloween event (Ghost Gallery, Hauntlet, Stitches' Spotlight, Where Bear, Crypt, Shoebill, Stray Cat, nest), Pet Pen, age potions, gifts, neon fusion."
                 .. " Only for YOUR pet / baby / items.",
             "Features on now: " .. Disclosure.featureSummary(config),
             "Developer logs: " .. tostring(telemetryText),
@@ -3649,6 +3668,66 @@ __moduleSources["Services/Lang"] = function(...)
         "Evinde Yem Kutusu yoksa BİR tane koyar, ödülünü toplar ve seçtiğin yemi koyar",
         "Si tu casa no tiene Caja Cebo pone UNA, recoge su recompensa y pone un cebo elegido",
         "Se sua casa não tem Caixa Isca põe UMA, coleta a recompensa e põe uma isca escolhida")
+    -- v3.0.83
+    add("Tween (smart glide)", "Tween (akıllı kayma)", "Tween (deslizamiento inteligente)", "Tween (deslize inteligente)")
+    add("Tween / Walk mode speed (studs per second)", "Tween / Walk modu hızı (saniyede stud)",
+        "Velocidad de los modos Tween / Caminar (studs por segundo)", "Velocidade dos modos Tween / Andar (studs por segundo)")
+    add("Where Bear: new Tween mode (default): glides straight to each candy like Stitches' round, around walls by a path",
+        "Where Bear: yeni Tween modu (varsayılan): Stitches turundaki gibi her şekere düz kayar, duvar varsa yol bulur",
+        "Where Bear: nuevo modo Tween (por defecto): se desliza directo a cada dulce como en la ronda de Stitches, rodea paredes",
+        "Where Bear: novo modo Tween (padrão): desliza direto a cada doce como na rodada do Stitches, contorna paredes")
+    -- v3.0.82
+    add("Where Bear: walks only to candy that is still there (with its Visual), no more running to taken candy",
+        "Where Bear: sadece hâlâ duran şekere yürür (Visual'ı olan), alınmış şekere koşmak yok",
+        "Where Bear: solo va a los dulces que siguen ahí (con su Visual), ya no corre a dulces tomados",
+        "Where Bear: só vai aos doces que ainda estão lá (com o Visual), sem correr para doces já pegos")
+    -- v3.0.81
+    add("Where Bear: touches a candy and goes straight on to the next one (no more back and forth), walks straight when no path is found",
+        "Where Bear: şekere değer ve hemen sonrakine geçer (ileri geri gitme yok), yol bulunamazsa düz yürür",
+        "Where Bear: toca un dulce y va directo al siguiente (sin ir y volver), camina recto si no hay ruta",
+        "Where Bear: toca um doce e vai direto ao próximo (sem ir e voltar), anda reto quando não há rota")
+    add("No more void after a Hauntlet death: the farm waits for the game's own exit before going home",
+        "Hauntlet'te ölünce artık void yok: farm eve gitmeden önce oyunun kendi çıkışını bekler",
+        "Sin vacío tras morir en Hauntlet: la granja espera la salida del propio juego antes de ir a casa",
+        "Sem vazio após morrer no Hauntlet: o farm espera a saída do próprio jogo antes de ir para casa")
+    add("A broken game (the same game error every frame) or a trip that hangs 5 min: rejoins by itself",
+        "Bozulan oyun (her karede aynı oyun hatası) ya da 5 dk takılan yolculuk: kendiliğinden yeniden katılır",
+        "Juego roto (el mismo error cada fotograma) o un viaje colgado 5 min: vuelve a entrar solo",
+        "Jogo quebrado (o mesmo erro a cada quadro) ou uma viagem travada 5 min: reentra sozinho")
+    -- v3.0.80 Where Bear
+    add("Where Bear", "Where Bear", "Where Bear", "Where Bear")
+    add("Joins at the Manor door and collects candy in its rounds (after Hauntlet / Ghost / Stitches; needs wait)",
+        "Malikane kapısından katılır ve turlarda şeker toplar (Hauntlet / Ghost / Stitches'ten sonra; need'ler bekler)",
+        "Entra por la puerta de la Mansión y recoge dulces en sus rondas (tras Hauntlet / Ghost / Stitches; las necesidades esperan)",
+        "Entra pela porta da Mansão e coleta doces nas rodadas (depois de Hauntlet / Ghost / Stitches; as necessidades esperam)")
+    add("Where Bear rounds: candy (after Hauntlet / Ghost / Stitches; needs wait)",
+        "Where Bear turları: şeker (Hauntlet / Ghost / Stitches'ten sonra; need'ler bekler)",
+        "Rondas de Where Bear: dulces (tras Hauntlet / Ghost / Stitches; las necesidades esperan)",
+        "Rodadas do Where Bear: doces (depois de Hauntlet / Ghost / Stitches; as necessidades esperam)")
+    add("Where Bear collect mode", "Where Bear toplama modu", "Modo de recogida en Where Bear", "Modo de coleta no Where Bear")
+    add("Path (walks, finds the way)", "Path (yürür, yolu bulur)", "Ruta (camina, encuentra el camino)", "Rota (anda, acha o caminho)")
+    add("Walk (fast mover)", "Walk (hızlı hareket)", "Caminar (movimiento rápido)", "Andar (movimento rápido)")
+    add("Path: walks and finds the way. Walk: moved every frame. Teleport: fastest, riskiest",
+        "Path: yürür ve yolu bulur. Walk: her karede ilerletilir. Işınlanma: en hızlı, en riskli",
+        "Ruta: camina y encuentra el camino. Caminar: se mueve cada fotograma. Teletransporte: el más rápido y arriesgado",
+        "Rota: anda e acha o caminho. Andar: movido a cada quadro. Teleporte: o mais rápido e arriscado")
+    add("Where Bear walk speed", "Where Bear yürüme hızı", "Velocidad en Where Bear", "Velocidade no Where Bear")
+    add("Walk mode speed (studs per second)", "Walk modu hızı (saniyede stud)", "Velocidad del modo Caminar (studs por segundo)",
+        "Velocidade do modo Andar (studs por segundo)")
+    add("Where Bear teleport gap", "Where Bear ışınlanma aralığı", "Pausa entre teletransportes", "Intervalo entre teleportes")
+    add("Teleport mode: seconds between teleports", "Işınlanma modu: ışınlanmalar arası saniye",
+        "Modo teletransporte: segundos entre teletransportes", "Modo teleporte: segundos entre teleportes")
+    add("Keep away from the bear", "Ayıdan uzak dur", "Lejos del oso", "Longe do urso")
+    add("Candy this close to the bear is left (0 = off)", "Ayıya bu kadar yakın şeker bırakılır (0 = kapalı)",
+        "Los dulces tan cerca del oso se dejan (0 = apagado)", "Doces tão perto do urso são deixados (0 = desligado)")
+    add("Where Bear: joins at the Manor door and collects candy in its rounds",
+        "Where Bear: Malikane kapısından katılır ve turlarda şeker toplar",
+        "Where Bear: entra por la puerta de la Mansión y recoge dulces en sus rondas",
+        "Where Bear: entra pela porta da Mansão e coleta doces nas rodadas")
+    add("Where Bear options: collect mode (path / walk / teleport), speed, teleport gap, keep away from the bear",
+        "Where Bear ayarları: toplama modu (path / walk / ışınlanma), hız, ışınlanma aralığı, ayıdan uzaklık",
+        "Opciones de Where Bear: modo (ruta / caminar / teletransporte), velocidad, pausa, distancia al oso",
+        "Opções do Where Bear: modo (rota / andar / teleporte), velocidade, intervalo, distância do urso")
     -- v3.0.79
     add("Value list URL", "Değer listesi linki", "Enlace de la lista de valores", "Link da lista de valores")
     add("Webhook inventory: values / USD from your own file (Value list URL: raw Gist / Pastebin, JSON or CSV), by pet id or name",
@@ -3682,6 +3761,7 @@ __moduleSources["Services/Lang"] = function(...)
         "Llave Oxidada en la tumba de comida de gato de la Cripta, luego la Polymorphing Cat Food al gato callejero (desbloquea el Dragon; elígelo en la tienda para comprarlo)",
         "Chave Enferrujada no túmulo de comida de gato da Cripta, depois a Polymorphing Cat Food ao gato de rua (libera o Dragon; escolha na loja para comprar)")
     add("Stray Cat Dragon: ?", "Stray Cat Dragon: ?", "Stray Cat Dragon: ?", "Stray Cat Dragon: ?")
+    template("Where Bear: %s", "Where Bear: %s", "Where Bear: %s", "Where Bear: %s")
     add("Stray Cat Dragon: unlocked (buy it in the Candy Shop)", "Stray Cat Dragon: açıldı (Şeker Dükkanından al)",
         "Stray Cat Dragon: desbloqueado (cómpralo en la tienda)", "Stray Cat Dragon: liberado (compre na loja)")
     template("Stray Cat Dragon: locked, cat food %d", "Stray Cat Dragon: kilitli, kedi maması %d",
@@ -7258,6 +7338,7 @@ __moduleSources["Services/Interface"] = function(...)
         { pattern = "^Nest completed", title = "Pigeon nest built", icon = "bird" },
         { pattern = "^Ghost Gallery: %d+ points", title = "Ghost Gallery round", icon = "ghost" },
         { pattern = "^Stitches' Spotlight: %+%d+ candy", title = "Stitches' Spotlight", icon = "candy" },
+        { pattern = "^Where Bear: %+%d+ candy", title = "Where Bear", icon = "candy" },
         { pattern = "failures in a row: disabled", title = "Task resting", icon = "octagon-x" },
         { pattern = "^Stuck in .*Farm.StuckRecovery", title = "Stuck: going home", icon = "rotate-ccw" },
     }
@@ -7337,11 +7418,14 @@ __moduleSources["Services/Interface"] = function(...)
     -- v3.0.0 (user: "list everything new since v2, in plain words, no text running out of the window"): what's new,
     -- by topic; the Support tab shows it with the lines wrapped to the window (Interface.wrap)
     -- v3.0.76 (user: "in the changelog only this version's changes and the last update, simple"): only the newest version
-    Interface.LAST_UPDATE = "2026-10-26"
+    Interface.LAST_UPDATE = "2026-10-27"
     Interface.WHATS_NEW = {
-        { "v3.0.79", "sparkles", {
-            "Webhook inventory: values / USD from your own file (Value list URL: raw Gist / Pastebin, JSON or CSV), by pet id or name",
-            "Quieter logs: need, status, camera and Anti-AFK lines are debug only",
+        { "v3.0.83", "sparkles", {
+            "Where Bear: new Tween mode (default): glides straight to each candy like Stitches' round, around walls by a path",
+            "Where Bear: walks only to candy that is still there (with its Visual), no more running to taken candy",
+            "Where Bear: touches a candy and goes straight on to the next one (no more back and forth), walks straight when no path is found",
+            "No more void after a Hauntlet death: the farm waits for the game's own exit before going home",
+            "A broken game (the same game error every frame) or a trip that hangs 5 min: rejoins by itself",
         } },
     }
     Interface.CHANGELOG = {}
@@ -7418,6 +7502,11 @@ __moduleSources["Services/Interface"] = function(...)
         ["Farm.Event.Spotlight"] = "Stitches' Spotlight rounds by the game's prompt: candy corn (after Hauntlet / Ghost Gallery)",
         ["Farm.Event.SpotlightSpeed"] = "Spotlight move speed (studs per second)",
         ["Farm.Event.SpotlightPickupRange"] = "0 = go to every candy corn",
+        ["Farm.Event.WhereBear"] = "Where Bear rounds: candy (after Hauntlet / Ghost / Stitches; needs wait)",
+        ["Farm.Event.WhereBearMode"] = "Tween: glides straight to each candy (around walls by a path). Path: walks. Walk: moved every frame. Teleport: fastest, riskiest",
+        ["Farm.Event.WhereBearSpeed"] = "Tween / Walk mode speed (studs per second)",
+        ["Farm.Event.WhereBearTpGap"] = "Teleport mode: seconds between teleports",
+        ["Farm.Event.WhereBearAvoidBear"] = "Candy this close to the bear is left (0 = off)",
         ["Farm.Event.Shoebill"] = "Gives your Lost Socks and Headphones at the Shoebill doors (Haunted Hotel)",
         ["Farm.Event.PetPenRarest"] = "The rarest growing pets go in the Pet Pen first",
         ["Farm.Event.PetPenEggs"] = "Buys eggs only for empty Pet Pen slots (Bucks)",
@@ -10593,6 +10682,8 @@ __moduleSources["Services/Interface"] = function(...)
             "Joins every run and picks the safer doors (a run always comes before a Ghost Gallery round)")
         bindToggle(halloweenBox, "spotlight", "item:halloween_2026_stitches|tent", "Stitches' Spotlight", { "Farm", "Event", "Spotlight" },
             "Joins each round by the game's teleport prompt and collects candy corn")
+        bindToggle(halloweenBox, "whereBear", "game:candy|footprints", "Where Bear", { "Farm", "Event", "WhereBear" },
+            "Joins at the Manor door and collects candy in its rounds (after Hauntlet / Ghost / Stitches; needs wait)")
         -- v3.0.76: the Spotlight sliders are in Minigame options; the order is in the tooltips (Hauntlet > Ghost > Stitches)
         local cryptBox = eventTab:CreateGroupbox({ Name = "Halloween world", Icon = I("item:halloween_2026_tomb_spider|skull"),
             Column = 1 }, "crypt")
@@ -10668,6 +10759,15 @@ __moduleSources["Services/Interface"] = function(...)
             "", "Spotlight move speed (studs per second)")
         bindSlider(optionsBox, "spotlightPickup", "target", "Spotlight pickup range", { "Farm", "Event", "SpotlightPickupRange" },
             0, 40, 1, "", "0 = go to every candy corn")
+        -- v3.0.80 Where Bear options
+        bindPick(optionsBox, "whereBearMode", "footprints", "Where Bear collect mode", { "Farm", "Event", "WhereBearMode" },
+            { { "tween", "Tween (smart glide)" }, { "path", "Path (walks, finds the way)" }, { "walk", "Walk (fast mover)" }, { "tp", "Teleport" } })
+        bindSlider(optionsBox, "whereBearSpeed", "circle-gauge", "Where Bear walk speed", { "Farm", "Event", "WhereBearSpeed" },
+            16, 120, 1, "", "Tween / Walk mode speed (studs per second)")
+        bindSlider(optionsBox, "whereBearTpGap", "timer", "Where Bear teleport gap", { "Farm", "Event", "WhereBearTpGap" },
+            0.03, 1, 0.01, "s", "Teleport mode: seconds between teleports")
+        bindSlider(optionsBox, "whereBearAvoid", "shield-check", "Keep away from the bear", { "Farm", "Event", "WhereBearAvoidBear" },
+            0, 80, 1, "", "Candy this close to the bear is left (0 = off)")
         bindPick(optionsBox, "hauntletMove", "door-open", "Door move", { "Farm", "Event", "HauntletMove" },
             { { "tween", "Tween (smooth)" }, { "walk", "Walk" }, { "tp", "Teleport" } })
         bindSlider(optionsBox, "hauntletMoveSeconds", "timer", "Move time", { "Farm", "Event", "HauntletMoveSeconds" },
@@ -11467,6 +11567,7 @@ __moduleSources["Services/Interface"] = function(...)
                     s.shoebillHeadphones == true and "✓" or (s.shoebillHeadphones == false and "–" or "?")),
                 type(s.dragon) == "table" and (s.dragon.polymorphed and T("Stray Cat Dragon: unlocked (buy it in the Candy Shop)")
                     or T("Stray Cat Dragon: locked, cat food %d", tonumber(s.dragon.food) or 0)) or T("Stray Cat Dragon: ?"),
+                T("Where Bear: %s", tostring(s.whereBear or "-")),
             }, "\n")
         end
         local dashboardReady, farmCardFrame, farmCard, serverChips = false, nil, nil, nil
@@ -11832,6 +11933,10 @@ __moduleSources["Game/GameConstants"] = function(...)
             leaveOnly = true },
         MinigameMessage = { remote = "MinigameAPI/MessageServer", purpose = "Ghost Gallery: vacuum a ghost or a haunted prop (start / stop only)",
             allowedMessages = { start_contribute = true, stop_contribute = true, start_prop_contribute = true, stop_prop_contribute = true } },
+        -- v3.0.80 (the user's own join 2026-10-26): what the game's Where Bear door sends; only "where_bear_2026"
+        WhereBearJoin = { remote = "adoptme_new.modules.Minigame.MinigameDedicatedPlace:64", folder = "EventFolder",
+            purpose = "Halloween: join the Where Bear minigame at its Manor door, when walking in did not (Farm.Event.WhereBear)",
+            allowedFirstArg = { where_bear_2026 = true }, maxArgs = 1 },
         HauntletJoin = { remote = "MinigameAPI/AttemptJoin", purpose = "Halloween: join a Hauntlet run (Farm.Event.Hauntlet)",
             joinPrefix = "hauntlet" },
         HauntletMessage = { remote = "MinigameAPI/MessageServer", purpose = "Hauntlet: pick a door (1-3) or use one of MY run items",
@@ -11902,7 +12007,7 @@ __moduleSources["Game/GameConstants"] = function(...)
         TheCrypt = { door = "MainDoor", spawn = nil },
         HauntedHotel = { door = "MainDoor", spawn = nil },
     }
-    GameConstants.CharWrapperPlaces = { TheCrypt = true, Circus = true }
+    GameConstants.CharWrapperPlaces = { TheCrypt = true, Circus = true, Halloween2026WhereBear = true } -- v3.0.80: Where Bear room
     -- v3.0.23: the Circus and its rounds have no interior data; only char_wrapper.location names them, the round
     -- with its own id ("CircusMinigameInterior::<guid>"): matched by its start
     GameConstants.CharWrapperPrefixes = { "CircusMinigameInterior" }
@@ -12123,6 +12228,19 @@ __moduleSources["Game/GameConstants"] = function(...)
         SpotlightPromptLead = 33, -- discovery 2026-10-16: the game's prompt came 33 s before the join
         SpotlightInteriorPrefix = "CircusMinigameInterior",
         SpotlightSpawnersName = "CandycornSpawners",
+        -- v3.0.80 Where Bear (week 4, the user's own join recorded 2026-10-26): the Manor door Halloween2026WhereBear
+        -- (TouchToEnter) or the game's join call put me in its room (private server) or its own place (public server);
+        -- round messages on adoptme_new_net "minigame/where_bear_2026" {s, o = {{group, field, value}}}: {4,-1,phase}
+        -- Waiting / Starting / Loading / Playing / Results, {7,3,n} my candy this round, {..,{bear = Player}},
+        -- {5,5,userId,role}, {1,..} joined, {2,"Left"} left; candy = workspace Model "CandyPickupable" (part "Collider"),
+        -- the game's own client picks it up on touch
+        WhereBearId = "where_bear_2026",
+        WhereBearPlace = 87880625154311,
+        WhereBearEvent = "minigame/where_bear_2026",
+        WhereBearRoom = "Halloween2026WhereBear",
+        WhereBearCandy = "CandyPickupable",
+        WhereBearDoorPath = { "Interiors", "HauntedManor", "Doors", "Halloween2026WhereBear", "WorkingParts", "TouchToEnter" },
+        WhereBearArch = { x = 11999.5, y = 10008.1, z = 8933.8 }, -- where the user stood at the door (if the door is not found)
         -- v3.0.21 Shoebill doors in the Haunted Hotel (where the game showed "Give Lost Sock (0/3)" / "Give Headphones")
         ShoebillSpots = { sock = { x = 9005.9, y = 6955.6, z = 9050.1 }, headphones = { x = 9024.6, y = 6955.6, z = 9053.7 } },
         ShoebillSocks = 3,
@@ -14781,6 +14899,9 @@ __moduleSources["Game/Interaction"] = function(...)
                 error("Interaction: " .. actionName .. " may only be sent with an empty table", 2)
             end
         end
+        if action.maxArgs and select("#", ...) > action.maxArgs then
+            error("Interaction: " .. actionName .. " is sent with at most " .. action.maxArgs .. " argument(s)", 2)
+        end
         if action.allowedFirstArg then
             local first = ...
             if not action.allowedFirstArg[first] then
@@ -15125,6 +15246,21 @@ __moduleSources["Game/Travel"] = function(...)
             return false, string.format("the game's last trip (to %s, %d s ago) has not ended", tostring(hungTo), math.floor(hung))
         end
         local before = self._state:get("player.interior")
+        -- v3.0.133 / public v3.0.81 (user log 2026-10-27): no place yet = the game itself is moving me (a minigame's
+        -- end, its own trip); a respawn / door trip on top of it broke the game's own client (void): wait for it first
+        if before == nil then
+            self._logger:info("Travel", "No place yet (the game is still moving me): waiting up to 25 s before going to "
+                .. tostring(destination))
+            local deadline = Util.now() + 25
+            while before == nil and Util.now() < deadline do
+                task.wait(0.5)
+                before = self._state:get("player.interior")
+            end
+            if self:isAt(destination) then
+                self._logger:info("Travel", "Arrived: " .. tostring(before) .. " (the game's own trip)")
+                return true
+            end
+        end
         if recipe.ownHouse and self._farmConfig.HomeByRespawn ~= false and Util.now() >= (self._respawnSkipUntil or 0) then
             self._logger:info("Travel", "Going home by respawn (now in " .. tostring(before) .. ")")
             local sent = self._interaction:send("Respawn")
@@ -22680,6 +22816,41 @@ __moduleSources["Game/EventTasks"] = function(...)
             end
             if h.leave ~= nil or not inRun() then
                 phase(ctx, "run over: going home")
+                --[[ v3.0.133 / public v3.0.81 (user log 2026-10-27: died in room 44, the respawn home went out the
+                     same second while the game itself was still taking me out of the hotel (no place, white fade on);
+                     the game's own client then failed every frame ("HeartbeatUpdate: attempt to call a number value")
+                     and every trip after it hung -> void for 35 min): first the game's own exit, then my trip ]]
+                do
+                    local LPx = game:GetService("Players").LocalPlayer
+                    local function gameMoving()
+                        local st = ctx.travel and ctx.travel._state
+                        if st and st:get("player.interior") == nil then
+                            return true
+                        end
+                        local okW, white = pcall(function()
+                            local gui = LPx.PlayerGui:FindFirstChild("TransitionsApp")
+                            local w = gui and gui:FindFirstChild("Whiteout", true)
+                            return w ~= nil and w:IsA("GuiObject") and w.Visible and w.BackgroundTransparency < 0.9
+                        end)
+                        if okW and white then
+                            return true
+                        end
+                        local ch = LPx.Character
+                        local r = ch and ch:FindFirstChild("HumanoidRootPart")
+                        return r == nil or r.Anchored
+                    end
+                    task.wait(3)
+                    local t0 = Util.now()
+                    if gameMoving() then
+                        ctx.logger:info("Event", "Hauntlet: the game is still taking me out of the run: waiting for it first")
+                        ctx.waitUntil(function()
+                            return not gameMoving()
+                        end, 30)
+                        task.wait(2)
+                        ctx.logger:info("Event", string.format("Hauntlet: the game's exit took %.0f s (now in %s)", Util.now() - t0,
+                            tostring(ctx.travel and ctx.travel._state and ctx.travel._state:get("player.interior"))))
+                    end
+                end
                 local home, homeWhy = ctx.travel:goTo(GameConstants.HouseInteriorName)
                 if not home then
                     ctx.logger:info("Event", "Hauntlet: going home after the run did not work ("
@@ -24491,6 +24662,683 @@ __moduleSources["Game/HouseTasks"] = function(...)
     }
     return HouseTasks
 end
+__moduleSources["Game/WhereBear"] = function(...)
+    local import = ...
+    local Util = import("Core/Util")
+    local GameConstants = import("Game/GameConstants")
+    local EventTasks = import("Game/EventTasks")
+    --[[
+        v3.0.80 Where Bear (Halloween week 4; the user's own join and rounds recorded 2026-10-26). Through the Manor door
+        Halloween2026WhereBear (walking in; the game's join call only when that did not take me in): a private server
+        puts me in its room in this server, a public server sends me to the minigame's own place. Rounds run all the
+        time; candy (workspace Model "CandyPickupable") is collected only while the round says "Playing":
+          * "path" (default): the character walks (Humanoid:MoveTo), a PathfindingService path when a wall is in the way
+          * "walk": moved every frame at Farm.Event.WhereBearSpeed studs/s
+          * "tp": teleported onto the nearest candy every Farm.Event.WhereBearTpGap s
+        Candy on my floor first, a candy with others around it first, none within Farm.Event.WhereBearAvoidBear studs of
+        the bear. In this place it is a farm task (TaskManager: after Hauntlet / Ghost Gallery / Stitches' Spotlight,
+        before needs); in the minigame's own place it runs by itself (main) and goes back to Adopt Me before a Hauntlet
+        run (when Hauntlet is on) or when it is switched off.
+    ]]
+    local E = GameConstants.Event
+    local Players = game:GetService("Players")
+    local RunService = game:GetService("RunService")
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local WhereBear = {}
+    WhereBear.MODES = { tween = true, path = true, walk = true, tp = true }
+    -- the latest numbers (status line / window); one collector at a time
+    WhereBear.status = { phase = "-", role = "-", candy = 0, best = 0, rounds = 0, total = 0 }
+    -- v3.0.81 (the alts' v3.0.131 / 132 traces: a learned "pickup range" grew to 20 from candies other players took, the
+    -- bot called candies 19 studs away reached and went back and forth between the same ones; user: "no pickup range:
+    -- touch the model, then straight on to the next candy"): reached = touching (flat distance, right above it)
+    WhereBear.pickupRange = 2.5
+    local LP = Players.LocalPlayer
+
+    function WhereBear.settings(event)
+        event = type(event) == "table" and event or {}
+        local mode = string.lower(tostring(event.WhereBearMode or "tween"))
+        return {
+            mode = WhereBear.MODES[mode] and mode or "tween",
+            speed = math.clamp(tonumber(event.WhereBearSpeed) or 65, 16, 120),
+            gap = math.clamp(tonumber(event.WhereBearTpGap) or 0.07, 0.03, 1),
+            avoid = math.clamp(tonumber(event.WhereBearAvoidBear) or 28, 0, 80),
+            floor = 8,
+            standAbove = 2.5,
+            maxDistance = 500,
+        }
+    end
+    function WhereBear.statusText()
+        local s = WhereBear.status
+        return string.format("%s, candy %d this round (best %d, %d rounds, +%d total)", tostring(s.phase), s.candy, s.best,
+            s.rounds, s.total)
+    end
+    local function root()
+        local character = LP.Character
+        return character and character:FindFirstChild("HumanoidRootPart")
+    end
+    local function roomFolder()
+        local interiors = workspace:FindFirstChild("Interiors")
+        return workspace:FindFirstChild(E.WhereBearRoom) or (interiors and interiors:FindFirstChild(E.WhereBearRoom))
+    end
+    local function touch(r, part)
+        if type(firetouchinterest) ~= "function" then
+            return
+        end
+        pcall(function()
+            firetouchinterest(r, part, 0)
+            firetouchinterest(r, part, 1)
+        end)
+    end
+
+    -- listens to the rounds and collects; everything it starts is given to `maid` (stops with the task / the script)
+    function WhereBear.collect(logger, eventFn, maid)
+        local status = WhereBear.status
+        status.phase, status.role, status.candy = "-", "-", 0
+        local c = { lastMsg = nil, bear = nil }
+        local candies, touched, bad = {}, {}, {}
+        local stats = { seen = 0, reached = 0, paths = 0, straight = 0, noPath = 0, stuck = 0 }
+        local function addCandy(m)
+            if m.Name == E.WhereBearCandy and m:IsA("Model") and not candies[m] then
+                candies[m] = true
+                stats.seen += 1
+            end
+        end
+        pcall(function()
+            for _, d in ipairs(workspace:GetDescendants()) do
+                if d.Name == E.WhereBearCandy then
+                    addCandy(d)
+                end
+            end
+        end)
+        maid:Give(workspace.DescendantAdded:Connect(function(d)
+            if d.Name == E.WhereBearCandy then
+                addCandy(d)
+            end
+        end))
+        maid:Give(workspace.DescendantRemoving:Connect(function(d)
+            if not candies[d] then
+                return
+            end
+            candies[d] = nil
+        end))
+        local folder = ReplicatedStorage:FindFirstChild(GameConstants.Remotes.EventFolder)
+        local ev = folder and folder:FindFirstChild(E.WhereBearEvent)
+        if ev and ev:IsA("RemoteEvent") then
+            maid:Give(ev.OnClientEvent:Connect(function(msg)
+                if type(msg) ~= "table" or type(msg.o) ~= "table" then
+                    return
+                end
+                c.lastMsg = Util.now()
+                for _, o in pairs(msg.o) do
+                    if type(o) == "table" then
+                        local g, f, v = o[1], o[2], o[3]
+                        if g == 1 and v ~= nil then
+                            status.phase = "Joined"
+                            logger:info("WhereBear", "Joined Where Bear (a round already running is only watched)")
+                        elseif g == 2 and f == "Left" then
+                            status.phase = "Left"
+                            logger:info("WhereBear", "Left Where Bear")
+                        elseif g == 4 and f == -1 and type(v) == "string" then
+                            if v ~= status.phase then
+                                if v == "Playing" then
+                                    status.rounds += 1
+                                    status.candy = 0
+                                elseif v == "Results" and status.phase == "Playing" then
+                                    status.best = math.max(status.best, status.candy)
+                                    status.total += status.candy
+                                    logger:success("WhereBear", string.format("Where Bear: +%d candy (round %d, picked up %d, best %d)",
+                                        status.candy, status.rounds, stats.reached, status.best))
+                                end
+                                status.phase = v
+                            end
+                        elseif g == 7 and f == 3 and tonumber(v) then
+                            status.candy = tonumber(v)
+                        elseif g == 5 and f == 5 and v == LP.UserId and type(o[4]) == "string" then
+                            status.role = o[4]
+                        elseif type(v) == "table" then
+                            local bear = rawget(v, "bear")
+                            local kind = typeof(bear)
+                            if kind == "Instance" and bear:IsA("Player") then
+                                c.bear = bear
+                            end
+                        end
+                    end
+                end
+            end))
+        else
+            logger:warn("WhereBear", "Round messages (" .. E.WhereBearEvent .. ") not found here: the game changed?")
+        end
+        function c:inRoom()
+            if game.PlaceId == E.WhereBearPlace or roomFolder() ~= nil then
+                return true
+            end
+            return self.lastMsg ~= nil and Util.now() - self.lastMsg < 90 and status.phase ~= "Left"
+        end
+        local function playing()
+            return status.phase == "Playing"
+        end
+        local function colliderOf(m)
+            local part = m:FindFirstChild("Collider") or m:FindFirstChildWhichIsA("BasePart", true)
+            return part and part:IsA("BasePart") and part or nil
+        end
+        local function shown(m)
+            local visual = m:FindFirstChild("Visual")
+            if not visual then
+                return false -- v3.0.82 (user 2026-10-27, Dex): a CandyPickupable without "Visual" is already taken
+            end
+            if visual:IsA("BasePart") and visual.Transparency < 1 then
+                return true
+            end
+            for _, d in ipairs(visual:GetDescendants()) do
+                if d:IsA("BasePart") and d.Transparency < 1 then
+                    return true
+                end
+            end
+            return false
+        end
+        local function valid(m, me, cfg)
+            if not m.Parent or not m:IsDescendantOf(workspace) then
+                return nil
+            end
+            local part = colliderOf(m)
+            if not part or (me and (part.Position - me).Magnitude > cfg.maxDistance) or not shown(m) then
+                return nil
+            end
+            return part
+        end
+        local function bearPos()
+            local b = c.bear
+            local character = b and b ~= LP and b.Parent and b.Character
+            local r = character and character:FindFirstChild("HumanoidRootPart")
+            return r and r.Position or nil
+        end
+        -- the nearest candy on my floor, one with others around it first, none next to the bear
+        local function pickNext(me, cfg, skipFor)
+            local bp, best, bestD = bearPos(), nil, math.huge
+            local now = Util.now()
+            for m in pairs(candies) do
+                if not (bad[m] and now < bad[m]) and not (touched[m] and now - touched[m] < skipFor) then
+                    local part = valid(m, me, cfg)
+                    if part then
+                        local d = (part.Position - me).Magnitude
+                        local around = 0
+                        for o in pairs(candies) do
+                            local op = o ~= m and o.Parent and colliderOf(o)
+                            if op and (op.Position - part.Position).Magnitude < 14 then
+                                around += 1
+                            end
+                        end
+                        d -= math.min(around, 5) * 5
+                        local dy = math.abs(part.Position.Y - me.Y)
+                        if dy > cfg.floor then
+                            d += 10000 + dy * 100
+                        end
+                        if bp and cfg.avoid > 0 and (part.Position - bp).Magnitude < cfg.avoid then
+                            d += 1000000
+                        end
+                        if d < bestD then
+                            best, bestD = m, d
+                        end
+                    end
+                end
+            end
+            return best
+        end
+        local function reached(m)
+            touched[m] = Util.now()
+            stats.reached += 1
+        end
+        -- "path": walk with the Humanoid; a straight walk when nothing is in the way, else a computed path
+        local PFS = game:GetService("PathfindingService")
+        local rayParams = RaycastParams.new()
+        rayParams.FilterType = Enum.RaycastFilterType.Exclude
+        local function clearLine(from, to)
+            local exclude = { LP.Character }
+            for m in pairs(candies) do
+                exclude[#exclude + 1] = m
+            end
+            rayParams.FilterDescendantsInstances = exclude
+            return workspace:Raycast(from, to - from, rayParams) == nil
+        end
+        local function walkTo(hum, r, m, part, goal, cfg)
+            hum:MoveTo(goal)
+            local t0, last, lastAt, issued = Util.now(), r.Position, Util.now(), Util.now()
+            while Util.now() - t0 < 6 do
+                task.wait(0.05)
+                if not playing() or not valid(m, nil, cfg) then
+                    return "gone"
+                end
+                local flat = Vector3.new(r.Position.X - part.Position.X, 0, r.Position.Z - part.Position.Z).Magnitude
+                if flat <= WhereBear.pickupRange and math.abs(r.Position.Y - part.Position.Y) < 5 then
+                    return "reached"
+                end
+                if (r.Position - goal).Magnitude <= 5 then
+                    return "next"
+                end
+                if (r.Position - last).Magnitude > 0.8 then
+                    last, lastAt = r.Position, Util.now()
+                elseif Util.now() - lastAt > 0.5 then
+                    hum.Jump = true
+                    lastAt = Util.now()
+                    stats.stuck += 1
+                end
+                if Util.now() - issued > 1.5 then
+                    hum:MoveTo(goal)
+                    issued = Util.now()
+                end
+            end
+            return "timeout"
+        end
+        local function pathStep(cfg)
+            local character = LP.Character
+            local r = root()
+            local hum = character and character:FindFirstChildOfClass("Humanoid")
+            if not (r and hum and hum.Health > 0) then
+                task.wait(0.25)
+                return
+            end
+            local m = pickNext(r.Position, cfg, 1)
+            local part = m and valid(m, r.Position, cfg)
+            if not part then
+                task.wait(0.2)
+                return
+            end
+            local result
+            local target = part.Position
+            if math.abs(target.Y - r.Position.Y) < 4 and clearLine(r.Position, target) then
+                stats.straight += 1
+                result = walkTo(hum, r, m, part, target, cfg)
+            else
+                local path = PFS:CreatePath({ AgentRadius = 2, AgentHeight = 5, AgentCanJump = true, WaypointSpacing = 6 })
+                local okPath = pcall(function()
+                    path:ComputeAsync(r.Position, target)
+                end)
+                if not okPath or path.Status ~= Enum.PathStatus.Success then
+                    -- v3.0.81 (alt trace: 267 "no path" in one round, the bot stood still): walk straight anyway
+                    -- (jumps when stuck); the candy is skipped for a while only when that also fails
+                    stats.noPath += 1
+                    result = walkTo(hum, r, m, part, target, cfg)
+                    if result == "timeout" then
+                        bad[m] = Util.now() + 10
+                    end
+                else
+                    stats.paths += 1
+                    local points = path:GetWaypoints()
+                    for i = 2, #points do
+                        if points[i].Action == Enum.PathWaypointAction.Jump then
+                            hum.Jump = true
+                        end
+                        result = walkTo(hum, r, m, part, points[i].Position, cfg)
+                        if result ~= "next" then
+                            break
+                        end
+                    end
+                end
+            end
+            local flatEnd = Vector3.new(r.Position.X - part.Position.X, 0, r.Position.Z - part.Position.Z).Magnitude
+            -- v3.0.81: touched it -> the next candy at once (no waiting for it to vanish)
+            if valid(m, nil, cfg) and flatEnd <= 3.5 and math.abs(r.Position.Y - part.Position.Y) < 5 then
+                touch(r, part)
+                reached(m)
+            elseif valid(m, nil, cfg) and result == "timeout" then
+                bad[m] = Util.now() + 8
+            end
+        end
+        local function tpStep(cfg)
+            local r = root()
+            local m = r and pickNext(r.Position, cfg, 0.6)
+            local part = m and valid(m, r.Position, cfg)
+            if part then
+                r.CFrame = part.CFrame + Vector3.new(0, cfg.standAbove, 0)
+                r.AssemblyLinearVelocity = Vector3.zero
+                touch(r, part)
+                reached(m)
+            end
+        end
+        local function settingsNow()
+            return WhereBear.settings(eventFn())
+        end
+        --[[ v3.0.83 "tween" (user 2026-10-27: "the alts walk a bit and stop; a smart tween like Stitches' minigame, no
+             pickup range"): the root glides (CFrame every frame, WhereBearSpeed studs/s, no physics) straight onto the
+             candy when nothing is in the way, else along a PathfindingService path (straight anyway when there is
+             none); on it = touched, the next candy at once. A candy that goes away (taken / no Visual) ends the glide. ]]
+        local glide = nil
+        local function tweenPlan(cfg)
+            local r = root()
+            if not r then
+                task.wait(0.25)
+                return
+            end
+            local m = pickNext(r.Position, cfg, 1)
+            local part = m and valid(m, r.Position, cfg)
+            if not part then
+                task.wait(0.15)
+                return
+            end
+            local goal = part.Position + Vector3.new(0, cfg.standAbove, 0)
+            local points = { goal }
+            if not clearLine(r.Position, goal) then
+                local path = PFS:CreatePath({ AgentRadius = 2, AgentHeight = 5, AgentCanJump = true, WaypointSpacing = 8 })
+                local okPath = pcall(function()
+                    path:ComputeAsync(r.Position, part.Position)
+                end)
+                if okPath and path.Status == Enum.PathStatus.Success then
+                    points = {}
+                    local wps = path:GetWaypoints()
+                    for i = 2, #wps do
+                        points[#points + 1] = wps[i].Position + Vector3.new(0, 3, 0)
+                    end
+                    points[#points + 1] = goal
+                    stats.paths += 1
+                else
+                    stats.noPath += 1
+                end
+            else
+                stats.straight += 1
+            end
+            local len, prev = 0, r.Position
+            for _, p in ipairs(points) do
+                len += (p - prev).Magnitude
+                prev = p
+            end
+            glide = { m = m, part = part, points = points, i = 1, t0 = Util.now(), limit = len / cfg.speed * 2 + 2 }
+        end
+        maid:Give(RunService.Heartbeat:Connect(function(dt)
+            local g = glide
+            if not g then
+                return
+            end
+            local cfg = settingsNow()
+            local r = root()
+            if not r or not playing() or cfg.mode ~= "tween" or not valid(g.m, nil, cfg) then
+                glide = nil
+                return
+            end
+            if Util.now() - g.t0 > g.limit then
+                bad[g.m] = Util.now() + 8
+                stats.stuck += 1
+                glide = nil
+                return
+            end
+            local step = cfg.speed * dt
+            local pos = r.Position
+            while g.i <= #g.points do
+                local p = g.i == #g.points and (g.part.Position + Vector3.new(0, cfg.standAbove, 0)) or g.points[g.i]
+                local delta = p - pos
+                local d = delta.Magnitude
+                if d <= step then
+                    pos, step = p, step - d
+                    g.i += 1
+                else
+                    pos = pos + delta.Unit * step
+                    break
+                end
+            end
+            local look = Vector3.new(g.part.Position.X - pos.X, 0, g.part.Position.Z - pos.Z)
+            r.CFrame = look.Magnitude > 0.1 and CFrame.lookAt(pos, pos + look) or CFrame.new(pos)
+            r.AssemblyLinearVelocity = Vector3.zero
+            if g.i > #g.points then
+                touch(r, g.part)
+                reached(g.m)
+                glide = nil
+            end
+        end))
+        maid:Give(task.spawn(function()
+            while true do
+                local cfg = settingsNow()
+                if not playing() then
+                    task.wait(0.25)
+                elseif cfg.mode == "tp" then
+                    tpStep(cfg)
+                    task.wait(cfg.gap)
+                elseif cfg.mode == "tween" then
+                    if glide == nil then
+                        tweenPlan(cfg)
+                    end
+                    task.wait()
+                elseif cfg.mode == "path" then
+                    pathStep(cfg)
+                    task.wait()
+                else
+                    task.wait(0.25) -- "walk" moves in the Heartbeat below
+                end
+            end
+        end))
+        local target
+        maid:Give(RunService.Heartbeat:Connect(function(dt)
+            if not playing() then
+                target = nil
+                return
+            end
+            local cfg = settingsNow()
+            local r = cfg.mode == "walk" and root()
+            if not r then
+                return
+            end
+            if not target or not valid(target, r.Position, cfg) then
+                target = pickNext(r.Position, cfg, 3)
+            end
+            local part = target and valid(target, r.Position, cfg)
+            if not part then
+                target = nil
+                return
+            end
+            local goal = part.Position + Vector3.new(0, cfg.standAbove, 0)
+            local delta = goal - r.Position
+            local step = cfg.speed * dt
+            if delta.Magnitude <= math.max(step, 2.5) then
+                r.CFrame = CFrame.new(goal)
+                touch(r, part)
+                reached(target)
+                target = nil
+            else
+                local dir = delta.Unit
+                r.CFrame = CFrame.new(r.Position + dir * step, r.Position + dir * (step + 1))
+                r.AssemblyLinearVelocity = Vector3.zero
+            end
+        end))
+        maid:Give(function()
+            -- a Humanoid:MoveTo still going on stops where I stand
+            local character = LP.Character
+            local hum = character and character:FindFirstChildOfClass("Humanoid")
+            local r = root()
+            if hum and r then
+                pcall(hum.MoveTo, hum, r.Position)
+            end
+        end)
+        maid:Give(task.spawn(function()
+            while true do
+                task.wait(60)
+                local n = 0
+                for _ in pairs(candies) do
+                    n += 1
+                end
+                logger:debug("WhereBear", string.format("%s | role %s, bear %s | candy on map %d, picked up %d, seen %d |"
+                    .. " paths %d, straight %d, no path %d, stuck jumps %d, pickup range %.1f", WhereBear.statusText(),
+                    tostring(status.role), c.bear and c.bear.Name or "?", n, stats.reached, stats.seen, stats.paths,
+                    stats.straight, stats.noPath, stats.stuck, WhereBear.pickupRange))
+            end
+        end))
+        local cfg = settingsNow()
+        logger:info("WhereBear", string.format("Collector on (mode %s, %s, keeps %d studs from the bear)", cfg.mode,
+            cfg.mode == "tp" and string.format("every %.2f s", cfg.gap) or ((cfg.mode == "walk" or cfg.mode == "tween") and string.format("%d studs/s", cfg.speed)
+                or "walking"), cfg.avoid))
+        return c
+    end
+
+    -- the Manor door: stand 7 studs in front of it (side 1 / 2 in turn), walk through with a jump, touch on top
+    function WhereBear.toDoor(logger, side)
+        local r = root()
+        if not r then
+            return false
+        end
+        local door
+        pcall(function()
+            local node = workspace
+            for _, name in ipairs(E.WhereBearDoorPath) do
+                node = node:FindFirstChild(name)
+            end
+            door = node
+        end)
+        local spot = Vector3.new(E.WhereBearArch.x, E.WhereBearArch.y, E.WhereBearArch.z)
+        if door and door:IsA("BasePart") then
+            spot = door.Position
+        else
+            door = nil
+        end
+        local look = door and door.CFrame.LookVector or Vector3.new(0, 0, 1)
+        local dir = Vector3.new(look.X, 0, look.Z)
+        dir = dir.Magnitude > 0.1 and dir.Unit or Vector3.new(0, 0, 1)
+        if side == 2 then
+            dir = -dir
+        end
+        logger:info("WhereBear", string.format("To the Where Bear door (%s), side %d", door and "found" or "its recorded spot", side))
+        r.CFrame = CFrame.new(spot + dir * 7 + Vector3.new(0, 2, 0), spot + Vector3.new(0, 2, 0))
+        r.AssemblyLinearVelocity = Vector3.zero
+        task.wait(0.3)
+        local hum = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum:MoveTo(spot - dir * 3)
+            task.wait(0.25)
+            hum.Jump = true
+        end
+        for _ = 1, 20 do
+            task.wait(0.1)
+            if door and (r.Position - spot).Magnitude < 6 then
+                touch(r, door)
+                break
+            end
+        end
+        return true
+    end
+
+    local STINT_SECONDS = 1200 -- the task ends after 20 min (one other job may run) and starts again
+    WhereBear.task = {
+        id = "where_bear",
+        timeoutSeconds = STINT_SECONDS + 300,
+        run = function(ctx)
+            local function event()
+                return ctx.farmConfig.Event
+            end
+            local function phase(text)
+                pcall(ctx.phase, text)
+            end
+            local c = WhereBear.collect(ctx.logger, event, ctx.maid)
+            local function inRoom()
+                return c:inRoom()
+            end
+            if not inRoom() then
+                if not ctx.travel:isAt("HauntedManor") then
+                    phase("Where Bear: to the Manor")
+                    local arrived, why = ctx.travel:goTo("HauntedManor")
+                    if not arrived then
+                        return false, "travel to HauntedManor failed: " .. tostring(why)
+                    end
+                end
+                phase("Where Bear: walking into its door")
+                for side = 1, 2 do
+                    WhereBear.toDoor(ctx.logger, side)
+                    if ctx.waitUntil(inRoom, 5) then
+                        break
+                    end
+                end
+                if not inRoom() then
+                    ctx.logger:info("WhereBear", "Walking in did not join: the game's join call")
+                    ctx.interaction:send("WhereBearJoin", E.WhereBearId)
+                    ctx.waitUntil(inRoom, 25)
+                end
+                if not inRoom() then
+                    return false, "did not get into the Where Bear room (a public server sends you to its own place)"
+                end
+            end
+            ctx.logger:info("WhereBear", "In the Where Bear room: collecting candy while a round plays")
+            local started, seenAt = Util.now(), Util.now()
+            while Util.now() - started < STINT_SECONDS do
+                if inRoom() then
+                    seenAt = Util.now()
+                elseif Util.now() - seenAt > 30 then
+                    ctx.logger:info("WhereBear", "Out of the Where Bear room: joining again")
+                    return true
+                end
+                if event().WhereBear ~= true then
+                    return true
+                end
+                phase("Where Bear: " .. WhereBear.statusText())
+                task.wait(1)
+            end
+            return true
+        end,
+    }
+
+    -- in the minigame's own place (a public server's join): collect there; back to Adopt Me before a Hauntlet run
+    -- (Hauntlet on, its time readable here) or when Where Bear is switched off
+    function WhereBear.startInPlace(logger, config, maid)
+        local event = function()
+            return type(config.Farm) == "table" and config.Farm.Event or {}
+        end
+        if event().WhereBear ~= true then
+            logger:info("WhereBear", "In the Where Bear place with Where Bear off: nothing to do here")
+            return false
+        end
+        pcall(function() -- the game's messages may still be loading
+            local folder = ReplicatedStorage:WaitForChild(GameConstants.Remotes.EventFolder, 60)
+            if folder then
+                folder:WaitForChild(E.WhereBearEvent, 30)
+            end
+        end)
+        WhereBear.collect(logger, event, maid)
+        local function back(why)
+            logger:info("WhereBear", "Back to Adopt Me: " .. why)
+            pcall(function()
+                game:GetService("TeleportService"):Teleport(GameConstants.PlaceId, LP)
+            end)
+            task.delay(45, function() -- v3.0.81: Delta's "Verify Teleports" blocks script teleports without an error
+                if game.PlaceId == E.WhereBearPlace then
+                    logger:warn("WhereBear", "Still in the Where Bear place 45 s after the teleport back: the executor may"
+                        .. " block script teleports (Delta: turn off 'Verify Teleports'); candy is still collected here")
+                end
+            end)
+        end
+        maid:Give(task.spawn(function()
+            local noTime = false
+            while true do
+                task.wait(10)
+                if event().WhereBear ~= true then
+                    back("Where Bear was switched off")
+                    return
+                end
+                if event().Hauntlet == true then
+                    local ok, left = pcall(function()
+                        -- the game's own data in this place (Fsys ClientData), the same cycle record the farm reads
+                        local load = require(ReplicatedStorage:WaitForChild("Fsys", 5)).load
+                        local data = load("ClientData").get_data()[LP.Name]
+                        local key = GameConstants.DataKeys.HauntletCycle
+                        local reader = { get = function(_, k)
+                            return type(data) == "table" and data[k] or nil
+                        end }
+                        local now = workspace:GetServerTimeNow()
+                        local start = EventTasks.nextRoundStart(reader:get(key), now, EventTasks.periodOf(key, reader))
+                        return start and start - now or nil
+                    end)
+                    if ok and left then
+                        if left < 200 then
+                            back(string.format("Hauntlet run in %d s", math.floor(left)))
+                            return
+                        end
+                    elseif not noTime then
+                        noTime = true
+                        logger:info("WhereBear", "The Hauntlet time is not readable in this place: staying here")
+                    end
+                end
+            end
+        end))
+        logger:info("WhereBear", "In the Where Bear place: collecting candy (goes back to Adopt Me when switched off"
+            .. (event().Hauntlet == true and " or before a Hauntlet run)" or ")"))
+        return true
+    end
+
+    return WhereBear
+end
 __moduleSources["Game/TaskManager"] = function(...)
     local import = ...
     local Util = import("Core/Util")
@@ -24500,10 +25348,11 @@ __moduleSources["Game/TaskManager"] = function(...)
     local EventTasks = import("Game/EventTasks")
     local Minigame = import("Game/Minigame")
     local HouseTasks = import("Game/HouseTasks")
+    local WhereBear = import("Game/WhereBear")
     local TaskManager = {}
     TaskManager.__index = TaskManager
     local TEAM_KEY = "team"
-    local EVENT_RECHECK_SECONDS = { ghost_gallery = 120, stray_cat = 1800, crypt = 60, pigeon_nest = 60, quests = 300, pen_stock = 20, age_potion = 5, open_gift = 3, neon_fusion = 2, mega_fusion = 2, candy_pet = 30, shop_gift = 30, house_visits = 300, hauntlet = 90, skelicorn = 120, spotlight = 120, shoebill = 300 }
+    local EVENT_RECHECK_SECONDS = { ghost_gallery = 120, stray_cat = 1800, crypt = 60, pigeon_nest = 60, quests = 300, pen_stock = 20, age_potion = 5, open_gift = 3, neon_fusion = 2, mega_fusion = 2, candy_pet = 30, shop_gift = 30, house_visits = 300, hauntlet = 90, skelicorn = 120, spotlight = 120, shoebill = 300, where_bear = 5 }
     local GHOST_GALLERY_LEAD_SECONDS = 75
     local GHOST_INTERRUPT_SECONDS = 72
     local HAUNTLET_LEAD_SECONDS = 75 -- v2.1.9: home first, then the game's prompt at T-45
@@ -24557,6 +25406,7 @@ __moduleSources["Game/TaskManager"] = function(...)
         maid:Give(self._tracker.Completed:Connect(function(owner, petUnique, kind)
             self._completions[kind .. "|" .. owner .. "|" .. tostring(petUnique)] = Util.now()
         end))
+        self:_watchClientErrors(maid)
         maid:Give(function()
             self:stop()
         end)
@@ -25193,7 +26043,8 @@ __moduleSources["Game/TaskManager"] = function(...)
         local inMinigame = self:_hauntletPending()
             or (type(place) == "string" and ((string.find(place, GameConstants.Event.HauntletInteriorPrefix, 1, true) == 1
                 and runOn) or (string.find(place, GameConstants.Event.MinigameInteriorPrefix, 1, true) == 1
-                and running == "ghost_gallery") or string.find(place, GameConstants.Event.SpotlightInteriorPrefix, 1, true) == 1))
+                and running == "ghost_gallery") or string.find(place, GameConstants.Event.SpotlightInteriorPrefix, 1, true) == 1
+                or place == GameConstants.Event.WhereBearRoom))
         if inMinigame or running == "recover" or place == nil or self._state:get("game.ready") ~= true
             or self._state:get("session.disconnectReason") ~= nil or self._state:get("player.team") == "Choosing" then
             self._voidSince = nil
@@ -25325,6 +26176,7 @@ __moduleSources["Game/TaskManager"] = function(...)
         if self:_whiteScreenCheck() then
             return
         end
+        self:_clientBrokenCheck()
         if self:_travelStuckCheck() then
             return
         end
@@ -26437,6 +27289,11 @@ __moduleSources["Game/TaskManager"] = function(...)
                 return "hauntlet", "Hauntlet run", EventTasks.hauntlet, hauntStart and { start = hauntStart } or nil
             end
         end
+        -- v3.0.80 Where Bear: after Hauntlet / Ghost Gallery / Stitches' Spotlight (they interrupt it), before the other
+        -- jobs and the needs; not started when one of them is near (it would be stopped again at once)
+        if event.WhereBear == true and due("where_bear") and not self:_minigameSoon() then
+            return "where_bear", "Where Bear", WhereBear.task, nil
+        end
         local nest = event.PigeonNest ~= false and self:_autoNest()
         if nest == "BUILD_NEST" and due("pigeon_nest") then
             return "pigeon_nest", "build the nest (AutoNest)", EventTasks.pigeonNest, nil
@@ -26606,6 +27463,11 @@ __moduleSources["Game/TaskManager"] = function(...)
                 self:_rejoin(string.format("the game's travel hangs for %d s", math.floor(hung)))
             elseif self._farmConfig.LeaveWhenStuck then
                 self:_leaveStuck(string.format("the game's travel hangs for %d s", math.floor(hung)))
+            elseif hung >= 300 then
+                -- v3.0.81 (user log 2026-10-27: 35 min in the void with both switches off): it never ends by itself
+                self._rejoinSent = true
+                self:_rejoin(string.format("the game's travel hangs for %d s ('Rejoin when stuck' is off, but a hung"
+                    .. " game trip never ends by itself)", math.floor(hung)))
             end
         end
         self._why = "waiting: the game's travel is stuck (rejoin)"
@@ -26626,6 +27488,70 @@ __moduleSources["Game/TaskManager"] = function(...)
             end)
         end)
     end
+    --[[ v3.0.133 / public v3.0.81 (user log 2026-10-27, Delta: after a Hauntlet death the game's own LocalScript failed
+         every frame, "HeartbeatUpdate: attempt to call a number value", for 35 min; every trip only voided): the same
+         error 300+ times a minute, for 2 min = the game's client is broken; only a fresh game fixes it ]]
+    function TaskManager:_watchClientErrors(maid)
+        local okS, sc = pcall(game.GetService, game, "ScriptContext")
+        if not okS or not sc then
+            return
+        end
+        local e = { counts = {}, windowAt = Util.now(), lastAt = 0 }
+        self._clientErr = e
+        local okC, conn = pcall(function()
+            return sc.Error:Connect(function(message)
+                local now = Util.now()
+                e.lastAt = now
+                if now - e.windowAt >= 60 then
+                    local top, topN = nil, 0
+                    for m, n in pairs(e.counts) do
+                        if n > topN then
+                            top, topN = m, n
+                        end
+                    end
+                    if topN >= 300 then
+                        e.since = e.since or e.windowAt
+                        e.burst = string.format("%s (x%d in a minute)", tostring(top), topN)
+                    else
+                        e.since, e.burst, e.noted = nil, nil, nil
+                    end
+                    e.counts, e.windowAt = {}, now
+                end
+                local key = string.sub(tostring(message), 1, 160)
+                e.counts[key] = (e.counts[key] or 0) + 1
+            end)
+        end)
+        if okC and conn then
+            maid:Give(conn)
+        end
+    end
+    function TaskManager:_clientBrokenCheck()
+        local e = self._clientErr
+        if not e or not e.since then
+            return false
+        end
+        if Util.now() - e.lastAt > 15 then
+            e.since, e.burst, e.noted = nil, nil, nil
+            return false
+        end
+        if not e.noted then
+            e.noted = true
+            self._logger:warn("Tasks", "The game's own client fails every frame: " .. tostring(e.burst)
+                .. ". Trips only end in the void now; a fresh game fixes it")
+        end
+        if Util.now() - e.since < 120 or self._leaving or self._rejoinSent then
+            return false
+        end
+        local why = "the game's own client fails every frame (" .. tostring(e.burst) .. ")"
+        self._rejoinSent = true
+        if self._farmConfig.AutoRejoin or not self._farmConfig.LeaveWhenStuck then
+            -- with "Rejoin when stuck" off too: a broken game client never heals by itself, a fresh game is the only fix
+            self:_rejoin(why)
+        else
+            self:_leaveStuck(why)
+        end
+        return false
+    end
     function TaskManager:_rejoin(reason)
         self._logger:warn("Tasks", "Stuck: " .. reason .. ": rejoining a server (Farm.AutoRejoin)")
         local ok, err = pcall(function()
@@ -26635,6 +27561,19 @@ __moduleSources["Game/TaskManager"] = function(...)
         if not ok then
             self._logger:warn("Tasks", "Rejoin failed: " .. tostring(err))
         end
+        -- v3.0.133 / public v3.0.81: Delta's "Verify Teleports" blocks script teleports without an error
+        task.delay(45, function()
+            if self._stopped then
+                return
+            end
+            if self._farmConfig.LeaveWhenStuck and not self._leaving then
+                self:_leaveStuck("the rejoin did not happen in 45 s (" .. tostring(reason) .. ")")
+            else
+                self._logger:warn("Tasks", "The rejoin did not happen in 45 s: the executor may block script teleports"
+                    .. " (Delta: turn off 'Verify Teleports'), or rejoin by hand")
+                self._rejoinSent = nil
+            end
+        end)
     end
     function TaskManager:sendDirect(actionName, ...)
         -- v2.1.12: a remote-only call (cashback) no longer waits for the farm to be idle
@@ -26813,6 +27752,7 @@ __moduleSources["main"] = function(...)
     local Hauntlet = import("Game/Hauntlet")
     local EventTasks = import("Game/EventTasks")
     local HouseTasks = import("Game/HouseTasks")
+    local WhereBear = import("Game/WhereBear")
     local Interface = import("Services/Interface")
     local Players = game:GetService("Players")
     local GLOBAL_KEY = "AdoptMeFarm"
@@ -26981,7 +27921,13 @@ __moduleSources["main"] = function(...)
             end
             return petPictures[id] or nil
         end
-        if not isAdoptMe then
+        if game.PlaceId == GameConstants.Event.WhereBearPlace then
+            -- v3.0.80: the Where Bear place (a public server's join): only its candy collector runs here
+            local okPlace, placeErr = pcall(WhereBear.startInPlace, logger, config, maid)
+            if not okPlace then
+                logger:warn("WhereBear", "Could not start in the Where Bear place: " .. tostring(placeErr))
+            end
+        elseif not isAdoptMe then
             logger:warn("Game", string.format("PlaceId %s is not Adopt Me (%d): game features are off", tostring(game.PlaceId), GameConstants.PlaceId))
         else
             local loadedOk, isLoaded = pcall(function()
@@ -28267,6 +29213,7 @@ __moduleSources["main"] = function(...)
                     end
                     return HouseTasks._baitsShown
                 end)(),
+                whereBear = WhereBear.statusText(), -- v3.0.80
                 dragon = uiGameData and {
                     polymorphed = EventTasks.catPolymorphed(uiGameData),
                     food = EventTasks.catFoodHeld(uiGameData),
