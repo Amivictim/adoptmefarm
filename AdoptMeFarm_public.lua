@@ -1,4 +1,4 @@
--- AdoptMe Farm  v3.0.83 | Adopt Victims v3 | settings: the window
+-- AdoptMe Farm  v3.0.84 | Adopt Victims v3 | settings: the window
 local UserConfig = {
     Farm = {
         Enabled = true, -- false = everything paused ("Pause all" in the window); each feature has its own switch
@@ -30,7 +30,7 @@ local UserConfig = {
         AntiAfk = true,
         CameraGuard = true,
         CameraZoom = 10, -- camera distance the camera guard locks (5-20)
-        AutoRejoin = false,
+        AutoRejoin = false, -- the farm never rejoins by itself unless this is true ("Rejoin when stuck")
         LeaveWhenStuck = false, -- true = 8 failed trips in a row in one place -> leave the game (turn on only if you have a rejoin tool)
         SpotTravel = "teleport",
         GameTravel = true,
@@ -1439,7 +1439,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "3.0.83 (Adopt Victims v3)"
+    Disclosure.VERSION = "3.0.84 (Adopt Victims v3)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -1493,7 +1493,7 @@ __moduleSources["Services/Disclosure"] = function(...)
                 .. " reset only by a recover that worked or a new place) -> leaves the game (Kick) so YOUR rejoin tool starts a"
                 .. " fresh client; it never teleports you to another server",
             "v3.0.76: one game trip at a time; when the game's own trip hangs (45 s, still in the same place) every trip and"
-                .. " respawn waits until it works again (Farm.AutoRejoin: rejoins after 2 min; Farm.LeaveWhenStuck: leaves);"
+                .. " respawn waits until it works again (Farm.AutoRejoin: rejoins after 2 min; Farm.LeaveWhenStuck: leaves; both off: only a warning);"
                 .. " Box Lure / mannequin (MAIN) jobs run only while you are already at home",
             "Farm.RemoteRoute (off by default): a game trip that did not work is tried again later with the game's own"
                 .. " travel; the old remote route only when you switch this on",
@@ -1513,7 +1513,7 @@ __moduleSources["Services/Disclosure"] = function(...)
                 .. " only when walking in did not join). A private server keeps you in its room; a public server sends you"
                 .. " to the minigame's own place (the script only collects there when your executor runs it again"
                 .. " there, and teleports you back to Adopt Me when you switch it off or before a Hauntlet run when"
-                .. " Hauntlet is on). Candy is collected only while a round plays (Farm.Event.WhereBearMode: path / walk / tp);"
+                .. " Hauntlet is on). Candy is collected only while a round plays (Farm.Event.WhereBearMode: tween / path / walk / tp);"
                 .. " priority Hauntlet > Ghost Gallery > Stitches' Spotlight > Where Bear > other jobs and needs",
             "Shoebill (Farm.Event.Shoebill, on by default): a Lost Sock / Headphones in your backpack -> the game's"
                 .. " own travel to the Haunted Hotel, next to that door, then Halloween2026/ShoebillGiveHeadphones (once,"
@@ -3668,6 +3668,19 @@ __moduleSources["Services/Lang"] = function(...)
         "Evinde Yem Kutusu yoksa BİR tane koyar, ödülünü toplar ve seçtiğin yemi koyar",
         "Si tu casa no tiene Caja Cebo pone UNA, recoge su recompensa y pone un cebo elegido",
         "Se sua casa não tem Caixa Isca põe UMA, coleta a recompensa e põe uma isca escolhida")
+    -- v3.0.84
+    add("Rejoin is off unless you turn on 'Rejoin when stuck': a hung trip or a broken game only shows a warning",
+        "Rejoin kapalı, 'Takılınca yeniden katıl'ı açmadıkça: takılan yolculuk ya da bozulan oyun sadece uyarı verir",
+        "Reunirse está apagado salvo que actives 'Reunirse si se atasca': un viaje colgado o un juego roto solo avisa",
+        "Reentrar fica desligado a menos que ligue 'Reentrar se travar': uma viagem travada ou um jogo quebrado só avisa")
+    add("Off by default. Stuck (no place / character, a hung trip, a broken game): rejoins a PUBLIC server",
+        "Varsayılan kapalı. Takılınca (yer / karakter yok, takılan yolculuk, bozuk oyun) HERKESE AÇIK sunucuya girer",
+        "Apagado por defecto. Atascado (sin lugar / personaje, viaje colgado, juego roto): entra a un servidor PÚBLICO",
+        "Desligado por padrão. Travado (sem lugar / personagem, viagem travada, jogo quebrado): entra num servidor PÚBLICO")
+    add("Tween: glides straight to each candy (around walls by a path). Path: walks. Walk: moved every frame. Teleport: fastest, riskiest",
+        "Tween: her şekere düz kayar (duvar varsa yol bulur). Path: yürür. Walk: her karede ilerletilir. Işınlanma: en hızlı, en riskli",
+        "Tween: se desliza directo a cada dulce (rodea paredes). Ruta: camina. Caminar: se mueve cada fotograma. Teletransporte: el más rápido y arriesgado",
+        "Tween: desliza direto a cada doce (contorna paredes). Rota: anda. Andar: movido a cada quadro. Teleporte: o mais rápido e arriscado")
     -- v3.0.83
     add("Tween (smart glide)", "Tween (akıllı kayma)", "Tween (deslizamiento inteligente)", "Tween (deslize inteligente)")
     add("Tween / Walk mode speed (studs per second)", "Tween / Walk modu hızı (saniyede stud)",
@@ -7418,14 +7431,14 @@ __moduleSources["Services/Interface"] = function(...)
     -- v3.0.0 (user: "list everything new since v2, in plain words, no text running out of the window"): what's new,
     -- by topic; the Support tab shows it with the lines wrapped to the window (Interface.wrap)
     -- v3.0.76 (user: "in the changelog only this version's changes and the last update, simple"): only the newest version
-    Interface.LAST_UPDATE = "2026-10-27"
+    Interface.LAST_UPDATE = "2026-10-28"
     Interface.WHATS_NEW = {
-        { "v3.0.83", "sparkles", {
+        { "v3.0.84", "sparkles", {
             "Where Bear: new Tween mode (default): glides straight to each candy like Stitches' round, around walls by a path",
             "Where Bear: walks only to candy that is still there (with its Visual), no more running to taken candy",
             "Where Bear: touches a candy and goes straight on to the next one (no more back and forth), walks straight when no path is found",
             "No more void after a Hauntlet death: the farm waits for the game's own exit before going home",
-            "A broken game (the same game error every frame) or a trip that hangs 5 min: rejoins by itself",
+            "Rejoin is off unless you turn on 'Rejoin when stuck': a hung trip or a broken game only shows a warning",
         } },
     }
     Interface.CHANGELOG = {}
@@ -7530,7 +7543,7 @@ __moduleSources["Services/Interface"] = function(...)
         ["Farm.AntiAfk"] = "Clicks on Roblox's idle warning (also paused)",
         ["Farm.AutoAcceptMenu"] = "Clicks Play on the main menu (also paused)",
         ["Farm.CollectCashback"] = "Collects cashback Bucks every 10 minutes",
-        ["Farm.AutoRejoin"] = "No place / character: rejoins a PUBLIC server",
+        ["Farm.AutoRejoin"] = "Off by default. Stuck (no place / character, a hung trip, a broken game): rejoins a PUBLIC server",
         ["Farm.StuckRejoinSeconds"] = "How long before that rejoin",
         ["Farm.GameTravel"] = "Travels with the game's own doors",
         ["Farm.HomeByRespawn"] = "Goes home by respawn (fastest)",
@@ -11350,7 +11363,7 @@ __moduleSources["Services/Interface"] = function(...)
         bindSlider(advanced, "stuckSeconds", "hourglass", "Stuck after", { "Farm", "StuckRecovery", "Seconds" }, 1, 10, 0.5, "min",
             nil, 60)
         bindToggle(advanced, "rejoin", "refresh-cw", "Rejoin when stuck", { "Farm", "AutoRejoin" },
-            "No place / character: rejoins a PUBLIC server")
+            "Off by default. Stuck (no place / character, a hung trip, a broken game): rejoins a PUBLIC server")
         bindSlider(advanced, "stuckMinutes", "hourglass", "Rejoin after", { "Farm", "StuckRejoinSeconds" },
             1, 10, 0.5, "min", nil, 60)
         bindSlider(advanced, "rejoinEvery", "refresh-cw", "Rejoin every", { "Farm", "RejoinEveryMinutes" }, 0, 360, 10, "min",
@@ -13351,7 +13364,7 @@ __moduleSources["Game/Interaction"] = function(...)
         table.insert(lines, "LOCAL teleport of your character next to the Stray Cat (Halloween map), into the Ghost Gallery join circle in the Haunted Manor (where the popup's Yes puts you) and, inside the minigame only, 50 studs under the ghost it vacuums (held every frame, back on the floor after the round) (Farm.Event)")
         table.insert(lines, "LOCAL teleport of your character into the selected door's join circle inside the Hauntlet rooms, requesting nearby room streaming when needed (Farm.Event.Hauntlet)")
         table.insert(lines, "LOCAL virtual click — only when Roblox says you are idle, to avoid the 20-minute kick (Farm.AntiAfk)")
-        table.insert(lines, "ROBLOX rejoin of a server of this game (TeleportService) — only after 3 min with no place / no character, e.g. a white screen in a dead minigame (Farm.AutoRejoin), and every Farm.RejoinEveryMinutes when set (0 = off)")
+        table.insert(lines, "ROBLOX rejoin of a server of this game (TeleportService) — ONLY when Farm.AutoRejoin is on (off by default): after 3 min with no place / no character (e.g. a white screen in a dead minigame), a game trip hanging 2 min, or the game's own client failing every frame for 2 min; and every Farm.RejoinEveryMinutes when set (0 = off)")
         return lines
     end
     function Interaction.virtualClick()
@@ -27440,7 +27453,7 @@ __moduleSources["Game/TaskManager"] = function(...)
         end
         if not hung or hung < TRAVEL_STUCK_SECONDS then
             if self._travelStuckNoted then
-                self._travelStuckNoted = nil
+                self._travelStuckNoted, self._hungAdvised = nil, nil
                 self._travelFailures, self._stuckTrips = 0, 0
                 self._logger:info("Tasks", "The game's travel works again: the farm goes on")
             end
@@ -27463,11 +27476,11 @@ __moduleSources["Game/TaskManager"] = function(...)
                 self:_rejoin(string.format("the game's travel hangs for %d s", math.floor(hung)))
             elseif self._farmConfig.LeaveWhenStuck then
                 self:_leaveStuck(string.format("the game's travel hangs for %d s", math.floor(hung)))
-            elseif hung >= 300 then
-                -- v3.0.81 (user log 2026-10-27: 35 min in the void with both switches off): it never ends by itself
-                self._rejoinSent = true
-                self:_rejoin(string.format("the game's travel hangs for %d s ('Rejoin when stuck' is off, but a hung"
-                    .. " game trip never ends by itself)", math.floor(hung)))
+            elseif hung >= 300 and not self._hungAdvised then
+                -- v3.0.84 (user: "rejoin off unless the user turns it on"): with both switches off only a warning
+                self._hungAdvised = true
+                self._logger:warn("Tasks", string.format("The game's travel hangs for %d s and never ends by itself: rejoin"
+                    .. " by hand, or turn on 'Rejoin when stuck'", math.floor(hung)))
             end
         end
         self._why = "waiting: the game's travel is stuck (rejoin)"
@@ -27513,7 +27526,7 @@ __moduleSources["Game/TaskManager"] = function(...)
                         e.since = e.since or e.windowAt
                         e.burst = string.format("%s (x%d in a minute)", tostring(top), topN)
                     else
-                        e.since, e.burst, e.noted = nil, nil, nil
+                        e.since, e.burst, e.noted, e.advised = nil, nil, nil, nil
                     end
                     e.counts, e.windowAt = {}, now
                 end
@@ -27531,7 +27544,7 @@ __moduleSources["Game/TaskManager"] = function(...)
             return false
         end
         if Util.now() - e.lastAt > 15 then
-            e.since, e.burst, e.noted = nil, nil, nil
+            e.since, e.burst, e.noted, e.advised = nil, nil, nil, nil
             return false
         end
         if not e.noted then
@@ -27543,12 +27556,16 @@ __moduleSources["Game/TaskManager"] = function(...)
             return false
         end
         local why = "the game's own client fails every frame (" .. tostring(e.burst) .. ")"
-        self._rejoinSent = true
-        if self._farmConfig.AutoRejoin or not self._farmConfig.LeaveWhenStuck then
-            -- with "Rejoin when stuck" off too: a broken game client never heals by itself, a fresh game is the only fix
+        -- v3.0.84 (user: "rejoin off unless the user turns it on"): only with 'Rejoin when stuck' / LeaveWhenStuck
+        if self._farmConfig.AutoRejoin then
+            self._rejoinSent = true
             self:_rejoin(why)
-        else
+        elseif self._farmConfig.LeaveWhenStuck then
+            self._rejoinSent = true
             self:_leaveStuck(why)
+        elseif not e.advised then
+            e.advised = true
+            self._logger:warn("Tasks", "The game's client has been broken for 2 min: rejoin by hand, or turn on 'Rejoin when stuck'")
         end
         return false
     end
