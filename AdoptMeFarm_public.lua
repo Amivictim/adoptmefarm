@@ -1,4 +1,4 @@
--- AdoptMe Farm  v3.0.85 | Adopt Victims v3 | settings: the window
+-- AdoptMe Farm  v3.0.86 | Adopt Victims v3 | settings: the window
 local UserConfig = {
     Farm = {
         Enabled = true, -- false = everything paused ("Pause all" in the window); each feature has its own switch
@@ -81,7 +81,7 @@ local UserConfig = {
             Baits = {}, -- bait ids from your backpack, e.g. { "ice_dimension_2025_ice_soup_bait" }
         },
         Transfer = { -- Transfer Thingy: YOUR accounts, the game's mannequin sales + Cash Register (never a trade)
-            MainUserId = game:GetService("Players").LocalPlayer.UserId, -- the Main (pick it in the window); kept by UserId
+            MainUserId = 0, -- the Main (pick it in the window); kept by UserId
             MainName = "",
             Mannequin = false, -- MAIN: mannequins in your house (750 Bucks each, up to MannequinCount), price 100
             MannequinCount = 1,
@@ -1439,7 +1439,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "3.0.85 (Adopt Victims v3)"
+    Disclosure.VERSION = "3.0.86 (Adopt Victims v3)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -3668,6 +3668,11 @@ __moduleSources["Services/Lang"] = function(...)
         "Evinde Yem Kutusu yoksa BİR tane koyar, ödülünü toplar ve seçtiğin yemi koyar",
         "Si tu casa no tiene Caja Cebo pone UNA, recoge su recompensa y pone un cebo elegido",
         "Se sua casa não tem Caixa Isca põe UMA, coleta a recompensa e põe uma isca escolhida")
+    -- v3.0.86
+    add("Transfer Thingy: the game's \"too many orders\" / \"register overloaded\" popups are closed (Okay), no more stacking",
+        "Transfer Thingy: oyunun \"too many orders\" / \"register overloaded\" pencereleri kapatılır (Okay), artık üst üste birikmez",
+        "Transfer Thingy: las ventanas \"too many orders\" / \"register overloaded\" del juego se cierran (Okay), ya no se acumulan",
+        "Transfer Thingy: as janelas \"too many orders\" / \"register overloaded\" do jogo são fechadas (Okay), sem acumular")
     -- v3.0.85
     add("Transfer Thingy: the selected Main is kept for the next session (UserIds over 1 billion were not saved)",
         "Transfer Thingy: seçilen Main bir sonraki oturumda da kayıtlı kalır (1 milyarın üstündeki UserId'ler kaydedilmiyordu)",
@@ -7438,8 +7443,9 @@ __moduleSources["Services/Interface"] = function(...)
     -- v3.0.76 (user: "in the changelog only this version's changes and the last update, simple"): only the newest version
     Interface.LAST_UPDATE = "2026-11-02"
     Interface.WHATS_NEW = {
-        { "v3.0.85", "sparkles", {
+        { "v3.0.86", "sparkles", {
             "Transfer Thingy: the selected Main is kept for the next session (UserIds over 1 billion were not saved)",
+            "Transfer Thingy: the game's \"too many orders\" / \"register overloaded\" popups are closed (Okay), no more stacking",
         } },
     }
     Interface.CHANGELOG = {}
@@ -28210,6 +28216,10 @@ __moduleSources["main"] = function(...)
                 { frame = "CheckboxDialog", screen = "DialogApp", text = "\0never\0", button = "^%s*no%s*$",
                     label = "Minigame starting soon (any language)", prompt = true },
                 { text = "crypt has been reset", button = "^%s*okay%s*$", label = "Crypt reset (Okay)" },
+                -- v3.0.86 (user: "Transfer: popups stack up on the screen"; AltLogss.log: MsgAPI/DialogSent { button = "Okay",
+                -- text = ... } each time a mannequin / the register says no): answered Okay like the game's own button
+                { text = "too many orders right now", button = "^%s*okay%s*$", label = "Mannequin: too many orders (Okay)" },
+                { text = "register seems overloaded", button = "^%s*okay%s*$", label = "Cash Register overloaded (Okay)" },
                 { text = "game over", button = "^%s*nice!?%s*$", label = "Game over (Nice)" },
                 { text = "new pet discovered", button = "^%s*done%s*$", label = "New pet discovered (Done)" },
                 { text = "journal updated", button = "^%s*done%s*$", label = "Journal updated (Done)" },
