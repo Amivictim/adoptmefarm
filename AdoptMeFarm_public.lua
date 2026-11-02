@@ -1,4 +1,4 @@
--- AdoptMe Farm  v3.0.84 | Adopt Victims v3 | settings: the window
+-- AdoptMe Farm  v3.0.85 | Adopt Victims v3 | settings: the window
 local UserConfig = {
     Farm = {
         Enabled = true, -- false = everything paused ("Pause all" in the window); each feature has its own switch
@@ -81,7 +81,7 @@ local UserConfig = {
             Baits = {}, -- bait ids from your backpack, e.g. { "ice_dimension_2025_ice_soup_bait" }
         },
         Transfer = { -- Transfer Thingy: YOUR accounts, the game's mannequin sales + Cash Register (never a trade)
-            MainUserId = 0, -- the Main (pick it in the window); kept by UserId
+            MainUserId = game:GetService("Players").LocalPlayer.UserId, -- the Main (pick it in the window); kept by UserId
             MainName = "",
             Mannequin = false, -- MAIN: mannequins in your house (750 Bucks each, up to MannequinCount), price 100
             MannequinCount = 1,
@@ -1439,7 +1439,7 @@ __moduleSources["Services/Disclosure"] = function(...)
     local import = ...
     local Config = import("Core/Config")
     local Disclosure = {}
-    Disclosure.VERSION = "3.0.84 (Adopt Victims v3)"
+    Disclosure.VERSION = "3.0.85 (Adopt Victims v3)"
     Disclosure.WEBHOOK_FIELDS = {
         ["Player"] = "your Roblox username (only if Notifications.IncludeUsername = true)",
         ["Session time"] = "how long the script has been running",
@@ -3668,6 +3668,11 @@ __moduleSources["Services/Lang"] = function(...)
         "Evinde Yem Kutusu yoksa BİR tane koyar, ödülünü toplar ve seçtiğin yemi koyar",
         "Si tu casa no tiene Caja Cebo pone UNA, recoge su recompensa y pone un cebo elegido",
         "Se sua casa não tem Caixa Isca põe UMA, coleta a recompensa e põe uma isca escolhida")
+    -- v3.0.85
+    add("Transfer Thingy: the selected Main is kept for the next session (UserIds over 1 billion were not saved)",
+        "Transfer Thingy: seçilen Main bir sonraki oturumda da kayıtlı kalır (1 milyarın üstündeki UserId'ler kaydedilmiyordu)",
+        "Transfer Thingy: el Main elegido se guarda para la próxima sesión (los UserId de más de mil millones no se guardaban)",
+        "Transfer Thingy: o Main escolhido fica salvo para a próxima sessão (UserIds acima de 1 bilhão não eram salvos)")
     -- v3.0.84
     add("Rejoin is off unless you turn on 'Rejoin when stuck': a hung trip or a broken game only shows a warning",
         "Rejoin kapalı, 'Takılınca yeniden katıl'ı açmadıkça: takılan yolculuk ya da bozulan oyun sadece uyarı verir",
@@ -7431,14 +7436,10 @@ __moduleSources["Services/Interface"] = function(...)
     -- v3.0.0 (user: "list everything new since v2, in plain words, no text running out of the window"): what's new,
     -- by topic; the Support tab shows it with the lines wrapped to the window (Interface.wrap)
     -- v3.0.76 (user: "in the changelog only this version's changes and the last update, simple"): only the newest version
-    Interface.LAST_UPDATE = "2026-10-28"
+    Interface.LAST_UPDATE = "2026-11-02"
     Interface.WHATS_NEW = {
-        { "v3.0.84", "sparkles", {
-            "Where Bear: new Tween mode (default): glides straight to each candy like Stitches' round, around walls by a path",
-            "Where Bear: walks only to candy that is still there (with its Visual), no more running to taken candy",
-            "Where Bear: touches a candy and goes straight on to the next one (no more back and forth), walks straight when no path is found",
-            "No more void after a Hauntlet death: the farm waits for the game's own exit before going home",
-            "Rejoin is off unless you turn on 'Rejoin when stuck': a hung trip or a broken game only shows a warning",
+        { "v3.0.85", "sparkles", {
+            "Transfer Thingy: the selected Main is kept for the next session (UserIds over 1 billion were not saved)",
         } },
     }
     Interface.CHANGELOG = {}
@@ -8350,7 +8351,8 @@ __moduleSources["Services/Interface"] = function(...)
                 end
             elseif kind == "number" then
                 value = tonumber(raw)
-                if value and (value ~= value or math.abs(value) > 1e9) then
+                -- v3.0.85 (user: "the Main is not kept for the next session"): Roblox UserIds go past 1e9 (they were dropped)
+                if value and (value ~= value or math.abs(value) > 1e15) then
                     value = nil
                 end
             elseif kind == "text" then
