@@ -162,3 +162,6 @@ tab:Button({
         WindUI:Notify({ Title = "Discord copied", Content = DISCORD_URL, Duration = 6 })
     end,
 })
+
+pcall(function() Window:SelectTab(1) end)
+pcall(function() tab:Select() end)
