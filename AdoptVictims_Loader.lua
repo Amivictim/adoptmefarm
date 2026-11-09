@@ -1,6 +1,9 @@
-local SCRIPT_ID   = "7237a75ecd8f44aefe931d6a4d6f4c75"
+local SCRIPT_ID   = "14638ac1cc5352cd047495287556b971"
+local LOADER_URL  = "https://api.luarmor.net/files/v4/loaders/14638ac1cc5352cd047495287556b971.lua"
 local GET_KEY_URL = "https://ads.luarmor.net/get_key?for=Adopt_Victims-wJmqPVYSplcL"
 local DISCORD_URL = "https://discord.gg/P7YpzeF5X"
+local PFP_URL     = "https://raw.githubusercontent.com/Amivictim/adoptmefarm/refs/heads/main/victimoffate_.png"
+local WINDUI_URL  = "https://github.com/Footagesus/WindUI/releases/download/1.6.66/main.lua"
 local KEY_FILE    = "AdoptVictims/key.txt"
 
 local Players = game:GetService("Players")
@@ -36,30 +39,30 @@ local function forget()
 end
 
 local MESSAGES = {
-    KEY_VALID = "You're in! Loading...",
-    KEY_EXPIRED = "Your key ran out. Grab a fresh one.",
+    KEY_VALID = "You're in, loading...",
+    KEY_EXPIRED = "Your key ran out, grab a fresh one.",
     KEY_BANNED = "This key is banned.",
     KEY_HWID_LOCKED = "This key belongs to another device. Reset it in our Discord.",
-    KEY_INCORRECT = "That key didn't match. Copy it again from the key page.",
-    KEY_INVALID = "That key didn't match. Copy it again from the key page.",
+    KEY_INCORRECT = "That key didn't match, copy it again.",
+    KEY_INVALID = "That key didn't match, copy it again.",
     INVALID_EXECUTOR = "Your executor isn't supported, sorry.",
-    SCRIPT_ID_INCORRECT = "Loader hiccup. Please tell the dev.",
-    SCRIPT_ID_INVALID = "Loader hiccup. Please tell the dev.",
-    SECURITY_ERROR = "Couldn't verify. Turn off your VPN and retry.",
-    TIME_ERROR = "Your device clock looks off. Set date & time to automatic.",
+    SCRIPT_ID_INCORRECT = "Key system is still being set up, try again soon.",
+    SCRIPT_ID_INVALID = "Key system is still being set up, try again soon.",
+    SECURITY_ERROR = "Couldn't verify, turn off your VPN and retry.",
+    TIME_ERROR = "Your device clock is off, set date and time to automatic.",
 }
 
 local function check(key)
     if type(key) ~= "string" or #key < 10 then return false, "KEY_INCORRECT" end
     local ok, status = pcall(api.check_key, key)
     if not ok or type(status) ~= "table" then return false, "UNKNOWN_ERROR" end
-    return status.code == "KEY_VALID", tostring(status.code or "UNKNOWN_ERROR"), status
+    return status.code == "KEY_VALID", tostring(status.code or "UNKNOWN_ERROR")
 end
 
 local function start(key)
     script_key = key
     G.script_key = key
-    api.load_script()
+    loadstring(game:HttpGet(LOADER_URL))()
 end
 
 local preset = (type(script_key) == "string" and script_key ~= "" and script_key) or G.script_key or readSaved()
@@ -73,73 +76,12 @@ if type(preset) == "string" and preset ~= "" then
     if code == "KEY_EXPIRED" or code == "KEY_BANNED" or code == "KEY_INCORRECT" or code == "KEY_INVALID" then forget() end
 end
 
-local parent = (type(gethui) == "function" and gethui()) or game:GetService("CoreGui")
-local gui = Instance.new("ScreenGui")
-gui.Name = "AVKey"
-gui.ResetOnSpawn = false
-gui.IgnoreGuiInset = true
-gui.DisplayOrder = 999999
-if not pcall(function() gui.Parent = parent end) then gui.Parent = LP:WaitForChild("PlayerGui") end
-
-local ACCENT = Color3.fromRGB(129, 140, 248)
-local BG     = Color3.fromRGB(20, 20, 27)
-local CARD   = Color3.fromRGB(32, 32, 42)
-local TEXT   = Color3.fromRGB(236, 236, 245)
-local MUTED  = Color3.fromRGB(150, 150, 170)
-
-local function new(class, props, children)
-    local o = Instance.new(class)
-    for k, v in pairs(props) do o[k] = v end
-    for _, c in ipairs(children or {}) do c.Parent = o end
-    return o
-end
-local function round(r) return new("UICorner", { CornerRadius = UDim.new(0, r) }) end
-
-local frame = new("Frame", {
-    Parent = gui, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
-    Size = UDim2.fromOffset(300, 212), BackgroundColor3 = BG, BorderSizePixel = 0,
-}, { round(16), new("UIStroke", { Color = Color3.fromRGB(55, 55, 72), Thickness = 1 }),
-     new("UIPadding", { PaddingLeft = UDim.new(0, 20), PaddingRight = UDim.new(0, 20),
-        PaddingTop = UDim.new(0, 18), PaddingBottom = UDim.new(0, 18) }),
-     new("UIListLayout", { Padding = UDim.new(0, 10), HorizontalAlignment = Enum.HorizontalAlignment.Center }) })
-
-new("TextLabel", {
-    Parent = frame, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 24), LayoutOrder = 1,
-    Font = Enum.Font.GothamBold, TextSize = 18, TextColor3 = TEXT, TextXAlignment = Enum.TextXAlignment.Left,
-    Text = "Welcome",
-})
-local status = new("TextLabel", {
-    Parent = frame, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 34), LayoutOrder = 2,
-    Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = MUTED, TextWrapped = true,
-    TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
-    Text = "Grab a free key, paste it below, and you're set.",
-})
-local box = new("TextBox", {
-    Parent = frame, Size = UDim2.new(1, 0, 0, 40), LayoutOrder = 3,
-    BackgroundColor3 = CARD, BorderSizePixel = 0, ClearTextOnFocus = false,
-    Font = Enum.Font.Code, TextSize = 14, TextColor3 = TEXT, PlaceholderText = "paste your key",
-    PlaceholderColor3 = Color3.fromRGB(110, 110, 130), Text = "",
-}, { round(10), new("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12) }) })
-
-local row = new("Frame", {
-    Parent = frame, Size = UDim2.new(1, 0, 0, 40), LayoutOrder = 4, BackgroundTransparency = 1,
-}, { new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 10),
-        HorizontalAlignment = Enum.HorizontalAlignment.Center }) })
-
-local function button(text, w, color, order)
-    return new("TextButton", {
-        Parent = row, Size = UDim2.new(0, w, 1, 0), LayoutOrder = order,
-        BackgroundColor3 = color, BorderSizePixel = 0, AutoButtonColor = true,
-        Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = TEXT, Text = text,
-    }, { round(10) })
-end
-local getKey = button("Get Key", 124, CARD, 1)
-local verify = button("Verify", 124, ACCENT, 2)
-
-local function say(text, good)
-    status.Text = text
-    status.TextColor3 = good == true and Color3.fromRGB(110, 225, 160)
-        or good == false and Color3.fromRGB(250, 130, 130) or MUTED
+local okUI, WindUI = pcall(function()
+    return loadstring(game:HttpGet(WINDUI_URL))()
+end)
+if not okUI or type(WindUI) ~= "table" then
+    LP:Kick("Adopt Victim's: couldn't load the key window. Try again.")
+    return
 end
 
 local function copy(text)
@@ -147,39 +89,76 @@ local function copy(text)
     return type(f) == "function" and pcall(f, text)
 end
 
-getKey.MouseButton1Click:Connect(function()
-    if copy(GET_KEY_URL) then
-        say("Link copied! Open it in your browser, finish the steps, then paste the key here.")
-    else
-        say("Open this in your browser:\n" .. GET_KEY_URL)
-    end
-end)
+local Window = WindUI:CreateWindow({
+    Title = "please get yourself a key",
+    Icon = PFP_URL,
+    Author = "Adopt Victim's v4",
+    Folder = "AdoptVictims",
+    Size = UDim2.fromOffset(380, 248),
+    Theme = "Dark",
+    SideBarWidth = 150,
+    HideSearchBar = true,
+    Resizable = false,
+    IgnoreAlerts = true,
+})
+
+local tab = Window:Tab({ Title = "Key", Icon = "key" })
+
+local info = tab:Paragraph({
+    Title = "put your key here",
+    Desc = "Tap Get Key, finish the page, then paste your key below. It checks itself.",
+})
 
 local busy, done = false, false
-local function tryKey()
+local keyBox
+
+local function verify(text)
     if busy or done then return end
-    local key = (box.Text or ""):gsub("%s", "")
-    if key == "" then say("Paste your key first.", false) return end
+    local key = tostring(text or ""):gsub("%s", "")
+    if key == "" then return end
     busy = true
-    verify.Text = "Checking..."
+    pcall(function() info:SetDesc("Checking your key...") end)
     local valid, code = check(key)
     busy = false
-    verify.Text = "Verify"
     if valid then
         done = true
-        say(MESSAGES.KEY_VALID, true)
         save(key)
+        pcall(function() info:SetDesc(MESSAGES.KEY_VALID) end)
+        WindUI:Notify({ Title = "Adopt Victim's", Content = MESSAGES.KEY_VALID, Duration = 4 })
         task.wait(0.6)
-        gui:Destroy()
+        pcall(function() Window:Destroy() end)
         start(key)
     else
-        local text = MESSAGES[code] or "Couldn't check that key. Try again in a minute."
-        if code == "KEY_HWID_LOCKED" then
-            copy(DISCORD_URL)
-            text = text .. " (link copied)"
-        end
-        say(text, false)
+        local text2 = MESSAGES[code] or ("Couldn't check that key (" .. code .. "), try again in a minute.")
+        if code == "KEY_HWID_LOCKED" then copy(DISCORD_URL) end
+        pcall(function() info:SetDesc(text2) end)
+        WindUI:Notify({ Title = "Adopt Victim's", Content = text2, Duration = 5 })
     end
 end
-verify.MouseButton1Click:Connect(tryKey)
-box.FocusLost:Connect(function(enter) if enter then tryKey() end end)
+
+keyBox = tab:Input({
+    Title = "Key",
+    Placeholder = "paste your key here",
+    Callback = function(text) task.spawn(verify, text) end,
+})
+
+tab:Button({
+    Title = "Get Key",
+    Icon = "external-link",
+    Callback = function()
+        if copy(GET_KEY_URL) then
+            WindUI:Notify({ Title = "Link copied", Content = "Open it in your browser, finish the steps, then paste the key.", Duration = 6 })
+        else
+            WindUI:Notify({ Title = "Get your key at", Content = GET_KEY_URL, Duration = 10 })
+        end
+    end,
+})
+
+tab:Button({
+    Title = "Copy Discord Link",
+    Icon = "message-circle",
+    Callback = function()
+        copy(DISCORD_URL)
+        WindUI:Notify({ Title = "Discord copied", Content = DISCORD_URL, Duration = 6 })
+    end,
+})
