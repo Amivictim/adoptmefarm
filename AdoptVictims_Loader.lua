@@ -1,6 +1,6 @@
 local SCRIPT_ID   = "14638ac1cc5352cd047495287556b971"
 local LOADER_URL  = "https://api.luarmor.net/files/v4/loaders/14638ac1cc5352cd047495287556b971.lua"
-local DISCORD_URL = "https://discord.gg/P7YpzeF5X"
+local DISCORD_URL = "https://discord.gg/6upPkxwA8z"
 local PFP_URL     = "https://raw.githubusercontent.com/Amivictim/adoptmefarm/refs/heads/main/victimoffate_.png"
 local LOGO_BASE   = "https://raw.githubusercontent.com/Amivictim/adoptmefarm/refs/heads/main/"
 local KEY_OFFERS  = {
