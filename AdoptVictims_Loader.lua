@@ -1,8 +1,13 @@
 local SCRIPT_ID   = "14638ac1cc5352cd047495287556b971"
 local LOADER_URL  = "https://api.luarmor.net/files/v4/loaders/14638ac1cc5352cd047495287556b971.lua"
-local GET_KEY_URL = "https://ads.luarmor.net/get_key?for=Adopt_Victims-wJmqPVYSplcL"
 local DISCORD_URL = "https://discord.gg/P7YpzeF5X"
 local PFP_URL     = "https://raw.githubusercontent.com/Amivictim/adoptmefarm/refs/heads/main/victimoffate_.png"
+local LOGO_BASE   = "https://raw.githubusercontent.com/Amivictim/adoptmefarm/refs/heads/main/"
+local KEY_OFFERS  = {
+    { name = "Linkvertise", logo = LOGO_BASE .. "linkvertise.png", url = "https://ads.luarmor.net/get_key?for=Adopt_Victims_Linkvertise-wJmqPVYSplcL" },
+    { name = "Lootlabs",    logo = LOGO_BASE .. "lootlabs.png",    url = "https://ads.luarmor.net/get_key?for=Adopt_Victims_Lootlabs-sdgMvsfbNFss" },
+    { name = "Work.ink",    logo = LOGO_BASE .. "workink.png",     url = "https://ads.luarmor.net/get_key?for=Adopt_Victims_WorkInk-KQYHJinDfZGU" },
+}
 local WINDUI_URL  = "https://github.com/Footagesus/WindUI/releases/download/1.6.66/main.lua"
 local KEY_FILE    = "AdoptVictims/key.txt"
 
@@ -94,7 +99,7 @@ local Window = WindUI:CreateWindow({
     Icon = PFP_URL,
     Author = "Adopt Victim's v4",
     Folder = "AdoptVictims",
-    Size = UDim2.fromOffset(380, 248),
+    Size = UDim2.fromOffset(400, 320),
     Theme = "Dark",
     SideBarWidth = 150,
     HideSearchBar = true,
@@ -142,15 +147,40 @@ keyBox = tab:Input({
     Callback = function(text) task.spawn(verify, text) end,
 })
 
+local getTab = Window:Tab({ Title = "Get Key", Icon = "external-link" })
+
+getTab:Paragraph({
+    Title = "pick one",
+    Desc = "All three give the same key. Copy a link, open it in your browser, finish the steps, then paste the key in the Key tab.",
+})
+
+for _, offer in ipairs(KEY_OFFERS) do
+    getTab:Paragraph({
+        Title = offer.name,
+        Desc = "Key through " .. offer.name,
+        Image = offer.logo,
+        ImageSize = 36,
+        Buttons = {
+            {
+                Title = "Copy " .. offer.name .. " link",
+                Icon = "copy",
+                Callback = function()
+                    if copy(offer.url) then
+                        WindUI:Notify({ Title = offer.name .. " link copied", Content = "Open it in your browser, finish the steps, then paste the key in the Key tab.", Duration = 6 })
+                    else
+                        WindUI:Notify({ Title = "Get your key at", Content = offer.url, Duration = 10 })
+                    end
+                end,
+            },
+        },
+    })
+end
+
 tab:Button({
     Title = "Get Key",
     Icon = "external-link",
     Callback = function()
-        if copy(GET_KEY_URL) then
-            WindUI:Notify({ Title = "Link copied", Content = "Open it in your browser, finish the steps, then paste the key.", Duration = 6 })
-        else
-            WindUI:Notify({ Title = "Get your key at", Content = GET_KEY_URL, Duration = 10 })
-        end
+        pcall(function() getTab:Select() end)
     end,
 })
 
